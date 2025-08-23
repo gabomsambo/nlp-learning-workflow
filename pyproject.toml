@@ -1,0 +1,79 @@
+[tool.poetry]
+name = "nlp-learning-workflow"
+version = "0.1.0"
+description = "Automated NLP research learning system with 5 independent pillars"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "nlp_pillars"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+atomic-agents = "^2.0.0"
+instructor = "^1.0.0"
+pydantic = "^2.0.0"
+openai = "^1.0.0"
+anthropic = "^0.25.0"
+groq = "^0.5.0"
+supabase = "^2.0.0"
+qdrant-client = "^1.8.0"
+pypdf = "^4.0.0"
+typer = "^0.9.0"
+rich = "^13.0.0"
+httpx = "^0.25.0"
+arxiv = "^2.1.0"
+python-dotenv = "^1.0.0"
+structlog = "^24.0.0"
+tenacity = "^8.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.1.0"
+black = "^23.0.0"
+ruff = "^0.1.0"
+mypy = "^1.5.0"
+pre-commit = "^3.5.0"
+
+[tool.poetry.scripts]
+nlp-pillars = "nlp_pillars.cli:app"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "N", "W", "B", "C90", "D"]
+ignore = ["D100", "D104"]  # Missing docstring in public module/package
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=nlp_pillars --cov-report=term-missing"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["nlp_pillars"]
+omit = ["*/tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false

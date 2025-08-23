@@ -1,0 +1,73 @@
+# Python dependencies for NLP Learning Workflow
+
+# Core Framework
+atomic-agents>=2.0.0
+instructor>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# LLM Providers
+openai>=1.0.0
+anthropic>=0.25.0
+groq>=0.5.0
+google-generativeai>=0.5.0  # For Gemini
+
+# Database & Vector Store
+supabase>=2.0.0
+qdrant-client>=1.8.0
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+
+# PDF Processing
+pypdf>=4.0.0
+pdfplumber>=0.10.0
+pymupdf>=1.23.0  # As fallback
+
+# Web & API Tools
+httpx>=0.25.0
+arxiv>=2.1.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# CLI & Scheduling
+typer>=0.9.0
+rich>=13.0.0  # For beautiful CLI output
+apscheduler>=3.10.0
+python-crontab>=3.0.0
+
+# Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+tiktoken>=0.5.0  # For token counting
+
+# Utilities
+python-dotenv>=1.0.0
+structlog>=24.0.0  # For structured logging
+tenacity>=8.0.0  # For retry logic
+cachetools>=5.0.0
+python-dateutil>=2.8.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+faker>=20.0.0
+
+# Development Tools
+black>=23.0.0
+ruff>=0.1.0
+mypy>=1.5.0
+pre-commit>=3.5.0
+
+# Optional: Visualization
+matplotlib>=3.7.0
+plotly>=5.17.0
+networkx>=3.2.0  # For knowledge graphs
+pyvis>=0.3.0  # For interactive graphs
+
+# Optional: Advanced Features
+textual>=0.40.0  # For TUI dashboard
+fastapi>=0.104.0  # If adding web interface
+uvicorn>=0.24.0  # ASGI server for FastAPI

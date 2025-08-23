@@ -1,0 +1,51 @@
+name: Daily NLP Pillar Run
+
+on:
+  schedule:
+    - cron: "0 12 * 3-11 *"  # 08:00 EDT (Mar–Nov)
+    - cron: "0 13 * 12,1,2 *" # 08:00 EST (Dec–Feb)
+  workflow_dispatch: {}
+
+jobs:
+  run-daily:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        PILLAR: [P1, P2, P3, P4, P5]
+    env:
+      PILLAR: ${{ matrix.PILLAR }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      QDRANT_URL: ${{ secrets.QDRANT_URL }}
+      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+      SEARXNG_URL: ${{ secrets.SEARXNG_URL }}
+      EMBEDDING_MODEL: text-embedding-3-small
+      PIP_DISABLE_PIP_VERSION_CHECK: 1
+      PYTHONUNBUFFERED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install .; fi
+
+      - name: Run orchestrator
+        run: |
+          echo "Running pillar ${PILLAR} at 08:00 America/New_York (DST-aware via cron)"
+          python -m nlp_pillars.cli run --pillar "${PILLAR}" --papers 1
+
+      - name: Post-run summary
+        if: always()
+        run: |
+          echo "Job conclusion: ${{ job.status }}"
+          echo "Pillar: ${PILLAR}"
