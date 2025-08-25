@@ -86,18 +86,24 @@ class PaperNote(BaseIOSchema):
     key_terms: List[str] = Field(..., description="Important technical terms")
     related_papers: List[str] = Field(default_factory=list, description="Related paper IDs")
     confidence_score: float = Field(default=0.8, ge=0.0, le=1.0, description="Extraction confidence")
+    created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the note was created")
 
 
 class Lesson(BaseIOSchema):
     """Synthesized lesson from a paper."""
     paper_id: str = Field(..., description="Source paper ID")
     pillar_id: PillarID = Field(..., description="Associated pillar")
+    title: str = Field(..., description="Lesson title")
+    content: str = Field(..., description="Main lesson content")
     tl_dr: str = Field(..., description="One-sentence summary")
     takeaways: List[str] = Field(..., description="Key takeaways (3-5)")
     practice_ideas: List[str] = Field(..., description="Practical applications")
     connections: List[str] = Field(..., description="Connections to other work")
+    examples: List[str] = Field(default_factory=list, description="Examples and illustrations")
+    podcast_script: Optional[str] = Field(None, description="Generated podcast script")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
     estimated_time: int = Field(default=10, description="Reading time in minutes")
+    created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the lesson was created")
 
 
 class QuizCard(BaseIOSchema):
@@ -109,12 +115,15 @@ class QuizCard(BaseIOSchema):
     answer: str = Field(..., description="Correct answer")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
     question_type: QuestionType = Field(default=QuestionType.FACTUAL)
+    tags: List[str] = Field(default_factory=list, description="Tags for categorization")
     # Spaced repetition fields (SM-2 algorithm)
     interval: int = Field(default=1, description="Days until next review")
     repetitions: int = Field(default=0, description="Number of successful reviews")
     ease_factor: float = Field(default=2.5, description="Ease factor for SM-2")
     due_date: datetime = Field(default_factory=datetime.now)
     last_reviewed: Optional[datetime] = None
+    review_count: int = Field(default=0, description="Total number of reviews")
+    interval_days: int = Field(default=1, description="Current interval in days")
 
 
 class PodcastScript(BaseIOSchema):

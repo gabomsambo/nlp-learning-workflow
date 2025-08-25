@@ -14,16 +14,17 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # API Keys - Optional as CLI commands decide what's required
-    OPENAI_API_KEY: Optional[str] = Field(None, env="OPENAI_API_KEY")
-    SUPABASE_URL: Optional[str] = Field(None, env="SUPABASE_URL")
-    SUPABASE_KEY: Optional[str] = Field(None, env="SUPABASE_KEY")
-    QDRANT_URL: Optional[str] = Field(None, env="QDRANT_URL")
-    QDRANT_API_KEY: Optional[str] = Field(None, env="QDRANT_API_KEY")
-    SEARXNG_URL: Optional[str] = Field(None, env="SEARXNG_URL")
+    openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
+    supabase_url: Optional[str] = Field(None, env="SUPABASE_URL")
+    supabase_key: Optional[str] = Field(None, env="SUPABASE_KEY")
+    qdrant_url: Optional[str] = Field(None, env="QDRANT_URL")
+    qdrant_api_key: Optional[str] = Field(None, env="QDRANT_API_KEY")
+    searxng_url: Optional[str] = Field(None, env="SEARXNG_URL")
     
     # Application Settings with defaults
-    EMBEDDING_MODEL: str = Field("text-embedding-3-small", env="EMBEDDING_MODEL")
-    LOG_LEVEL: str = Field("INFO", env="LOG_LEVEL")
+    default_model: str = Field("gpt-4o", env="DEFAULT_MODEL")
+    embedding_model: str = Field("text-embedding-3-small", env="EMBEDDING_MODEL")
+    log_level: str = Field("INFO", env="LOG_LEVEL")
     
     class Config:
         env_file = ".env"

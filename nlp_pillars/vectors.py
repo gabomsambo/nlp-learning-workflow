@@ -8,6 +8,7 @@ All operations are namespaced by pillar_id to ensure data separation.
 import logging
 import os
 import hashlib
+import uuid
 from typing import List, Dict, Optional, Any
 from qdrant_client import QdrantClient, models
 from openai import OpenAI
@@ -164,7 +165,12 @@ def ensure_collections() -> None:
         logger.info(f"Created collection '{COLLECTION_NAME}' with vector size {vector_size} and cosine distance")
         
     except Exception as e:
+        # Handle collection already exists error gracefully
+        if "already exists" in str(e).lower():
+            logger.info(f"Collection '{COLLECTION_NAME}' already exists (caught in exception)")
+            return
         logger.error(f"Failed to ensure collection '{COLLECTION_NAME}': {e}")
+        # Don't raise - let the system continue without vector storage if needed
 
 
 def upsert_text(
@@ -215,9 +221,10 @@ def upsert_text(
                 # Generate embedding
                 vector = _embed(chunk)
                 
-                # Create deterministic ID
+                # Create deterministic UUID from hash
                 id_string = f"{pillar_id.value}|{paper_id}|{idx}"
-                point_id = hashlib.sha1(id_string.encode()).hexdigest()
+                hash_bytes = hashlib.sha1(id_string.encode()).digest()[:16]  # Take first 16 bytes
+                point_id = str(uuid.UUID(bytes=hash_bytes))
                 
                 # Create point with payload
                 point = models.PointStruct(
