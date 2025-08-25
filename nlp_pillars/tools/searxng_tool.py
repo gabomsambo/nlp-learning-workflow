@@ -43,14 +43,10 @@ class SearXNGTool:
             }
         )
         
-        # Academic search engines to prioritize in SearXNG
+        # Academic search engines to prioritize in SearXNG (simplified)
         self.academic_engines = [
-            "semantic scholar",
-            "crossref", 
             "arxiv",
-            "pubmed",
-            "core",
-            "google scholar"
+            "duckduckgo"
         ]
     
     def _enforce_rate_limit(self):
@@ -121,37 +117,63 @@ class SearXNGTool:
         Returns:
             List of PaperRef objects matching the search criteria
         """
+        # Use synchronous HTTP client to avoid async issues
         try:
-            # Run async search in event loop
-            return asyncio.run(self.search_async(query))
-        except RuntimeError:
-            # If we're already in an event loop, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(self.search_async(query))
-            finally:
-                loop.close()
+            self._enforce_rate_limit()
+            
+            # Build search parameters for POST request
+            search_params = self._build_search_params(query)
+            search_url = f"{self.base_url.rstrip('/')}/search"
+            
+            logger.info(f"Searching SearXNG: {search_url} with params: {search_params}")
+            
+            # Use synchronous HTTP client with POST request
+            with httpx.Client(timeout=30.0, headers={
+                "User-Agent": "NLP-Learning-Workflow/1.0",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }) as sync_client:
+                response = sync_client.post(search_url, data=search_params)
+                response.raise_for_status()
+                
+                # Parse HTML results since JSON API seems restricted
+                return self._parse_html_results(response.text, query.max_results)
+                
+        except Exception as e:
+            logger.error(f"SearXNG search failed: {e}")
+            return []
     
-    def _build_search_url(self, query: SearchQuery) -> str:
+    def _build_search_params(self, query: SearchQuery) -> Dict[str, str]:
         """
-        Build SearXNG search URL with parameters.
+        Build SearXNG search parameters for POST request.
         
         Args:
             query: SearchQuery object with search parameters
             
         Returns:
-            Complete SearXNG search URL
+            Dictionary of search parameters for POST request
         """
-        # Base search parameters
+        # Base search parameters following SearXNG form structure
         params = {
             "q": query.query,
-            "format": "json",
-            "categories": "science",  # Focus on scientific content
-            "engines": ",".join(self.academic_engines),  # Prefer academic engines
-            "safesearch": "0",  # No content filtering
-            "pageno": "1"  # First page
+            "category_general": "1",  # Enable general search category
+            "language": "en",         # Default language
+            "time_range": "",         # No time restriction by default
+            "safesearch": "0",        # No content filtering
+            "theme": "simple"         # Theme (required by SearXNG)
         }
+        
+        # Use specific engine if requested, otherwise use all available
+        if query.filters and "engines" in query.filters:
+            engine_name = query.filters["engines"]
+            # Enable specific engine categories based on the engine
+            if engine_name == "arxiv":
+                params["category_science"] = "1"
+            elif engine_name == "duckduckgo":
+                params["category_general"] = "1"
+        else:
+            # Enable science category for academic searches
+            params["category_science"] = "1"
         
         # Add additional filters from query
         if query.filters:
@@ -162,10 +184,43 @@ class SearXNGTool:
             # Language filter
             if "language" in query.filters:
                 params["language"] = query.filters["language"]
+        
+        return params
+        
+    def _build_search_url(self, query: SearchQuery) -> str:
+        """
+        Build SearXNG search URL with parameters (legacy method for async).
+        
+        Args:
+            query: SearchQuery object with search parameters
             
-            # Custom engines override
-            if "engines" in query.filters:
-                params["engines"] = query.filters["engines"]
+        Returns:
+            Complete SearXNG search URL
+        """
+        # Base search parameters - simplified to avoid URL length issues
+        params = {
+            "q": query.query,
+            "format": "json",
+            "safesearch": "0",  # No content filtering
+            "pageno": "1"  # First page
+        }
+        
+        # Use only one engine at a time to avoid conflicts
+        if query.filters and "engines" in query.filters:
+            params["engines"] = query.filters["engines"]
+        else:
+            # Default to just arxiv for academic searches
+            params["engines"] = "arxiv"
+        
+        # Add additional filters from query
+        if query.filters:
+            # Time filter
+            if "time_range" in query.filters:
+                params["time_range"] = query.filters["time_range"]
+            
+            # Language filter
+            if "language" in query.filters:
+                params["language"] = query.filters["language"]
         
         # Build URL
         search_url = f"{self.base_url.rstrip('/')}/search?{urlencode(params)}"
@@ -195,6 +250,139 @@ class SearXNGTool:
                 continue
         
         return papers
+    
+    def _parse_html_results(self, html_content: str, max_results: int) -> List[PaperRef]:
+        """
+        Parse SearXNG HTML response into PaperRef objects.
+        
+        Args:
+            html_content: HTML response from SearXNG
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of PaperRef objects
+        """
+        papers = []
+        
+        try:
+            # Simple HTML parsing to extract search results
+            # Look for result articles
+            import re
+            
+            # Extract all result articles
+            article_pattern = r'<article class="result[^"]*"[^>]*>(.*?)</article>'
+            articles = re.findall(article_pattern, html_content, re.DOTALL)
+            
+            for i, article_html in enumerate(articles[:max_results]):
+                try:
+                    paper_ref = self._extract_paper_from_html(article_html)
+                    if paper_ref:
+                        papers.append(paper_ref)
+                except Exception as e:
+                    logger.warning(f"Failed to parse HTML result {i}: {e}")
+                    continue
+            
+            logger.info(f"Parsed {len(papers)} papers from HTML results")
+            
+        except Exception as e:
+            logger.error(f"Failed to parse HTML results: {e}")
+        
+        return papers
+    
+    def _extract_paper_from_html(self, article_html: str) -> Optional[PaperRef]:
+        """
+        Extract paper information from a single HTML article.
+        
+        Args:
+            article_html: HTML content of a single search result
+            
+        Returns:
+            PaperRef object or None if extraction fails
+        """
+        try:
+            import re
+            
+            # Extract title and URL
+            title_pattern = r'<h3><a href="([^"]+)"[^>]*>(.+?)</a></h3>'
+            title_match = re.search(title_pattern, article_html, re.DOTALL)
+            
+            if not title_match:
+                return None
+            
+            url = title_match.group(1)
+            title_html = title_match.group(2)
+            
+            # Clean title (remove HTML tags)
+            title = re.sub(r'<[^>]+>', '', title_html).strip()
+            
+            if not title or not url:
+                return None
+            
+            # Extract content/abstract
+            content_pattern = r'<p class="content">\s*(.*?)\s*</p>'
+            content_match = re.search(content_pattern, article_html, re.DOTALL)
+            content = ""
+            if content_match:
+                content = re.sub(r'<[^>]+>', '', content_match.group(1)).strip()
+            
+            # Generate paper ID
+            paper_id = self._generate_paper_id(url, title)
+            
+            # Extract basic paper info
+            authors = self._extract_authors(title, content)
+            year = self._extract_year(title, content, url)
+            venue = self._extract_venue_from_url(url)
+            
+            # Check if it's a PDF
+            pdf_url = None
+            if url.endswith('.pdf') or 'pdf' in url.lower():
+                pdf_url = url
+            
+            # Use content as abstract if available
+            abstract = content[:500] if content else None
+            
+            return PaperRef(
+                id=paper_id,
+                title=title,
+                authors=authors,
+                venue=venue,
+                year=year,
+                url_pdf=pdf_url,
+                abstract=abstract,
+                citation_count=None
+            )
+            
+        except Exception as e:
+            logger.warning(f"Error extracting paper from HTML: {e}")
+            return None
+    
+    def _extract_venue_from_url(self, url: str) -> Optional[str]:
+        """Extract venue/source from URL."""
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc.lower()
+            
+            venue_map = {
+                "arxiv.org": "arXiv",
+                "scholar.google.com": "Google Scholar",
+                "pubmed.ncbi.nlm.nih.gov": "PubMed",
+                "semanticscholar.org": "Semantic Scholar",
+                "ieee.org": "IEEE",
+                "acm.org": "ACM",
+                "springer.com": "Springer",
+                "nature.com": "Nature",
+                "science.org": "Science"
+            }
+            
+            for key, venue in venue_map.items():
+                if key in domain:
+                    return venue
+            
+            # Fallback to domain name
+            return domain.replace('www.', '').title()
+            
+        except Exception:
+            return "Unknown"
     
     def _convert_result_to_paper_ref(self, result: Dict[str, Any]) -> Optional[PaperRef]:
         """
@@ -344,7 +532,15 @@ class SearXNGTool:
     def __del__(self):
         """Cleanup when object is destroyed."""
         try:
-            asyncio.run(self.close())
+            # Only try to close if we have a client and no running event loop
+            if hasattr(self, 'client') and self.client and not self.client.is_closed:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if not loop.is_running():
+                        asyncio.run(self.close())
+                except:
+                    # If we can't close gracefully, just set client to None
+                    self.client = None
         except Exception:
             pass  # Ignore cleanup errors
 
