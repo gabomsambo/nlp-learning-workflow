@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: nlp_qdrant
+    ports:
+      - "6333:6333" # gRPC port
+      - "6334:6334" # REST API port (for the web UI)
+    volumes:
+      - ./qdrant_data:/qdrant/storage # Persists vector data on your local disk
+    restart: unless-stopped
+
+  # Supabase (Postgres Database)
+  # Note: This is a simplified setup using a standard Postgres image,
+  # which is sufficient for our Python DAO. It doesn't include the full Supabase stack.
+  db:
+    image: postgres:15
+    container_name: nlp_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword # You should change this
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432" # Standard Postgres port
+    volumes:
+      - ./supabase_data:/var/lib/postgresql/data # Persists database data on your local disk
+    restart: unless-stopped
+
+  # SearXNG Metasearch Engine
+  searxng:
+    image: searxng/searxng:latest
+    container_name: nlp_searxng
+    ports:
+      - "8080:8080" # Web interface port
+    volumes:
+      - ./searxng_config:/etc/searxng # Persists configuration
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  supabase_data:
+  searxng_config:
