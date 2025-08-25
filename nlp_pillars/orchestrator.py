@@ -297,6 +297,8 @@ class Orchestrator:
         
         # Step 5f: Store in vector database
         logger.info(f"Step 5f: Upserting vectors for paper {paper.id} in pillar {pillar_id.value}")
+        # Ensure Qdrant collection exists before upserting
+        vectors.ensure_collections()
         vectors.upsert_text(pillar_id, paper.id, parsed_paper.full_text)
         
         logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id.value}")

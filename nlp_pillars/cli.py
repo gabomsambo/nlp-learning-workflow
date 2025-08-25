@@ -55,7 +55,7 @@ def _setup_logging():
     """Setup logging based on configuration."""
     settings = get_settings()
     logging.basicConfig(
-        level=getattr(logging, settings.LOG_LEVEL.upper()),
+        level=getattr(logging, settings.log_level.upper()),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
