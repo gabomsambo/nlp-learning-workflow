@@ -171,3 +171,23 @@ core.*
 
 /MDFILES
 CLAUDE.md
+
+# Temporary fix/debug scripts
+/fix_*.py
+/fix_*.sh
+/complete_fix.sh
+/quick_fix.sh
+/final_test.py
+/generate_jwt.py
+/verify_setup.py
+
+# Development notes (personal)
+/PLANNING.md
+/TASK.md
+
+# Temporary config files
+*.yml.new
+*.yaml.new
+
+# UV lock file (optional - remove if you want to track it)
+uv.lock

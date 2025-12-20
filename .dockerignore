@@ -1,0 +1,66 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+
+# Data directories (don't copy into container)
+qdrant_data/
+supabase_data/
+data/
+pdfs/
+cache/
+logs/
+exports/
+
+# Docker
+docker/
+Dockerfile
+docker-compose*.yml
+
+# Documentation (not needed at runtime)
+docs/
+*.md
+PRPs/
+MDFILES/
+
+# Tests (can be excluded for production builds)
+tests/
+
+# Misc
+*.bak
+*.tmp
+*.log
+.DS_Store
+.env.example
+
+# Development scripts
+fix_*.py
+fix_*.sh
+test_*.py
+demo_*.py
+debug_*.py
+*.lock
+
