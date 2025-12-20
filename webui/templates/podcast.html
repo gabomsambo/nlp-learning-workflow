@@ -1,0 +1,254 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Podcast Script Generation</h2>
+<p>Generate educational podcast scripts from papers using AI.</p>
+
+<form id="generate-form">
+  <div class="grid">
+    <label>
+      Pillar (filter)
+      <select name="pillar" id="pillar-select">
+        <option value="">All Pillars</option>
+        {% for pillar in pillars %}
+        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Paper
+      <select name="paper" id="paper-select" required>
+        <option value="">Select a paper...</option>
+        {% for paper in papers %}
+        <option value="{{ paper.id }}" data-pillar="{{ paper.pillar_id }}">{{ paper.title[:60] }}{% if paper.title|length > 60 %}...{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="submit" id="generate-btn">Generate Podcast Script</button>
+</form>
+
+<div id="status-area" style="margin: 1rem 0;">
+  <span id="status"></span>
+  <progress id="progress-bar" value="0" max="100" style="display: none; width: 100%;"></progress>
+</div>
+
+<div id="script-area" style="display: none; margin-top: 1rem;">
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 id="script-title">Generated Script</h3>
+    <button type="button" id="download-btn" class="secondary">Download .txt</button>
+  </div>
+  <p><small>Word count: <span id="word-count">0</span></small></p>
+
+  <div id="key-points" style="margin-bottom: 1rem;">
+    <strong>Key Points:</strong>
+    <ul id="key-points-list"></ul>
+  </div>
+
+  <div id="script-content" style="background: #f5f5f5; padding: 1rem; border-radius: 8px; max-height: 500px; overflow-y: auto; font-family: monospace; white-space: pre-wrap;">
+  </div>
+</div>
+
+<div id="existing-scripts" style="margin-top: 2rem;">
+  <h3>Existing Scripts</h3>
+  {% if scripts %}
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Paper ID</th>
+        <th>Words</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for script in scripts %}
+      <tr>
+        <td>{{ script.title[:40] }}{% if script.title|length > 40 %}...{% endif %}</td>
+        <td>{{ script.paper_id[:20] }}{% if script.paper_id|length > 20 %}...{% endif %}</td>
+        <td>{{ script.word_count }}</td>
+        <td>{{ script.created_at.strftime('%Y-%m-%d') if script.created_at else 'N/A' }}</td>
+        <td>
+          <button type="button" class="secondary outline" onclick="loadScript('{{ script.id }}')">View</button>
+          <a href="/api/podcast/{{ script.id }}/download" class="secondary outline">Download</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No podcast scripts generated yet.</p>
+  {% endif %}
+</div>
+
+<script>
+// State
+let currentScriptId = null;
+
+// Elements
+const generateForm = document.getElementById('generate-form');
+const pillarSelect = document.getElementById('pillar-select');
+const paperSelect = document.getElementById('paper-select');
+const statusEl = document.getElementById('status');
+const progressBar = document.getElementById('progress-bar');
+const scriptArea = document.getElementById('script-area');
+const scriptTitle = document.getElementById('script-title');
+const wordCount = document.getElementById('word-count');
+const keyPointsList = document.getElementById('key-points-list');
+const scriptContent = document.getElementById('script-content');
+const downloadBtn = document.getElementById('download-btn');
+
+// Filter papers by pillar
+pillarSelect.addEventListener('change', () => {
+  const selectedPillar = pillarSelect.value;
+  const options = paperSelect.querySelectorAll('option');
+
+  options.forEach(option => {
+    if (option.value === '') return; // Keep the placeholder
+
+    if (!selectedPillar || option.dataset.pillar === selectedPillar) {
+      option.style.display = '';
+    } else {
+      option.style.display = 'none';
+    }
+  });
+
+  // Reset paper selection if current is hidden
+  if (paperSelect.selectedOptions[0]?.style.display === 'none') {
+    paperSelect.value = '';
+  }
+});
+
+// Generate podcast script
+generateForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const paperId = paperSelect.value;
+  const pillarId = paperSelect.selectedOptions[0]?.dataset.pillar || pillarSelect.value;
+
+  if (!paperId) {
+    alert('Please select a paper');
+    return;
+  }
+
+  // Update UI for loading state
+  statusEl.textContent = 'Generating podcast script... This may take 30-60 seconds.';
+  statusEl.style.color = '';
+  progressBar.style.display = 'block';
+  progressBar.value = 0;
+  scriptArea.style.display = 'none';
+  generateForm.querySelector('button').disabled = true;
+
+  // Simulate progress
+  const progressInterval = setInterval(() => {
+    if (progressBar.value < 90) {
+      progressBar.value += 2;
+    }
+  }, 1000);
+
+  try {
+    const res = await fetch('/api/podcast/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paper_id: paperId, pillar_id: pillarId || 'models-architectures' })
+    });
+
+    const data = await res.json();
+
+    clearInterval(progressInterval);
+    progressBar.value = 100;
+
+    if (!res.ok) {
+      throw new Error(data.detail || 'Generation failed');
+    }
+
+    currentScriptId = data.script_id;
+    statusEl.textContent = `Script generated successfully! ${data.word_count} words.`;
+    statusEl.style.color = 'green';
+
+    // Fetch full script details
+    await loadScript(data.script_id);
+
+  } catch (err) {
+    clearInterval(progressInterval);
+    statusEl.textContent = `Error: ${err.message}`;
+    statusEl.style.color = 'red';
+    progressBar.style.display = 'none';
+  } finally {
+    generateForm.querySelector('button').disabled = false;
+  }
+});
+
+// Load and display script
+async function loadScript(scriptId) {
+  try {
+    const res = await fetch(`/api/podcast/${scriptId}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || 'Failed to load script');
+    }
+
+    const script = data.script;
+    currentScriptId = scriptId;
+
+    // Update UI
+    scriptTitle.textContent = script.title;
+    wordCount.textContent = script.word_count;
+
+    // Format key points
+    keyPointsList.innerHTML = '';
+    (script.key_points || []).forEach(point => {
+      const li = document.createElement('li');
+      li.textContent = point;
+      keyPointsList.appendChild(li);
+    });
+
+    // Format script content with [HOST]: highlighting
+    let formattedContent = script.script;
+    formattedContent = formattedContent.replace(/\[HOST\]:/g, '<strong style="color: #0066cc;">[HOST]:</strong>');
+    formattedContent = formattedContent.replace(/\[(MUSIC|SFX|PAUSE|TRANSITION)\]/g, '<em style="color: #666;">[$1]</em>');
+    scriptContent.innerHTML = formattedContent;
+
+    scriptArea.style.display = 'block';
+    progressBar.style.display = 'none';
+
+  } catch (err) {
+    console.error('Error loading script:', err);
+    statusEl.textContent = `Error loading script: ${err.message}`;
+    statusEl.style.color = 'red';
+  }
+}
+
+// View existing script
+async function viewScript(paperId) {
+  statusEl.textContent = 'Loading script...';
+
+  try {
+    // Find script by paper_id from list endpoint
+    const res = await fetch(`/api/podcast/list?limit=100`);
+    const data = await res.json();
+
+    const script = data.scripts.find(s => s.paper_id === paperId);
+    if (script) {
+      // We need to get the script by ID, but we don't have it in the list
+      // For now, just show a message
+      statusEl.textContent = 'Script found. Use the paper selector and regenerate to view full details.';
+    } else {
+      statusEl.textContent = 'Script not found';
+      statusEl.style.color = 'red';
+    }
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    statusEl.style.color = 'red';
+  }
+}
+
+// Download script
+downloadBtn.addEventListener('click', () => {
+  if (currentScriptId) {
+    window.location.href = `/api/podcast/${currentScriptId}/download`;
+  }
+});
+</script>
+{% endblock %}

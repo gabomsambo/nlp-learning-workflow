@@ -8,7 +8,7 @@ import logging
 from unittest.mock import Mock, patch, MagicMock
 from pydantic import ValidationError
 
-from nlp_pillars.schemas import SummarizerInput, PaperNote, ParsedPaper, PaperRef, PillarID
+from nlp_pillars.schemas import SummarizerInput, PaperNote, ParsedPaper, PaperRef
 from nlp_pillars.agents.summarizer_agent import (
     SummarizerAgentImpl, 
     SummarizerValidationError,
@@ -55,7 +55,7 @@ def sample_summarizer_input(sample_parsed_paper):
     """Sample SummarizerInput for testing."""
     return SummarizerInput(
         parsed_paper=sample_parsed_paper,
-        pillar_id=PillarID.P2,
+        pillar_id=models-architectures,
         recent_notes=[
             "Previous paper on RNNs showed limited parallelization capabilities",
             "Recent work on transformers achieved breakthrough performance"
@@ -68,7 +68,7 @@ def valid_paper_note():
     """Valid PaperNote response for testing."""
     return PaperNote(
         paper_id="test.12345",
-        pillar_id=PillarID.P2,
+        pillar_id=models-architectures,
         problem="Limited effectiveness of traditional attention mechanisms in sequence-to-sequence learning",
         method="Multi-head attention mechanism with parallel processing capabilities",
         findings=[
@@ -124,7 +124,7 @@ class TestSummarizerAgentImpl:
         # Verify result
         assert isinstance(result, PaperNote)
         assert result.paper_id == "test.12345"
-        assert result.pillar_id == PillarID.P2
+        assert result.pillar_id == models-architectures
         assert result.problem == valid_paper_note.problem
         assert result.method == valid_paper_note.method
         assert len(result.findings) == 3
@@ -294,7 +294,7 @@ class TestConvenienceFunctions:
         
         result = summarize(
             parsed_paper=sample_parsed_paper,
-            pillar_id=PillarID.P2,
+            pillar_id=models-architectures,
             recent_notes=["Recent note"]
         )
         
@@ -306,7 +306,7 @@ class TestConvenienceFunctions:
         call_args = mock_agent.run.call_args[0][0]
         assert isinstance(call_args, SummarizerInput)
         assert call_args.parsed_paper == sample_parsed_paper
-        assert call_args.pillar_id == PillarID.P2
+        assert call_args.pillar_id == models-architectures
         assert call_args.recent_notes == ["Recent note"]
     
     @patch('nlp_pillars.agents.summarizer_agent.SummarizerAgent', None)
@@ -315,7 +315,7 @@ class TestConvenienceFunctions:
         with pytest.raises(ValueError, match="SummarizerAgent is not initialized"):
             summarize(
                 parsed_paper=sample_parsed_paper,
-                pillar_id=PillarID.P2
+                pillar_id=models-architectures
             )
     
     @patch('nlp_pillars.agents.summarizer_agent.get_settings')
@@ -375,7 +375,7 @@ class TestIntegration:
         # Verify result
         assert isinstance(result, PaperNote)
         assert result.paper_id == "test.12345"
-        assert result.pillar_id == PillarID.P2
+        assert result.pillar_id == models-architectures
         
         # Verify all required fields are present
         assert result.problem

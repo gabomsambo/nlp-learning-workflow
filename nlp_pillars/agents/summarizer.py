@@ -5,20 +5,20 @@ Summarizer Agent - Extracts structured information from research papers.
 from typing import List, Optional
 import instructor
 from openai import OpenAI
-# TODO: Replace with proper atomic_agents imports when v2.0+ is available  
+# TODO: Replace with proper atomic_agents imports when v2.0+ is available
 # from atomic_agents import AtomicAgent, AgentConfig
 # from atomic_agents.context import SystemPromptGenerator, ChatHistory
 
 # Using the temporary mock classes from discovery_agent
 from .discovery_agent import AtomicAgent, AgentConfig, SystemPromptGenerator, ChatHistory
 
-from ..schemas import ParsedPaper, PaperNote, PillarID, SummarizerInput
+from ..schemas import ParsedPaper, PaperNote, SummarizerInput
 from ..config import get_settings
 
 
 class SummarizerAgent:
     """Agent that summarizes research papers into structured notes."""
-    
+
     def __init__(self, model: Optional[str] = None):
         """Initialize the Summarizer Agent.
         
@@ -27,7 +27,7 @@ class SummarizerAgent:
         """
         settings = get_settings()
         self.model = model or settings.default_model
-        
+
         # Create the system prompt generator
         self.system_prompt = SystemPromptGenerator(
             background=[
@@ -55,10 +55,10 @@ class SummarizerAgent:
                 "Extract 5-10 key technical terms"
             ]
         )
-        
+
         # Initialize the OpenAI client with instructor
         client = instructor.from_openai(OpenAI(api_key=settings.openai_api_key))
-        
+
         # Create the Atomic Agent
         self.agent = AtomicAgent[SummarizerInput, PaperNote](
             config=AgentConfig(
@@ -68,11 +68,11 @@ class SummarizerAgent:
                 history=ChatHistory(),
             )
         )
-    
+
     def summarize(
-        self, 
+        self,
         parsed_paper: ParsedPaper,
-        pillar_id: PillarID,
+        pillar_id: str,
         recent_notes: Optional[List[str]] = None
     ) -> PaperNote:
         """Summarize a research paper into structured notes.
@@ -91,20 +91,20 @@ class SummarizerAgent:
             pillar_id=pillar_id,
             recent_notes=recent_notes or []
         )
-        
+
         # Run the agent
         result = self.agent.run(agent_input)
-        
+
         # Add paper ID and pillar ID to the result
         result.paper_id = parsed_paper.paper_ref.id
         result.pillar_id = pillar_id
-        
+
         return result
-    
+
     def summarize_batch(
         self,
         papers: List[ParsedPaper],
-        pillar_id: PillarID
+        pillar_id: str
     ) -> List[PaperNote]:
         """Summarize multiple papers, maintaining context between them.
         
@@ -117,7 +117,7 @@ class SummarizerAgent:
         """
         notes = []
         recent_summaries = []
-        
+
         for paper in papers:
             # Use previous summaries as context
             note = self.summarize(
@@ -125,15 +125,15 @@ class SummarizerAgent:
                 pillar_id=pillar_id,
                 recent_notes=recent_summaries[-3:]  # Last 3 summaries for context
             )
-            
+
             notes.append(note)
-            
+
             # Add a brief summary to context for next paper
             summary = f"{paper.paper_ref.title}: {note.problem} - {note.method}"
             recent_summaries.append(summary[:200])  # Limit length
-        
+
         return notes
-    
+
     def reset_context(self):
         """Reset the agent's conversation history."""
         self.agent.config.history.clear()
@@ -143,7 +143,7 @@ class SummarizerAgent:
 if __name__ == "__main__":
     # This would typically be called from the orchestrator
     from ..schemas import PaperRef
-    
+
     # Create sample data
     sample_paper_ref = PaperRef(
         id="2401.12345",
@@ -153,7 +153,7 @@ if __name__ == "__main__":
         venue="NeurIPS",
         url_pdf="https://arxiv.org/pdf/1706.03762.pdf"
     )
-    
+
     sample_parsed_paper = ParsedPaper(
         paper_ref=sample_paper_ref,
         full_text="[Paper text would go here...]",
@@ -162,17 +162,17 @@ if __name__ == "__main__":
         tables_count=3,
         references=["ref1", "ref2"]
     )
-    
+
     # Initialize agent
     agent = SummarizerAgent()
-    
+
     # Summarize paper
     note = agent.summarize(
         parsed_paper=sample_parsed_paper,
-        pillar_id=PillarID.P2,  # Models & Architectures
+        pillar_id="models-architectures",
         recent_notes=[]
     )
-    
+
     print(f"Problem: {note.problem}")
     print(f"Method: {note.method}")
     print(f"Key findings: {note.findings}")

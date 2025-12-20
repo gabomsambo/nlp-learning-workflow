@@ -24,6 +24,12 @@ wheels/
 *.egg
 MANIFEST
 
+# Python type checking & linting caches
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+
 # Virtual Environment
 venv/
 env/
@@ -103,6 +109,15 @@ secrets/
 qdrant_data/
 qdrant_storage/
 
+# Supabase Local Development
+supabase_data/
+.supabase/
+
+# PostgreSQL
+*.pid
+pg_stat/
+postmaster.pid
+
 # Model files
 *.ckpt
 *.pt
@@ -117,3 +132,42 @@ qdrant_storage/
 *.tar.gz
 *.rar
 *.7z
+
+# Claude Code
+/.claude
+/PRPs
+
+# Temporary/Debug scripts in root
+/test_*.py
+/debug_*.py
+/demo_*.py
+/cleanup_*.py
+
+# Credentials & Tokens
+credentials.json
+token.json
+*.credentials
+service_account.json
+client_secret*.json
+
+# Node.js (if frontend added)
+node_modules/
+package-lock.json
+yarn.lock
+.npm/
+
+# Profiling
+*.prof
+*.lprof
+
+# Core dumps
+core
+core.*
+
+# Editor directories
+.history/
+*.sublime-project
+*.sublime-workspace
+
+/MDFILES
+CLAUDE.md

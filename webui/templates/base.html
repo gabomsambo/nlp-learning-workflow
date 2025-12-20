@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title or 'NLP Workflow' }}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <ul>
+        <li><strong>NLP Workflow</strong></li>
+      </ul>
+      <ul>
+        <li><a href="/">Dashboard</a></li>
+        <li><a href="/pillars/">Pillars</a></li>
+        <li><a href="/discovery/">Discovery</a></li>
+        <li><a href="/papers/">Papers</a></li>
+        <li><a href="/lessons/">Lessons</a></li>
+        <li><a href="/quiz/">Quiz</a></li>
+        <li><a href="/podcast/">Podcast</a></li>
+        <li><a href="/pipeline/">Pipeline</a></li>
+        <li><a href="/analytics/">Analytics</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container"><small>Local PostgREST at http://localhost:3000</small></footer>
+</body>
+</html>
+
+

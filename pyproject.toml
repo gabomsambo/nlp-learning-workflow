@@ -1,3 +1,6 @@
+# Web UI package for NLPWorkflow.
+# Provides FastAPI app, routes, templates, and static assets to browse data
+# from PostgREST and trigger the existing pipeline.
 [tool.poetry]
 name = "nlp-learning-workflow"
 version = "0.1.0"
@@ -17,8 +20,16 @@ groq = "^0.5.0"
 supabase = "^2.0.0"
 qdrant-client = "^1.8.0"
 pypdf = "^4.0.0"
+semchunk = "^0.1.0"
+layoutparser = "^0.3.4"
+torch = "^2.0.0"
+torchvision = "^0.15.0"
+pdf2image = "^1.16.0"
+pytesseract = "^0.3.10"
+Pillow = "^10.0.0"
 typer = "^0.9.0"
 rich = "^13.0.0"
+fsrs = "^6.0.0"
 httpx = "^0.25.0"
 arxiv = "^2.1.0"
 python-dotenv = "^1.0.0"

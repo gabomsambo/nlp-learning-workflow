@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+
+{% block title %}Learning Pillars{% endblock %}
+
+{% block content %}
+<div class="container">
+    <hgroup>
+        <h1>Learning Pillars</h1>
+        <p>Manage your personalized learning paths and focus areas.</p>
+    </hgroup>
+
+    <!-- Action buttons -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+            <button class="btn-new-pillar" data-tooltip="Create a new learning pillar">
+                ➕ New Pillar
+            </button>
+        </div>
+        <div>
+            <small>{{ pillars|length }} pillar{{ 's' if pillars|length != 1 else '' }}</small>
+        </div>
+    </div>
+
+    <!-- Pillars grid -->
+    {% if pillars %}
+    <div class="pillars-grid">
+        {% for pillar in pillars %}
+        <article class="pillar-card" data-pillar-id="{{ pillar.id }}">
+            <header>
+                <h3>
+                    <a href="/pillars/{{ pillar.id }}" class="pillar-title">{{ pillar.name }}</a>
+                </h3>
+                <div class="pillar-meta">
+                    <small>{{ pillar.papers_per_day }} papers/day</small>
+                    <small>{{ pillar.created_at.strftime('%b %d, %Y') }}</small>
+                </div>
+            </header>
+            
+            <div class="pillar-goal">
+                <p>{{ pillar.goal }}</p>
+            </div>
+            
+            {% if pillar.focus_areas %}
+            <div class="focus-areas">
+                {% for area in pillar.focus_areas[:3] %}
+                    <span class="focus-tag">{{ area }}</span>
+                {% endfor %}
+                {% if pillar.focus_areas|length > 3 %}
+                    <span class="focus-tag-more">+{{ pillar.focus_areas|length - 3 }} more</span>
+                {% endif %}
+            </div>
+            {% endif %}
+            
+            <footer class="pillar-actions">
+                <button class="btn-edit" data-pillar-id="{{ pillar.id }}" data-tooltip="Edit pillar">
+                    ✏️ Edit
+                </button>
+                <button class="btn-delete" data-pillar-id="{{ pillar.id }}" data-tooltip="Delete pillar">
+                    🗑️ Delete
+                </button>
+            </footer>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h3>No pillars yet</h3>
+        <p>Create your first learning pillar to get started with personalized NLP learning.</p>
+        <button class="btn-new-pillar">➕ Create First Pillar</button>
+    </div>
+    {% endif %}
+</div>
+
+<!-- New/Edit Pillar Modal -->
+<dialog id="pillar-modal">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" id="modal-close"></button>
+            <h3 id="modal-title">New Pillar</h3>
+        </header>
+        
+        <form id="pillar-form">
+            <fieldset>
+                <label for="pillar-name">
+                    Pillar Name *
+                    <input type="text" id="pillar-name" name="name" placeholder="e.g., Advanced Transformers" required maxlength="100">
+                    <small id="name-feedback" class="feedback"></small>
+                </label>
+                
+                <label for="pillar-goal">
+                    Learning Goal *
+                    <textarea id="pillar-goal" name="goal" placeholder="Describe what you want to learn and achieve with this pillar..." required maxlength="500" rows="3"></textarea>
+                    <small id="goal-feedback" class="feedback"></small>
+                </label>
+                
+                <label for="pillar-focus-areas">
+                    Focus Areas (one per line)
+                    <textarea id="pillar-focus-areas" name="focus_areas" placeholder="attention mechanisms&#10;transformer architecture&#10;model optimization" rows="4"></textarea>
+                    <small>Enter topics you want to focus on, one per line</small>
+                </label>
+                
+                <label for="pillar-papers-per-day">
+                    Papers per Day
+                    <input type="number" id="pillar-papers-per-day" name="papers_per_day" min="1" max="10" value="2">
+                    <small>Target number of papers to process daily (1-10)</small>
+                </label>
+            </fieldset>
+        </form>
+        
+        <footer>
+            <button class="secondary" id="modal-cancel">Cancel</button>
+            <button id="modal-save" form="pillar-form">Save Pillar</button>
+        </footer>
+    </article>
+</dialog>
+
+<!-- Delete Confirmation Modal -->
+<dialog id="delete-modal">
+    <article>
+        <header>
+            <h3>Confirm Delete</h3>
+        </header>
+        <p>Are you sure you want to delete "<span id="delete-pillar-name"></span>"?</p>
+        <p><small>This action cannot be undone. The pillar and its progress will be permanently removed.</small></p>
+        <footer>
+            <button class="secondary" id="delete-cancel">Cancel</button>
+            <button class="delete-btn" id="delete-confirm">Delete</button>
+        </footer>
+    </article>
+</dialog>
+
+<style>
+.pillars-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.pillar-card {
+    border: 1px solid var(--border-color);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    transition: box-shadow 0.2s ease;
+}
+
+.pillar-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.pillar-title {
+    text-decoration: none;
+    color: var(--primary);
+}
+
+.pillar-title:hover {
+    text-decoration: underline;
+}
+
+.pillar-meta {
+    display: flex;
+    gap: 1rem;
+    color: var(--muted-color);
+    margin-top: 0.25rem;
+}
+
+.pillar-goal {
+    margin: 1rem 0;
+    color: var(--color);
+}
+
+.focus-areas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1rem 0;
+}
+
+.focus-tag {
+    background: var(--primary-background);
+    color: var(--primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.focus-tag-more {
+    background: var(--secondary-background);
+    color: var(--secondary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+}
+
+.pillar-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.btn-edit, .btn-delete {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.8rem;
+}
+
+.btn-delete {
+    background: var(--del-color);
+    border-color: var(--del-color);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--muted-color);
+}
+
+.empty-state h3 {
+    color: var(--color);
+    margin-bottom: 0.5rem;
+}
+
+.feedback {
+    color: var(--del-color);
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+}
+
+.delete-btn {
+    background: var(--del-color);
+    border-color: var(--del-color);
+}
+
+/* Loading and disabled states */
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+</style>
+
+<script>
+// State management
+let currentPillarId = null;
+let isEditing = false;
+
+// DOM elements
+const modal = document.getElementById('pillar-modal');
+const deleteModal = document.getElementById('delete-modal');
+const form = document.getElementById('pillar-form');
+const modalTitle = document.getElementById('modal-title');
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    // New pillar buttons
+    document.querySelectorAll('.btn-new-pillar').forEach(btn => {
+        btn.addEventListener('click', () => openModal());
+    });
+    
+    // Edit buttons
+    document.querySelectorAll('.btn-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const pillarId = e.target.dataset.pillarId;
+            openModal(pillarId);
+        });
+    });
+    
+    // Delete buttons
+    document.querySelectorAll('.btn-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const pillarId = e.target.dataset.pillarId;
+            confirmDelete(pillarId);
+        });
+    });
+    
+    // Modal controls
+    document.getElementById('modal-close').addEventListener('click', closeModal);
+    document.getElementById('modal-cancel').addEventListener('click', closeModal);
+    document.getElementById('modal-save').addEventListener('click', savePillar);
+    
+    // Delete modal controls
+    document.getElementById('delete-cancel').addEventListener('click', closeDeleteModal);
+    document.getElementById('delete-confirm').addEventListener('click', deletePillar);
+    
+    // Form validation
+    setupFormValidation();
+});
+
+function openModal(pillarId = null) {
+    currentPillarId = pillarId;
+    isEditing = !!pillarId;
+    
+    modalTitle.textContent = isEditing ? 'Edit Pillar' : 'New Pillar';
+    
+    if (isEditing) {
+        loadPillarData(pillarId);
+    } else {
+        form.reset();
+        clearFeedback();
+    }
+    
+    modal.showModal();
+}
+
+function closeModal() {
+    modal.close();
+    form.reset();
+    clearFeedback();
+    currentPillarId = null;
+    isEditing = false;
+}
+
+async function loadPillarData(pillarId) {
+    try {
+        const response = await fetch(`/api/pillars/${pillarId}`);
+        if (!response.ok) throw new Error('Failed to load pillar data');
+        
+        const pillar = await response.json();
+        
+        document.getElementById('pillar-name').value = pillar.name;
+        document.getElementById('pillar-goal').value = pillar.goal;
+        document.getElementById('pillar-focus-areas').value = pillar.focus_areas.join('\n');
+        document.getElementById('pillar-papers-per-day').value = pillar.papers_per_day;
+        
+    } catch (error) {
+        console.error('Error loading pillar:', error);
+        showFeedback('name', 'Failed to load pillar data');
+    }
+}
+
+async function savePillar() {
+    if (!validateForm()) return;
+    
+    const formData = new FormData(form);
+    const focusAreas = formData.get('focus_areas')
+        .split('\n')
+        .map(area => area.trim())
+        .filter(area => area.length > 0);
+    
+    const pillarData = {
+        name: formData.get('name').trim(),
+        goal: formData.get('goal').trim(),
+        focus_areas: focusAreas,
+        papers_per_day: parseInt(formData.get('papers_per_day'))
+    };
+    
+    const saveBtn = document.getElementById('modal-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    
+    try {
+        const url = isEditing ? `/api/pillars/${currentPillarId}` : '/api/pillars/';
+        const method = isEditing ? 'PATCH' : 'POST';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(pillarData)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save pillar');
+        }
+        
+        // Success - reload page to show changes
+        window.location.reload();
+        
+    } catch (error) {
+        console.error('Error saving pillar:', error);
+        showFeedback('name', error.message);
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Pillar';
+    }
+}
+
+function confirmDelete(pillarId) {
+    const pillarCard = document.querySelector(`[data-pillar-id="${pillarId}"]`);
+    const pillarName = pillarCard.querySelector('.pillar-title').textContent;
+    
+    document.getElementById('delete-pillar-name').textContent = pillarName;
+    currentPillarId = pillarId;
+    deleteModal.showModal();
+}
+
+function closeDeleteModal() {
+    deleteModal.close();
+    currentPillarId = null;
+}
+
+async function deletePillar() {
+    const deleteBtn = document.getElementById('delete-confirm');
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = 'Deleting...';
+    
+    try {
+        const response = await fetch(`/api/pillars/${currentPillarId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete pillar');
+        }
+        
+        // Success - reload page to show changes
+        window.location.reload();
+        
+    } catch (error) {
+        console.error('Error deleting pillar:', error);
+        alert('Failed to delete pillar: ' + error.message);
+    } finally {
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Delete';
+    }
+}
+
+function setupFormValidation() {
+    const nameInput = document.getElementById('pillar-name');
+    const goalInput = document.getElementById('pillar-goal');
+    
+    nameInput.addEventListener('input', () => validateField('name'));
+    goalInput.addEventListener('input', () => validateField('goal'));
+}
+
+function validateForm() {
+    const nameValid = validateField('name');
+    const goalValid = validateField('goal');
+    return nameValid && goalValid;
+}
+
+function validateField(fieldName) {
+    const input = document.getElementById(`pillar-${fieldName}`);
+    const value = input.value.trim();
+    
+    let isValid = true;
+    let message = '';
+    
+    if (fieldName === 'name') {
+        if (!value) {
+            isValid = false;
+            message = 'Name is required';
+        } else if (value.length > 100) {
+            isValid = false;
+            message = 'Name must be 100 characters or less';
+        }
+    } else if (fieldName === 'goal') {
+        if (!value) {
+            isValid = false;
+            message = 'Goal is required';
+        } else if (value.length < 10) {
+            isValid = false;
+            message = 'Goal must be at least 10 characters';
+        } else if (value.length > 500) {
+            isValid = false;
+            message = 'Goal must be 500 characters or less';
+        }
+    }
+    
+    showFeedback(fieldName, isValid ? '' : message);
+    return isValid;
+}
+
+function showFeedback(fieldName, message) {
+    const feedback = document.getElementById(`${fieldName}-feedback`);
+    feedback.textContent = message;
+}
+
+function clearFeedback() {
+    document.querySelectorAll('.feedback').forEach(el => el.textContent = '');
+}
+</script>
+{% endblock %}

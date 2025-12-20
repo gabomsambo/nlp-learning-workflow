@@ -8,7 +8,7 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from nlp_pillars.schemas import PaperRef, PaperNote, Lesson, QuizCard, PillarID, DifficultyLevel, QuestionType
+from nlp_pillars.schemas import PaperRef, PaperNote, Lesson, QuizCard, DifficultyLevel, QuestionType
 from nlp_pillars.db import (
     get_client, set_client,
     upsert_paper, mark_processed, insert_note, insert_lesson, insert_quiz_cards,
@@ -39,7 +39,7 @@ def sample_paper_note():
     """Sample paper note for testing."""
     return PaperNote(
         paper_id="test.12345",
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         problem="Limited effectiveness of traditional methods",
         method="Novel approach using advanced techniques",
         findings=["Achieved 95% accuracy", "Reduced processing time by 50%"],
@@ -56,7 +56,7 @@ def sample_lesson():
     """Sample lesson for testing."""
     return Lesson(
         paper_id="test.12345",
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         tl_dr="Novel approach achieves significant improvements in accuracy and speed.",
         takeaways=[
             "Advanced techniques can improve accuracy significantly",
@@ -79,7 +79,7 @@ def sample_quiz_cards():
     return [
         QuizCard(
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="What accuracy did the novel approach achieve?",
             answer="95% accuracy",
             difficulty=DifficultyLevel.EASY,
@@ -91,7 +91,7 @@ def sample_quiz_cards():
         ),
         QuizCard(
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="How does the novel approach improve upon traditional methods?",
             answer="It reduces processing time by 50% while maintaining high accuracy.",
             difficulty=DifficultyLevel.MEDIUM,
@@ -176,13 +176,13 @@ class TestSerializationHelpers:
     
     def test_paper_ref_serialization(self, sample_paper_ref):
         """Test PaperRef to dict and back conversion."""
-        pillar_id = PillarID.P2
-        
+        pillar_id = "models-architectures"
+
         # Convert to dict
         paper_dict = _paper_ref_to_dict(pillar_id, sample_paper_ref)
-        
+
         assert paper_dict['id'] == "test.12345"
-        assert paper_dict['pillar_id'] == "P2"
+        assert paper_dict['pillar_id'] == "models-architectures"
         assert paper_dict['title'] == "Test Paper: Advanced Techniques"
         assert paper_dict['authors'] == ["Dr. Test", "Prof. Example"]
         assert paper_dict['venue'] == "Test Conference"
@@ -205,7 +205,7 @@ class TestSerializationHelpers:
         note_dict = _paper_note_to_dict(sample_paper_note)
         
         assert note_dict['paper_id'] == "test.12345"
-        assert note_dict['pillar_id'] == "P2"
+        assert note_dict['pillar_id'] == "models-architectures"
         assert note_dict['problem'] == "Limited effectiveness of traditional methods"
         assert note_dict['findings'] == ["Achieved 95% accuracy", "Reduced processing time by 50%"]
         assert note_dict['key_terms'] == ["machine learning", "optimization", "algorithm"]
@@ -225,7 +225,7 @@ class TestSerializationHelpers:
         lesson_dict = _lesson_to_dict(sample_lesson)
         
         assert lesson_dict['paper_id'] == "test.12345"
-        assert lesson_dict['pillar_id'] == "P2"
+        assert lesson_dict['pillar_id'] == "models-architectures"
         assert lesson_dict['tl_dr'] == "Novel approach achieves significant improvements in accuracy and speed."
         assert lesson_dict['takeaways'] == sample_lesson.takeaways
         assert lesson_dict['difficulty'] == 2  # DifficultyLevel.MEDIUM
@@ -247,7 +247,7 @@ class TestSerializationHelpers:
         card_dict = _quiz_card_to_dict(card)
         
         assert card_dict['paper_id'] == "test.12345"
-        assert card_dict['pillar_id'] == "P2"
+        assert card_dict['pillar_id'] == "models-architectures"
         assert card_dict['question'] == "What accuracy did the novel approach achieve?"
         assert card_dict['difficulty'] == 1  # DifficultyLevel.EASY
         assert card_dict['question_type'] == "factual"
@@ -275,15 +275,15 @@ class TestUpsertPaper:
         mock_supabase_client.table().upsert().execute.return_value = mock_result
         
         # Call upsert
-        upsert_paper(PillarID.P2, sample_paper_ref)
-        
+        upsert_paper("models-architectures", sample_paper_ref)
+
         # Verify calls
         mock_supabase_client.table.assert_called_with('papers')
-        
+
         # Verify upsert data includes pillar_id
         call_args = mock_supabase_client.table().upsert.call_args
         upsert_data = call_args[0][0]
-        assert upsert_data['pillar_id'] == 'P2'
+        assert upsert_data['pillar_id'] == 'models-architectures'
         assert upsert_data['id'] == 'test.12345'
         assert upsert_data['title'] == sample_paper_ref.title
     
@@ -295,9 +295,9 @@ class TestUpsertPaper:
     def test_upsert_paper_no_paper_id(self):
         """Test upsert failure when paper.id is missing."""
         paper = PaperRef(id="", title="Test", authors=[])
-        
+
         with pytest.raises(ValueError, match="paper.id is required"):
-            upsert_paper(PillarID.P1, paper)
+            upsert_paper("linguistic-cognitive-foundations", paper)
 
 
 class TestMarkProcessed:
@@ -311,7 +311,7 @@ class TestMarkProcessed:
         mock_supabase_client.table().update().eq().eq().execute.return_value = mock_result
         
         # Call mark_processed
-        mark_processed(PillarID.P2, "test.12345")
+        mark_processed("models-architectures", "test.12345")
         
         # Verify calls
         mock_supabase_client.table.assert_called_with('papers')
@@ -330,7 +330,7 @@ class TestMarkProcessed:
         mock_supabase_client.table().update().eq().eq().execute.return_value = mock_result
         
         # Should not raise error, just log warning
-        mark_processed(PillarID.P2, "nonexistent.12345")
+        mark_processed("models-architectures", "nonexistent.12345")
         
         # Verify update was called with data (second call has the data)
         update_calls = mock_supabase_client.table().update.call_args_list
@@ -357,7 +357,7 @@ class TestInsertOperations:
         # Verify insert data
         call_args = mock_supabase_client.table().insert.call_args
         insert_data = call_args[0][0]
-        assert insert_data['pillar_id'] == 'P2'
+        assert insert_data['pillar_id'] == 'models-architectures'
         assert insert_data['paper_id'] == 'test.12345'
         assert insert_data['problem'] == sample_paper_note.problem
     
@@ -377,7 +377,7 @@ class TestInsertOperations:
         # Verify insert data
         call_args = mock_supabase_client.table().insert.call_args
         insert_data = call_args[0][0]
-        assert insert_data['pillar_id'] == 'P2'
+        assert insert_data['pillar_id'] == 'models-architectures'
         assert insert_data['paper_id'] == 'test.12345'
         assert insert_data['tl_dr'] == sample_lesson.tl_dr
     
@@ -398,7 +398,7 @@ class TestInsertOperations:
         call_args = mock_supabase_client.table().insert.call_args
         insert_data = call_args[0][0]
         assert len(insert_data) == 2  # Two cards
-        assert all(item['pillar_id'] == 'P2' for item in insert_data)
+        assert all(item['pillar_id'] == 'models-architectures' for item in insert_data)
         assert all(item['paper_id'] == 'test.12345' for item in insert_data)
     
     def test_insert_quiz_cards_empty(self):
@@ -416,7 +416,7 @@ class TestGetRecentNotes:
         mock_rows = [
             {
                 'paper_id': 'test.12345',
-                'pillar_id': 'P2',
+                'pillar_id': 'models-architectures',
                 'problem': 'Test problem 1',
                 'method': 'Test method 1',
                 'findings': ['Finding 1', 'Finding 2'],
@@ -429,7 +429,7 @@ class TestGetRecentNotes:
             },
             {
                 'paper_id': 'test.67890',
-                'pillar_id': 'P2',
+                'pillar_id': 'models-architectures',
                 'problem': 'Test problem 2',
                 'method': 'Test method 2',
                 'findings': ['Finding 3'],
@@ -447,7 +447,7 @@ class TestGetRecentNotes:
         mock_supabase_client.table().select().eq().order().limit().execute.return_value = mock_result
         
         # Call get_recent_notes
-        notes = get_recent_notes(PillarID.P2, limit=2)
+        notes = get_recent_notes("models-architectures", limit=2)
         
         # Verify results
         assert len(notes) == 2
@@ -505,18 +505,18 @@ class TestQueueOperations:
         ]
         
         # Call queue_add_candidates
-        inserted_count = queue_add_candidates(PillarID.P2, test_papers)
-        
+        inserted_count = queue_add_candidates("models-architectures", test_papers)
+
         # Should only insert the new paper
         assert inserted_count == 1
-        
+
         # Verify insert was called with data (second call has the data)
         insert_calls = mock_table_insert.insert.call_args_list
         assert len(insert_calls) == 2  # Empty call + data call
         insert_data = insert_calls[1][0][0]
         assert len(insert_data) == 1
         assert insert_data[0]['paper_id'] == 'test.12345'
-        assert insert_data[0]['pillar_id'] == 'P2'
+        assert insert_data[0]['pillar_id'] == 'models-architectures'
     
     def test_queue_pop_next_with_papers_data(self, mock_supabase_client):
         """Test popping next papers from queue with full paper data."""
@@ -580,8 +580,8 @@ class TestQueueOperations:
         ]
         
         # Call queue_pop_next
-        paper_refs = queue_pop_next(PillarID.P2, limit=2)
-        
+        paper_refs = queue_pop_next("models-architectures", limit=2)
+
         # Verify results use full paper data
         assert len(paper_refs) == 2
         assert paper_refs[0].id == 'test.12345'
@@ -629,8 +629,8 @@ class TestQueueOperations:
         ]
         
         # Call queue_pop_next
-        paper_refs = queue_pop_next(PillarID.P2, limit=1)
-        
+        paper_refs = queue_pop_next("models-architectures", limit=1)
+
         # Verify results use fallback data
         assert len(paper_refs) == 1
         assert paper_refs[0].id == 'missing.123'
@@ -647,12 +647,12 @@ class TestPillarIsolation:
         mock_result = Mock()
         mock_result.data = []
         mock_supabase_client.table().select().eq().order().limit().execute.return_value = mock_result
-        
-        get_recent_notes(PillarID.P3, limit=5)
-        
+
+        get_recent_notes("data-training-methodologies", limit=5)
+
         # Verify pillar filter was applied
         eq_calls = mock_supabase_client.table().select().eq.call_args_list
-        assert ('pillar_id', 'P3') in [call[0] for call in eq_calls]
+        assert ('pillar_id', 'data-training-methodologies') in [call[0] for call in eq_calls]
     
     def test_all_writes_include_pillar_id(self, mock_supabase_client, sample_paper_ref, sample_paper_note):
         """Test that all write operations include pillar_id in data."""
@@ -662,14 +662,14 @@ class TestPillarIsolation:
         mock_supabase_client.table().insert().execute.return_value = mock_result
         
         # Test upsert_paper
-        upsert_paper(PillarID.P4, sample_paper_ref)
+        upsert_paper("evaluation-interpretability", sample_paper_ref)
         upsert_call = mock_supabase_client.table().upsert.call_args
-        assert upsert_call[0][0]['pillar_id'] == 'P4'
+        assert upsert_call[0][0]['pillar_id'] == 'evaluation-interpretability'
         
         # Test insert_note
         insert_note(sample_paper_note)
         insert_call = mock_supabase_client.table().insert.call_args
-        assert insert_call[0][0]['pillar_id'] == 'P2'
+        assert insert_call[0][0]['pillar_id'] == 'models-architectures'
     
     def test_cross_pillar_access_prevented(self, mock_supabase_client):
         """Test that operations cannot access data from different pillars."""
@@ -679,7 +679,7 @@ class TestPillarIsolation:
         mock_supabase_client.table().update().eq().eq().execute.return_value = mock_result
         
         # Try to mark processed with wrong pillar - should not update anything
-        mark_processed(PillarID.P1, "test.12345")
+        mark_processed("linguistic-cognitive-foundations", "test.12345")
         
         # Verify update was called with data (second call has the data)
         update_calls = mock_supabase_client.table().update.call_args_list
@@ -707,7 +707,7 @@ class TestErrorHandling:
         """Test that missing required fields raise ValueError."""
         note = PaperNote(
             paper_id="",  # Missing paper_id
-            pillar_id=PillarID.P1,
+            pillar_id="linguistic-cognitive-foundations",
             problem="Test",
             method="Test",
             findings=[],
@@ -724,9 +724,9 @@ class TestErrorHandling:
         """Test that database errors are logged appropriately."""
         # Mock database error
         mock_supabase_client.table().upsert().execute.side_effect = Exception("Database connection failed")
-        
+
         with pytest.raises(ValueError, match="Failed to upsert paper"):
-            upsert_paper(PillarID.P1, sample_paper_ref)
+            upsert_paper("linguistic-cognitive-foundations", sample_paper_ref)
         
         # Verify error was logged
         mock_logger.error.assert_called()

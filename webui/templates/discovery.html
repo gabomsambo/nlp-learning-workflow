@@ -1,0 +1,260 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Paper Discovery</h2>
+<p>Discover papers from multiple sources and select which ones to process.</p>
+
+<form id="discover-form">
+  <div class="grid">
+    <label>
+      Pillar
+      <select name="pillar" id="pillar-select" required>
+        {% for pillar in pillars %}
+        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Topic Hints (optional)
+      <input type="text" name="topics" id="topics-input" placeholder="e.g., RAG, retrieval, attention" />
+    </label>
+  </div>
+  <button type="submit" id="discover-btn">Discover Papers</button>
+</form>
+
+<div id="status-area" style="margin: 1rem 0;">
+  <span id="status"></span>
+</div>
+
+<div id="results-area" style="display: none;">
+  <h3>Discovery Results <span id="results-count"></span></h3>
+  <p><small>Papers with <span style="color: green;">&#10003;</span> have PDF URLs available</small></p>
+
+  <table id="candidates-table">
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="select-all" /></th>
+        <th>Title</th>
+        <th>Year</th>
+        <th>Citations</th>
+        <th>Source</th>
+        <th>PDF</th>
+        <th>Score</th>
+      </tr>
+    </thead>
+    <tbody id="candidates-body">
+    </tbody>
+  </table>
+
+  <div style="margin-top: 1rem;">
+    <button type="button" id="process-btn" disabled>Process Selected</button>
+    <span id="selected-count">0 selected</span>
+  </div>
+</div>
+
+<div id="processing-results" style="display: none; margin-top: 1rem;">
+  <h3>Processing Results</h3>
+  <div id="processing-output"></div>
+</div>
+
+<div id="session-summary" style="display: none; margin-top: 1rem;">
+  <h3>Session Summary</h3>
+  <p>Papers processed: <span id="total-processed" style="color: green;">0</span></p>
+  <p>Papers failed: <span id="total-failed" style="color: red;">0</span></p>
+</div>
+
+<script>
+// State
+let candidates = [];
+let attemptedIds = new Set();
+let totalProcessed = 0;
+let totalFailed = 0;
+
+// Elements
+const discoverForm = document.getElementById('discover-form');
+const pillarSelect = document.getElementById('pillar-select');
+const topicsInput = document.getElementById('topics-input');
+const statusEl = document.getElementById('status');
+const resultsArea = document.getElementById('results-area');
+const resultsCount = document.getElementById('results-count');
+const candidatesBody = document.getElementById('candidates-body');
+const selectAllCheckbox = document.getElementById('select-all');
+const processBtn = document.getElementById('process-btn');
+const selectedCount = document.getElementById('selected-count');
+const processingResults = document.getElementById('processing-results');
+const processingOutput = document.getElementById('processing-output');
+const sessionSummary = document.getElementById('session-summary');
+const totalProcessedEl = document.getElementById('total-processed');
+const totalFailedEl = document.getElementById('total-failed');
+
+// Discover papers
+discoverForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const pillar = pillarSelect.value;
+  const topics = topicsInput.value.split(',').map(t => t.trim()).filter(t => t);
+
+  statusEl.textContent = 'Discovering papers...';
+  statusEl.style.color = '';
+  resultsArea.style.display = 'none';
+  processingResults.style.display = 'none';
+
+  // Reset state for new discovery
+  candidates = [];
+  attemptedIds = new Set();
+  totalProcessed = 0;
+  totalFailed = 0;
+
+  try {
+    const res = await fetch(`/api/pillars/${pillar}/discover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority_topics: topics, limit: 10 })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || 'Discovery failed');
+    }
+
+    candidates = data.candidates;
+    statusEl.textContent = `Found ${candidates.length} candidates from: ${data.sources_used.join(', ')}`;
+    statusEl.style.color = 'green';
+
+    renderCandidates();
+    resultsArea.style.display = 'block';
+
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    statusEl.style.color = 'red';
+  }
+});
+
+// Render candidates table
+function renderCandidates() {
+  const available = candidates.filter(c => !attemptedIds.has(c.paper.id));
+
+  resultsCount.textContent = `(${available.length} available)`;
+  candidatesBody.innerHTML = '';
+
+  if (available.length === 0) {
+    candidatesBody.innerHTML = '<tr><td colspan="7">No more candidates available</td></tr>';
+    processBtn.disabled = true;
+    return;
+  }
+
+  available.forEach((candidate, idx) => {
+    const row = document.createElement('tr');
+    const hasPdf = candidate.paper.url_pdf ? '<span style="color: green;">&#10003;</span>' : '<span style="color: red;">&#10007;</span>';
+    const title = candidate.paper.title.length > 50
+      ? candidate.paper.title.substring(0, 47) + '...'
+      : candidate.paper.title;
+
+    row.innerHTML = `
+      <td><input type="checkbox" class="paper-checkbox" data-id="${candidate.paper.id}" /></td>
+      <td title="${candidate.paper.title}">${title}</td>
+      <td>${candidate.paper.year || '?'}</td>
+      <td>${candidate.citation_count}</td>
+      <td>${candidate.source}</td>
+      <td>${hasPdf}</td>
+      <td>${candidate.relevance_score.toFixed(2)}</td>
+    `;
+    candidatesBody.appendChild(row);
+  });
+
+  updateSelectedCount();
+}
+
+// Select all checkbox
+selectAllCheckbox.addEventListener('change', () => {
+  const checkboxes = document.querySelectorAll('.paper-checkbox');
+  checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+  updateSelectedCount();
+});
+
+// Update selected count
+candidatesBody.addEventListener('change', updateSelectedCount);
+
+function updateSelectedCount() {
+  const checked = document.querySelectorAll('.paper-checkbox:checked').length;
+  selectedCount.textContent = `${checked} selected`;
+  processBtn.disabled = checked === 0;
+}
+
+// Process selected papers
+processBtn.addEventListener('click', async () => {
+  const pillar = pillarSelect.value;
+  const checkboxes = document.querySelectorAll('.paper-checkbox:checked');
+  const selectedIds = Array.from(checkboxes).map(cb => cb.dataset.id);
+
+  if (selectedIds.length === 0) return;
+
+  // Get full paper data for selected papers
+  const selectedPapers = candidates
+    .filter(c => selectedIds.includes(c.paper.id))
+    .map(c => ({
+      id: c.paper.id,
+      title: c.paper.title,
+      authors: c.paper.authors || [],
+      year: c.paper.year,
+      url_pdf: c.paper.url_pdf,
+      abstract: c.paper.abstract,
+      citation_count: c.paper.citation_count
+    }));
+
+  // Mark as attempted
+  selectedIds.forEach(id => attemptedIds.add(id));
+
+  processBtn.disabled = true;
+  processBtn.textContent = 'Processing...';
+  processingResults.style.display = 'block';
+  processingOutput.innerHTML = '<p>Processing papers...</p>';
+
+  try {
+    const res = await fetch(`/api/pillars/${pillar}/select`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ papers: selectedPapers })
+    });
+
+    const data = await res.json();
+
+    // Update totals
+    totalProcessed += data.queued;
+    totalFailed += selectedIds.length - data.queued;
+
+    // Show results
+    let html = '';
+    if (data.queued > 0) {
+      html += `<p style="color: green;">&#10003; Processed ${data.queued} papers successfully</p>`;
+    }
+    if (selectedIds.length - data.queued > 0) {
+      html += `<p style="color: orange;">&#9888; ${selectedIds.length - data.queued} papers failed</p>`;
+    }
+    html += `<p><small>${data.message}</small></p>`;
+
+    processingOutput.innerHTML = html;
+
+    // Update session summary
+    sessionSummary.style.display = 'block';
+    totalProcessedEl.textContent = totalProcessed;
+    totalFailedEl.textContent = totalFailed;
+
+    // Re-render candidates (removes attempted ones)
+    renderCandidates();
+
+  } catch (err) {
+    processingOutput.innerHTML = `<p style="color: red;">Error: ${err.message}</p>`;
+    totalFailed += selectedIds.length;
+    totalFailedEl.textContent = totalFailed;
+    sessionSummary.style.display = 'block';
+
+    // Still re-render to remove attempted
+    renderCandidates();
+  }
+
+  processBtn.textContent = 'Process Selected';
+  selectAllCheckbox.checked = false;
+});
+</script>
+{% endblock %}

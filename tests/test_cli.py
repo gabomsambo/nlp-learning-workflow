@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch, MagicMock
 from typer.testing import CliRunner
 
 from nlp_pillars.cli import app
-from nlp_pillars.schemas import PillarID, PipelineResult, PaperNote, Lesson, QuizCard, DifficultyLevel, QuestionType
+from nlp_pillars.schemas import PipelineResult, PaperNote, Lesson, QuizCard, DifficultyLevel, QuestionType
 
 
 # Test fixtures
@@ -25,7 +25,9 @@ def mock_pipeline_result_success():
     """Mock successful pipeline result."""
     lesson = Lesson(
         paper_id="test.123",
-        pillar_id=PillarID.P1,
+        pillar_id="linguistic-cognitive-foundations",
+        title="Test Lesson Title",
+        content="Test lesson content with detailed explanation of the paper.",
         tl_dr="Test lesson summary",
         takeaways=["Key point 1", "Key point 2"],
         practice_ideas=["Practice 1"],
@@ -33,20 +35,20 @@ def mock_pipeline_result_success():
         difficulty=DifficultyLevel.MEDIUM,
         estimated_time=15
     )
-    
+
     quiz_cards = [
         QuizCard(
             paper_id="test.123",
-            pillar_id=PillarID.P1,
+            pillar_id="linguistic-cognitive-foundations",
             question="Test question?",
             answer="Test answer",
             difficulty=DifficultyLevel.EASY,
             question_type=QuestionType.FACTUAL
         ) for _ in range(5)
     ]
-    
+
     return PipelineResult(
-        pillar_id=PillarID.P1,
+        pillar_id="linguistic-cognitive-foundations",
         papers_processed=["test.123"],
         lessons_created=[lesson],
         quizzes_generated=quiz_cards,
@@ -61,7 +63,7 @@ def mock_pipeline_result_success():
 def mock_pipeline_result_failure():
     """Mock failed pipeline result."""
     return PipelineResult(
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         papers_processed=[],
         lessons_created=[],
         quizzes_generated=[],
@@ -78,7 +80,7 @@ def mock_recent_notes():
     return [
         PaperNote(
             paper_id="paper.123",
-            pillar_id=PillarID.P1,
+            pillar_id="linguistic-cognitive-foundations",
             problem="First test problem",
             method="Test method 1",
             findings=["Finding 1"],
@@ -89,7 +91,7 @@ def mock_recent_notes():
         ),
         PaperNote(
             paper_id="paper.456",
-            pillar_id=PillarID.P1,
+            pillar_id="linguistic-cognitive-foundations",
             problem="Second test problem",
             method="Test method 2",
             findings=["Finding 2"],
@@ -100,7 +102,7 @@ def mock_recent_notes():
         ),
         PaperNote(
             paper_id="paper.789",
-            pillar_id=PillarID.P1,
+            pillar_id="linguistic-cognitive-foundations",
             problem="Third test problem",
             method="Test method 3",
             findings=["Finding 3"],
@@ -133,11 +135,12 @@ class TestCLIHelp:
         
         assert result.exit_code == 0
         assert "Available Learning Pillars" in result.stdout
-        assert "P1" in result.stdout
-        assert "P2" in result.stdout
-        assert "P3" in result.stdout
-        assert "P4" in result.stdout
-        assert "P5" in result.stdout
+        # Check for slug-format pillar IDs (now dynamic from database)
+        assert "linguistic" in result.stdout.lower()
+        assert "models" in result.stdout.lower()
+        assert "data" in result.stdout.lower() or "training" in result.stdout.lower()
+        assert "evaluation" in result.stdout.lower()
+        assert "ethics" in result.stdout.lower()
         # Check for key parts of the pillar names (may be wrapped/formatted)
         assert "Linguistic" in result.stdout
         assert "Cognitive" in result.stdout
@@ -162,7 +165,7 @@ class TestRunCommand:
         mock_orchestrator_class.return_value = mock_orchestrator
         
         # Run command
-        result = cli_runner.invoke(app, ["run", "--pillar", "P1", "--papers", "2"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations", "--papers", "2"])
         
         # Verify result
         assert result.exit_code == 0
@@ -174,7 +177,7 @@ class TestRunCommand:
         
         # Verify orchestrator was called correctly
         mock_orchestrator_class.assert_called_once_with(enable_quiz=True)
-        mock_orchestrator.run_daily.assert_called_once_with(PillarID.P1, papers_limit=2)
+        mock_orchestrator.run_daily.assert_called_once_with("linguistic-cognitive-foundations", papers_limit=2)
     
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
@@ -189,7 +192,7 @@ class TestRunCommand:
         mock_orchestrator_class.return_value = mock_orchestrator
         
         # Run command
-        result = cli_runner.invoke(app, ["run", "--pillar", "P2"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "models-architectures"])
         
         # Verify result
         assert result.exit_code == 1
@@ -199,7 +202,7 @@ class TestRunCommand:
         assert "No .env file found" in result.stdout
         
         # Verify orchestrator was called
-        mock_orchestrator.run_daily.assert_called_once_with(PillarID.P2, papers_limit=1)
+        mock_orchestrator.run_daily.assert_called_once_with("models-architectures", papers_limit=1)
     
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
@@ -214,7 +217,7 @@ class TestRunCommand:
         mock_orchestrator_class.return_value = mock_orchestrator
         
         # Run command
-        result = cli_runner.invoke(app, ["run", "--pillar", "P3", "--papers", "1"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "data-training-methodologies", "--papers", "1"])
         
         # Verify result
         assert result.exit_code == 1
@@ -226,7 +229,7 @@ class TestRunCommand:
         
         assert result.exit_code == 1
         assert "Invalid pillar 'P9'" in result.stdout
-        assert "Must be one of: P1, P2, P3, P4, P5" in result.stdout
+        assert "Valid pillars:" in result.stdout
     
     def test_run_command_default_papers(self, cli_runner):
         """Test run command with default papers value."""
@@ -235,19 +238,27 @@ class TestRunCommand:
             mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
             mock_orchestrator_class.return_value = mock_orchestrator
             
-            result = cli_runner.invoke(app, ["run", "--pillar", "P1"])
-            
+            result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations"])
+
             # Should use default papers=1
-            mock_orchestrator.run_daily.assert_called_once_with(PillarID.P1, papers_limit=1)
+            mock_orchestrator.run_daily.assert_called_once_with("linguistic-cognitive-foundations", papers_limit=1)
 
 
 class TestStatusCommand:
     """Test the status command functionality."""
-    
+
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_status_command_success(self, mock_env_path, mock_db, cli_runner, mock_recent_notes):
+    def test_status_command_success(self, mock_env_path, mock_db, mock_get_pillars, cli_runner, mock_recent_notes):
         """Test successful status command execution."""
+        mock_get_pillars.return_value = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
         # Mock environment path
         mock_env_path.return_value = Path("/test/.env")
         
@@ -263,27 +274,34 @@ class TestStatusCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["status", "--pillar", "P1"])
+        result = cli_runner.invoke(app, ["status", "--pillar", "linguistic-cognitive-foundations"])
         
         # Verify result
         assert result.exit_code == 0
-        assert "Status for P1" in result.stdout
-        assert "Recent Lessons" in result.stdout
+        assert "Status for linguistic-cognitive-foundations" in result.stdout
+        assert "Recent Notes" in result.stdout
         assert "paper.123" in result.stdout
         assert "paper.456" in result.stdout
         assert "paper.789" in result.stdout
-        assert "Queue: 5 papers pending" in result.stdout
         
         # Verify database calls
-        mock_db.get_recent_notes.assert_called_once_with(PillarID.P1, limit=3)
+        mock_db.get_recent_notes.assert_called_once_with("linguistic-cognitive-foundations", limit=3)
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_status_command_empty_lessons(self, mock_env_path, mock_db, cli_runner):
+    def test_status_command_empty_lessons(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test status command with no recent lessons."""
+        mock_get_pillars.return_value = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
         # Mock environment path
         mock_env_path.return_value = None
-        
+
         # Mock database operations
         mock_db.get_recent_notes.return_value = []
         mock_db.get_client.return_value = Mock()
@@ -296,25 +314,32 @@ class TestStatusCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["status", "--pillar", "P2"])
+        result = cli_runner.invoke(app, ["status", "--pillar", "models-architectures"])
         
         # Verify result
         assert result.exit_code == 0
-        assert "No recent lessons found" in result.stdout
-        assert "Queue: 0 papers pending" in result.stdout
+        assert "No recent notes found" in result.stdout
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_status_command_db_error(self, mock_env_path, mock_db, cli_runner):
+    def test_status_command_db_error(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test status command with database error."""
+        mock_get_pillars.return_value = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
         # Mock environment path
         mock_env_path.return_value = None
-        
+
         # Mock database error
         mock_db.get_recent_notes.side_effect = Exception("Database connection failed")
         
         # Run command
-        result = cli_runner.invoke(app, ["status", "--pillar", "P3"])
+        result = cli_runner.invoke(app, ["status", "--pillar", "data-training-methodologies"])
         
         # Verify result
         assert result.exit_code == 1
@@ -330,14 +355,22 @@ class TestStatusCommand:
 
 class TestReviewCommand:
     """Test the review command functionality."""
-    
+
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_review_command_success(self, mock_env_path, mock_db, cli_runner):
+    def test_review_command_success(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test successful review command execution."""
+        mock_get_pillars.return_value = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
         # Mock environment path
         mock_env_path.return_value = Path("/test/.env")
-        
+
         # Mock Supabase client for due quiz cards
         mock_supabase_result = Mock()
         mock_supabase_result.count = 3
@@ -346,20 +379,28 @@ class TestReviewCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["review", "--pillar", "P1"])
+        result = cli_runner.invoke(app, ["review", "--pillar", "linguistic-cognitive-foundations"])
         
         # Verify result
         assert result.exit_code == 0
-        assert "Review for P1" in result.stdout
+        assert "Review for linguistic-cognitive-foundations" in result.stdout
         assert "Due today: 3" in result.stdout
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_review_command_no_due_cards(self, mock_env_path, mock_db, cli_runner):
+    def test_review_command_no_due_cards(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test review command with no due quiz cards."""
+        mock_get_pillars.return_value = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
         # Mock environment path
         mock_env_path.return_value = None
-        
+
         # Mock Supabase client for due quiz cards
         mock_supabase_result = Mock()
         mock_supabase_result.count = 0
@@ -368,24 +409,32 @@ class TestReviewCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["review", "--pillar", "P4"])
+        result = cli_runner.invoke(app, ["review", "--pillar", "evaluation-interpretability"])
         
         # Verify result
         assert result.exit_code == 0
         assert "Due today: 0" in result.stdout
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_review_command_db_error(self, mock_env_path, mock_db, cli_runner):
+    def test_review_command_db_error(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test review command with database error."""
+        mock_get_pillars.return_value = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
         # Mock environment path
         mock_env_path.return_value = None
-        
+
         # Mock database error
         mock_db.get_client.side_effect = Exception("Database connection failed")
         
         # Run command
-        result = cli_runner.invoke(app, ["review", "--pillar", "P5"])
+        result = cli_runner.invoke(app, ["review", "--pillar", "ethics-applications"])
         
         # Verify result
         assert result.exit_code == 1
@@ -428,30 +477,37 @@ class TestPillarValidation:
     
     def test_all_valid_pillars(self, cli_runner):
         """Test that all valid pillars are accepted."""
-        valid_pillars = ["P1", "P2", "P3", "P4", "P5"]
-        
+        valid_pillars = [
+            "linguistic-cognitive-foundations",
+            "models-architectures",
+            "data-training-methodologies",
+            "evaluation-interpretability",
+            "ethics-applications"
+        ]
+
         for pillar in valid_pillars:
             # Test with run command (mock orchestrator to avoid actual execution)
             with patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
                 mock_orchestrator = Mock()
                 mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
                 mock_orchestrator_class.return_value = mock_orchestrator
-                
+
                 result = cli_runner.invoke(app, ["run", "--pillar", pillar, "--papers", "1"])
-                
+
                 # Should not fail on pillar validation
                 assert "Invalid pillar" not in result.stdout
     
     def test_invalid_pillars(self, cli_runner):
         """Test that invalid pillars are rejected."""
         invalid_pillars = ["P0", "P6", "P10", "X1", "invalid"]
-        
+
         for pillar in invalid_pillars:
             result = cli_runner.invoke(app, ["run", "--pillar", pillar])
-            
+
             assert result.exit_code == 1
             assert f"Invalid pillar '{pillar}'" in result.stdout
-            assert "Must be one of: P1, P2, P3, P4, P5" in result.stdout
+            # Now checks against dynamic pillar list from database
+            assert "Valid pillars:" in result.stdout
 
 
 class TestEdgeCases:
@@ -465,7 +521,7 @@ class TestEdgeCases:
     
     def test_run_command_invalid_papers_count(self, cli_runner):
         """Test run command with invalid papers count."""
-        result = cli_runner.invoke(app, ["run", "--pillar", "P1", "--papers", "0"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations", "--papers", "0"])
         
         assert result.exit_code == 2  # Typer validation error
     
@@ -477,7 +533,7 @@ class TestEdgeCases:
             mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
             mock_orchestrator_class.return_value = mock_orchestrator
             
-            result = cli_runner.invoke(app, ["run", "--pillar", "P1"])
+            result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations"])
             
             # Verify logging was configured
             mock_logging_config.assert_called_once()

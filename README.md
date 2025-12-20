@@ -279,3 +279,20 @@ MIT License - see LICENSE file
 ```bash
 python -m nlp_pillars.cli run --pillar P1 --papers 1
 ```
+
+## 🌐 Web UI (FastAPI)
+
+Ensure PostgREST is running at `http://localhost:3000` and your environment includes `SUPABASE_KEY` (used for PostgREST auth if required).
+
+Install dependencies and run the server:
+```bash
+pip install -r requirements.txt
+uvicorn webui.app:app --reload
+```
+
+Open `http://localhost:8000`:
+- Dashboard: counts and recent activity
+- Papers: browse and filter by pillar
+- Lessons: view generated lessons
+- Pipeline: trigger runs and view results inline
+- Analytics: placeholder (to be expanded)

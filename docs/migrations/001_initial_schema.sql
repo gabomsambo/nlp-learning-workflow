@@ -157,7 +157,7 @@ CREATE INDEX idx_notes_paper ON notes(paper_id);
 CREATE INDEX idx_notes_pillar ON notes(pillar_id);
 CREATE INDEX idx_lessons_paper ON lessons(paper_id);
 CREATE INDEX idx_lessons_pillar ON lessons(pillar_id);
-CREATE INDEX idx_quiz_due ON quiz_cards(pillar_id, due_date) WHERE due_date <= NOW();
+CREATE INDEX idx_quiz_due ON quiz_cards(pillar_id, due_date);
 CREATE INDEX idx_quiz_paper ON quiz_cards(paper_id);
 CREATE INDEX idx_progress_user ON progress(user_id, pillar_id);
 CREATE INDEX idx_sessions_date ON daily_sessions(pillar_id, session_date DESC);

@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Dashboard</h2>
+
+<section>
+  <div class="grid">
+    <article>
+      <header>Total Papers</header>
+      <h3>{{ stats.total_papers }}</h3>
+    </article>
+    <article>
+      <header>Total Lessons</header>
+      <h3>{{ stats.total_lessons }}</h3>
+    </article>
+    <article>
+      <header>Total Quiz Cards</header>
+      <h3>{{ stats.total_quiz_cards }}</h3>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h3>Recent Activity</h3>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Title</th><th>Pillar</th><th>When</th></tr>
+    </thead>
+    <tbody>
+    {% for item in recent %}
+      <tr>
+        <td>{{ item.type }}</td>
+        <td>{{ item.title }}</td>
+        <td>{{ item.pillar_id or '-' }}</td>
+        <td>{{ item.created_at or '-' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+

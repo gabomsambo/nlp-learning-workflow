@@ -10,23 +10,28 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
-from .schemas import PaperRef, PaperNote, Lesson, QuizCard, PillarID
+from .schemas import (
+    PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
+    ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
+    PaperCitation, PodcastScript
+)
 
 logger = logging.getLogger(__name__)
 
 
 class PostgRESTClient:
     """Simple PostgREST client that works with vanilla PostgREST."""
-    
+
     def __init__(self, url: str, key: str):
         self.base_url = url.rstrip('/')
         self.headers = {
+            'apikey': key,
             'Authorization': f'Bearer {key}',
             'Content-Type': 'application/json',
             'Prefer': 'return=representation'
         }
         self.client = httpx.Client(headers=self.headers, timeout=30.0)
-    
+
     def table(self, table_name: str):
         """Return a table query builder."""
         return TableQuery(self.client, self.base_url, table_name)
@@ -34,33 +39,33 @@ class PostgRESTClient:
 
 class TableQuery:
     """Simple query builder for PostgREST."""
-    
+
     def __init__(self, client: httpx.Client, base_url: str, table_name: str):
         self.client = client
         self.url = f"{base_url}/{table_name}"
         self.params = {}
-    
+
     def select(self, columns: str = '*'):
         """Select columns."""
         self.params['select'] = columns
         return self
-    
+
     def eq(self, column: str, value: Any):
         """Filter by equality."""
         self.params[column] = f'eq.{value}'
         return self
-    
+
     def order(self, column: str, desc: bool = False):
         """Order results."""
         direction = '.desc' if desc else ''
         self.params['order'] = f'{column}{direction}'
         return self
-    
+
     def limit(self, count: int):
         """Limit results."""
         self.params['limit'] = str(count)
         return self
-    
+
     def insert(self, data: Dict[str, Any]):
         """Insert data."""
         logger.debug(f"Inserting data to {self.url}: {json.dumps(data, indent=2)}")
@@ -74,7 +79,7 @@ class TableQuery:
         except httpx.HTTPStatusError as e:
             # Handle HTTP 409 Conflict gracefully
             if e.response.status_code == 409:
-                logger.info(f"Conflict detected (409): Resource already exists")
+                logger.info("Conflict detected (409): Resource already exists")
                 return {'data': None, 'error': {'code': 409, 'message': 'Resource already exists', 'details': e.response.text}}
             # Re-raise other HTTP errors
             error_data = {}
@@ -83,13 +88,19 @@ class TableQuery:
             except:
                 error_data = {'message': str(e), 'status_code': e.response.status_code}
             return {'data': None, 'error': error_data}
-    
+
     def update(self, data: Dict[str, Any]):
         """Update data."""
         response = self.client.patch(self.url, json=data, params=self.params)
         response.raise_for_status()
         return {'data': response.json() if response.text else None, 'error': None}
-    
+
+    def delete(self):
+        """Delete data."""
+        response = self.client.delete(self.url, params=self.params)
+        response.raise_for_status()
+        return {'data': response.json() if response.text else None, 'error': None}
+
     def execute(self):
         """Execute the query."""
         try:
@@ -114,18 +125,18 @@ _client: Optional[PostgRESTClient] = None
 def get_client() -> PostgRESTClient:
     """Get or create the PostgREST client singleton."""
     global _client
-    
+
     if _client is not None:
         return _client
-    
+
     url = os.getenv('SUPABASE_URL')
     key = os.getenv('SUPABASE_KEY')
-    
+
     if not url:
         raise ValueError("SUPABASE_URL environment variable is required")
     if not key:
         raise ValueError("SUPABASE_KEY environment variable is required")
-    
+
     _client = PostgRESTClient(url, key)
     return _client
 
@@ -140,11 +151,11 @@ def set_client(client: PostgRESTClient) -> None:
 # Serialization Helpers
 # =====================================
 
-def _paper_ref_to_dict(pillar_id: PillarID, paper: PaperRef) -> Dict[str, Any]:
+def _paper_ref_to_dict(pillar_id: str, paper: PaperRef) -> Dict[str, Any]:
     """Convert PaperRef to papers table row."""
     data = {
         'id': paper.id,
-        'pillar_id': pillar_id.value,
+        'pillar_id': pillar_id,
         'title': paper.title,
         'authors': paper.authors,  # Already a list, goes to JSONB
         'venue': paper.venue,
@@ -175,7 +186,7 @@ def _paper_note_to_dict(note: PaperNote) -> Dict[str, Any]:
     """Convert PaperNote to notes table row."""
     return {
         'paper_id': note.paper_id,
-        'pillar_id': note.pillar_id.value,
+        'pillar_id': note.pillar_id,
         'problem': note.problem,
         'method': note.method,
         'findings': note.findings,
@@ -190,7 +201,7 @@ def _dict_to_paper_note(row: Dict[str, Any]) -> PaperNote:
     """Convert notes table row to PaperNote."""
     return PaperNote(
         paper_id=row['paper_id'],
-        pillar_id=PillarID(row['pillar_id']),
+        pillar_id=row['pillar_id'],
         problem=row['problem'],
         method=row['method'],
         findings=row['findings'],
@@ -205,7 +216,7 @@ def _lesson_to_dict(lesson: Lesson) -> Dict[str, Any]:
     """Convert Lesson to lessons table row."""
     return {
         'paper_id': lesson.paper_id,
-        'pillar_id': lesson.pillar_id.value,
+        'pillar_id': lesson.pillar_id,
         'tl_dr': lesson.tl_dr,
         'takeaways': lesson.takeaways,
         'practice_ideas': lesson.practice_ideas,
@@ -220,7 +231,7 @@ def _dict_to_lesson(row: Dict[str, Any]) -> Lesson:
     """Convert lessons table row to Lesson."""
     return Lesson(
         paper_id=row['paper_id'],
-        pillar_id=PillarID(row['pillar_id']),
+        pillar_id=row['pillar_id'],
         title=f"Lesson from {row['paper_id']}",  # Generate title as it's not stored in DB
         content=row.get('tl_dr', ''),  # Use tl_dr as content fallback
         tl_dr=row['tl_dr'],
@@ -235,15 +246,56 @@ def _dict_to_lesson(row: Dict[str, Any]) -> Lesson:
     )
 
 
+def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
+    """Convert PodcastScript to podcast_scripts table row."""
+    return {
+        'paper_id': script.paper_id,
+        'pillar_id': script.pillar_id,
+        'title': script.title,
+        'script': script.script,
+        'word_count': script.word_count,
+        'key_points': script.key_points,
+        'ground_pack': script.ground_pack,
+        'created_at': script.created_at.isoformat() if script.created_at else None
+    }
+
+
+def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
+    """Convert podcast_scripts table row to PodcastScript."""
+    return PodcastScript(
+        id=row.get('id'),
+        paper_id=row['paper_id'],
+        pillar_id=row['pillar_id'],
+        title=row['title'],
+        script=row.get('script', ''),
+        word_count=row.get('word_count', 0),
+        key_points=row.get('key_points', []),
+        ground_pack=row.get('ground_pack', {}),
+        created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
+    )
+
+
 def _quiz_card_to_dict(card: QuizCard) -> Dict[str, Any]:
     """Convert QuizCard to quiz_cards table row."""
-    return {
+    data = {
         'paper_id': card.paper_id,
-        'pillar_id': card.pillar_id.value,
+        'pillar_id': card.pillar_id,
         'question': card.question,
         'answer': card.answer,
         'difficulty': card.difficulty,
         'question_type': card.question_type.value if hasattr(card.question_type, 'value') else card.question_type,
+        'user_id': card.user_id,
+
+        # FSRS fields
+        'difficulty_fsrs': card.difficulty_fsrs,
+        'stability': card.stability,
+        'retrievability': card.retrievability,
+        'state': card.state.value if hasattr(card.state, 'value') else card.state,
+        'lapses': card.lapses,
+        'last_review_date': card.last_review_date.isoformat() if card.last_review_date else None,
+        'next_review_date': card.next_review_date.isoformat() if card.next_review_date else None,
+
+        # Legacy SM-2 fields (for backward compatibility)
         'interval': card.interval,
         'repetitions': card.repetitions,
         'ease_factor': card.ease_factor,
@@ -251,6 +303,8 @@ def _quiz_card_to_dict(card: QuizCard) -> Dict[str, Any]:
         'last_reviewed': card.last_reviewed.isoformat() if card.last_reviewed else None,
         'created_at': datetime.now(timezone.utc).isoformat()
     }
+    # Remove None values
+    return {k: v for k, v in data.items() if v is not None}
 
 
 def _dict_to_quiz_card(row: Dict[str, Any]) -> QuizCard:
@@ -259,12 +313,24 @@ def _dict_to_quiz_card(row: Dict[str, Any]) -> QuizCard:
     return QuizCard(
         id=row.get('id'),
         paper_id=row['paper_id'],
-        pillar_id=PillarID(row['pillar_id']),
+        pillar_id=row['pillar_id'],
         question=row['question'],
         answer=row['answer'],
         difficulty=row['difficulty'],
         question_type=QuestionType(row.get('question_type', 'factual')),
         tags=[],  # Not stored in DB, provide empty list
+        user_id=row.get('user_id', 'default_user'),
+
+        # FSRS fields
+        difficulty_fsrs=row.get('difficulty_fsrs', 0.0),
+        stability=row.get('stability', 0.0),
+        retrievability=row.get('retrievability'),
+        state=CardState(row.get('state', 'new')),
+        lapses=row.get('lapses', 0),
+        last_review_date=datetime.fromisoformat(row['last_review_date']) if row.get('last_review_date') else None,
+        next_review_date=datetime.fromisoformat(row['next_review_date']) if row.get('next_review_date') else None,
+
+        # Legacy SM-2 fields (for backward compatibility)
         interval=row.get('interval', 1),
         repetitions=row.get('repetitions', 0),
         ease_factor=row.get('ease_factor', 2.5),
@@ -275,11 +341,92 @@ def _dict_to_quiz_card(row: Dict[str, Any]) -> QuizCard:
     )
 
 
+def _review_log_to_dict(log: ReviewLog) -> Dict[str, Any]:
+    """Convert ReviewLog to review_logs table row."""
+    data = {
+        'card_id': log.card_id,
+        'user_id': log.user_id,
+        'pillar_id': log.pillar_id,
+        'paper_id': log.paper_id,
+        'rating': log.rating.value if hasattr(log.rating, 'value') else log.rating,
+        'review_timestamp': log.review_timestamp.isoformat(),
+        'difficulty': log.difficulty,
+        'stability': log.stability,
+        'retrievability': log.retrievability,
+        'previous_due_date': log.previous_due_date.isoformat() if log.previous_due_date else None,
+        'days_overdue': log.days_overdue,
+        'session_id': log.session_id,
+        'response_time_ms': log.response_time_ms
+    }
+    # Remove None values
+    return {k: v for k, v in data.items() if v is not None}
+
+
+def _dict_to_review_log(row: Dict[str, Any]) -> ReviewLog:
+    """Convert review_logs table row to ReviewLog."""
+    return ReviewLog(
+        id=row.get('id'),
+        card_id=row['card_id'],
+        user_id=row.get('user_id', 'default_user'),
+        pillar_id=row['pillar_id'],
+        paper_id=row['paper_id'],
+        rating=FSRSRating(row['rating']),
+        review_timestamp=datetime.fromisoformat(row['review_timestamp']),
+        difficulty=row['difficulty'],
+        stability=row['stability'],
+        retrievability=row.get('retrievability'),
+        previous_due_date=datetime.fromisoformat(row['previous_due_date']) if row.get('previous_due_date') else None,
+        days_overdue=row.get('days_overdue', 0),
+        session_id=row.get('session_id'),
+        response_time_ms=row.get('response_time_ms')
+    )
+
+
+def _user_fsrs_parameters_to_dict(params: UserFSRSParameters) -> Dict[str, Any]:
+    """Convert UserFSRSParameters to user_fsrs_parameters table row."""
+    data = {
+        'user_id': params.user_id,
+        'pillar_id': params.pillar_id if params.pillar_id else None,
+        'w0': params.w0, 'w1': params.w1, 'w2': params.w2, 'w3': params.w3,
+        'w4': params.w4, 'w5': params.w5, 'w6': params.w6, 'w7': params.w7,
+        'w8': params.w8, 'w9': params.w9, 'w10': params.w10, 'w11': params.w11,
+        'w12': params.w12, 'w13': params.w13, 'w14': params.w14, 'w15': params.w15,
+        'w16': params.w16, 'w17': params.w17,
+        'review_count': params.review_count,
+        'last_optimized': params.last_optimized.isoformat() if params.last_optimized else None,
+        'optimization_score': params.optimization_score,
+        'is_default': params.is_default,
+        'updated_at': datetime.now(timezone.utc).isoformat()
+    }
+    # Remove None values
+    return {k: v for k, v in data.items() if v is not None}
+
+
+def _dict_to_user_fsrs_parameters(row: Dict[str, Any]) -> UserFSRSParameters:
+    """Convert user_fsrs_parameters table row to UserFSRSParameters."""
+    return UserFSRSParameters(
+        id=row.get('id'),
+        user_id=row.get('user_id', 'default_user'),
+        pillar_id=row['pillar_id'] if row.get('pillar_id') else None,
+        w0=row.get('w0', 0.4), w1=row.get('w1', 0.6), w2=row.get('w2', 2.4), w3=row.get('w3', 5.8),
+        w4=row.get('w4', 4.93), w5=row.get('w5', 0.94), w6=row.get('w6', 0.86), w7=row.get('w7', 0.01),
+        w8=row.get('w8', 1.49), w9=row.get('w9', 0.14), w10=row.get('w10', 0.94), w11=row.get('w11', 2.18),
+        w12=row.get('w12', 0.05), w13=row.get('w13', 0.34), w14=row.get('w14', 0.67), w15=row.get('w15', 2.74),
+        w16=row.get('w16', 0.0), w17=row.get('w17', 2.0),
+        review_count=row.get('review_count', 0),
+        last_optimized=datetime.fromisoformat(row['last_optimized']) if row.get('last_optimized') else None,
+        optimization_score=row.get('optimization_score'),
+        is_default=row.get('is_default', False),
+        created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else datetime.now(timezone.utc),
+        updated_at=datetime.fromisoformat(row['updated_at']) if row.get('updated_at') else datetime.now(timezone.utc)
+    )
+
+
 # =====================================
 # Paper Operations
 # =====================================
 
-def add_paper(pillar_id: PillarID, paper: PaperRef) -> bool:
+def add_paper(pillar_id: str, paper: PaperRef) -> bool:
     """
     Add a paper to the papers table for a specific pillar.
     
@@ -293,32 +440,32 @@ def add_paper(pillar_id: PillarID, paper: PaperRef) -> bool:
     try:
         client = get_client()
         data = _paper_ref_to_dict(pillar_id, paper)
-        
+
         response = client.table('papers').insert(data)
-        
+
         if response['error']:
             # Check if it's a duplicate key error (HTTP 409 Conflict)
             error_info = response['error']
             if isinstance(error_info, dict) and error_info.get('code') == 409:
-                logger.info(f"Paper {paper.id} already exists for pillar {pillar_id.value} (HTTP 409), skipping insert")
+                logger.info(f"Paper {paper.id} already exists for pillar {pillar_id} (HTTP 409), skipping insert")
                 return True  # Consider it successful if already exists
-            
+
             error_str = str(error_info).lower()
             if 'duplicate' in error_str or 'conflict' in error_str or 'already exists' in error_str:
-                logger.info(f"Paper {paper.id} already exists for pillar {pillar_id.value}, skipping insert")
+                logger.info(f"Paper {paper.id} already exists for pillar {pillar_id}, skipping insert")
                 return True  # Consider it successful if already exists
-            logger.error(f"Failed to add paper {paper.id} for pillar {pillar_id.value}: {response['error']}")
+            logger.error(f"Failed to add paper {paper.id} for pillar {pillar_id}: {response['error']}")
             return False
-            
-        logger.info(f"Added paper {paper.id} for pillar {pillar_id.value}")
+
+        logger.info(f"Added paper {paper.id} for pillar {pillar_id}")
         return True
-        
+
     except Exception as e:
-        logger.error(f"Failed to add paper {paper.id} for pillar {pillar_id.value}: {e}")
+        logger.error(f"Failed to add paper {paper.id} for pillar {pillar_id}: {e}")
         return False
 
 
-def get_papers(pillar_id: PillarID, limit: int = 10) -> List[PaperRef]:
+def get_papers(pillar_id: str, limit: int = 10) -> List[PaperRef]:
     """
     Get papers for a specific pillar.
     
@@ -333,26 +480,26 @@ def get_papers(pillar_id: PillarID, limit: int = 10) -> List[PaperRef]:
         client = get_client()
         response = (client.table('papers')
                    .select('*')
-                   .eq('pillar_id', pillar_id.value)
-                   .order('created_at', desc=True)
+                   .eq('pillar_id', pillar_id)
+                   .order('added_at', desc=True)
                    .limit(limit)
                    .execute())
-        
+
         if response['error']:
-            logger.error(f"Failed to get papers for pillar {pillar_id.value}: {response['error']}")
+            logger.error(f"Failed to get papers for pillar {pillar_id}: {response['error']}")
             return []
-        
+
         if not response['data']:
             return []
-            
+
         return [_dict_to_paper_ref(row) for row in response['data']]
-        
+
     except Exception as e:
-        logger.error(f"Failed to get papers for pillar {pillar_id.value}: {e}")
+        logger.error(f"Failed to get papers for pillar {pillar_id}: {e}")
         return []
 
 
-def paper_exists(pillar_id: PillarID, paper_id: str) -> bool:
+def paper_exists(pillar_id: str, paper_id: str) -> bool:
     """
     Check if a paper exists for a specific pillar.
     
@@ -367,24 +514,120 @@ def paper_exists(pillar_id: PillarID, paper_id: str) -> bool:
         client = get_client()
         response = (client.table('papers')
                    .select('id')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .eq('id', paper_id)
                    .execute())
-        
+
         if response['error']:
-            logger.error(f"Failed to check paper {paper_id} for pillar {pillar_id.value}: {response['error']}")
+            logger.error(f"Failed to check paper {paper_id} for pillar {pillar_id}: {response['error']}")
             return False
-            
+
         return bool(response['data'])
-        
+
     except Exception as e:
-        logger.error(f"Failed to check paper {paper_id} for pillar {pillar_id.value}: {e}")
+        logger.error(f"Failed to check paper {paper_id} for pillar {pillar_id}: {e}")
         return False
+
+
+def get_all_papers(limit: int = 100) -> List[PaperRef]:
+    """
+    Get all papers across all pillars.
+
+    Args:
+        limit: Maximum number of papers to return
+
+    Returns:
+        List of paper references
+    """
+    try:
+        client = get_client()
+        response = (client.table('papers')
+                   .select('*')
+                   .order('added_at', desc=True)
+                   .limit(limit)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get all papers: {response['error']}")
+            return []
+
+        if not response['data']:
+            return []
+
+        return [_dict_to_paper_ref(row) for row in response['data']]
+
+    except Exception as e:
+        logger.error(f"Failed to get all papers: {e}")
+        return []
+
+
+def get_paper_by_id(paper_id: str) -> Optional[PaperRef]:
+    """
+    Get a paper by its ID.
+
+    Args:
+        paper_id: Paper ID to fetch
+
+    Returns:
+        PaperRef if found, None otherwise
+    """
+    try:
+        client = get_client()
+        response = (client.table('papers')
+                   .select('*')
+                   .eq('id', paper_id)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get paper {paper_id}: {response['error']}")
+            return None
+
+        if not response['data'] or len(response['data']) == 0:
+            return None
+
+        return _dict_to_paper_ref(response['data'][0])
+
+    except Exception as e:
+        logger.error(f"Failed to get paper {paper_id}: {e}")
+        return None
 
 
 # =====================================
 # Notes Operations
 # =====================================
+
+
+def get_notes_by_paper_id(paper_id: str) -> Optional[PaperNote]:
+    """
+    Get notes for a paper by paper ID.
+
+    Args:
+        paper_id: Paper ID to get notes for
+
+    Returns:
+        PaperNote if found, None otherwise
+    """
+    try:
+        client = get_client()
+        response = (client.table('notes')
+                   .select('*')
+                   .eq('paper_id', paper_id)
+                   .order('created_at', desc=True)
+                   .limit(1)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get notes for paper {paper_id}: {response['error']}")
+            return None
+
+        if not response['data'] or len(response['data']) == 0:
+            return None
+
+        return _dict_to_paper_note(response['data'][0])
+
+    except Exception as e:
+        logger.error(f"Failed to get notes for paper {paper_id}: {e}")
+        return None
 
 def add_note(note: PaperNote) -> bool:
     """
@@ -399,22 +642,22 @@ def add_note(note: PaperNote) -> bool:
     try:
         client = get_client()
         data = _paper_note_to_dict(note)
-        
+
         response = client.table('notes').insert(data)
-        
+
         if response['error']:
             logger.error(f"Failed to add note for paper {note.paper_id}: {response['error']}")
             return False
-            
-        logger.info(f"Added note for paper {note.paper_id} in pillar {note.pillar_id.value}")
+
+        logger.info(f"Added note for paper {note.paper_id} in pillar {note.pillar_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to add note for paper {note.paper_id}: {e}")
         return False
 
 
-def get_recent_notes(pillar_id: PillarID, limit: int = 5) -> List[PaperNote]:
+def get_recent_notes(pillar_id: str, limit: int = 5) -> List[PaperNote]:
     """
     Get recent notes for a specific pillar.
     
@@ -429,23 +672,23 @@ def get_recent_notes(pillar_id: PillarID, limit: int = 5) -> List[PaperNote]:
         client = get_client()
         response = (client.table('notes')
                    .select('*')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .order('created_at', desc=True)
                    .limit(limit)
                    .execute())
-        
+
         if response['error']:
-            logger.error(f"Failed to get recent notes for pillar {pillar_id.value}: {response['error']}")
-            raise Exception(f"Failed to get recent notes for pillar {pillar_id.value}: {response['error']}")
-        
+            logger.error(f"Failed to get recent notes for pillar {pillar_id}: {response['error']}")
+            raise Exception(f"Failed to get recent notes for pillar {pillar_id}: {response['error']}")
+
         if not response['data']:
             return []
-            
+
         return [_dict_to_paper_note(row) for row in response['data']]
-        
+
     except Exception as e:
-        logger.error(f"Failed to get recent notes for pillar {pillar_id.value}: {e}")
-        raise Exception(f"Failed to get recent notes for pillar {pillar_id.value}: {e}")
+        logger.error(f"Failed to get recent notes for pillar {pillar_id}: {e}")
+        raise Exception(f"Failed to get recent notes for pillar {pillar_id}: {e}")
 
 
 # =====================================
@@ -465,22 +708,22 @@ def add_lesson(lesson: Lesson) -> bool:
     try:
         client = get_client()
         data = _lesson_to_dict(lesson)
-        
+
         response = client.table('lessons').insert(data)
-        
+
         if response['error']:
             logger.error(f"Failed to add lesson for paper {lesson.paper_id}: {response['error']}")
             return False
-            
-        logger.info(f"Added lesson for paper {lesson.paper_id} in pillar {lesson.pillar_id.value}")
+
+        logger.info(f"Added lesson for paper {lesson.paper_id} in pillar {lesson.pillar_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to add lesson for paper {lesson.paper_id}: {e}")
         return False
 
 
-def get_lessons(pillar_id: PillarID, limit: int = 10) -> List[Lesson]:
+def get_lessons(pillar_id: str, limit: int = 10) -> List[Lesson]:
     """
     Get lessons for a specific pillar.
     
@@ -495,23 +738,128 @@ def get_lessons(pillar_id: PillarID, limit: int = 10) -> List[Lesson]:
         client = get_client()
         response = (client.table('lessons')
                    .select('*')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .order('created_at', desc=True)
                    .limit(limit)
                    .execute())
-        
+
         if response['error']:
-            logger.error(f"Failed to get lessons for pillar {pillar_id.value}: {response['error']}")
+            logger.error(f"Failed to get lessons for pillar {pillar_id}: {response['error']}")
             return []
-        
+
         if not response['data']:
             return []
-            
+
         return [_dict_to_lesson(row) for row in response['data']]
-        
+
     except Exception as e:
-        logger.error(f"Failed to get lessons for pillar {pillar_id.value}: {e}")
+        logger.error(f"Failed to get lessons for pillar {pillar_id}: {e}")
         return []
+
+
+# =====================================
+# Podcast Script Operations
+# =====================================
+
+def add_podcast_script(script: PodcastScript) -> Optional[str]:
+    """
+    Add a podcast script for a paper.
+
+    Args:
+        script: PodcastScript to add
+
+    Returns:
+        Script ID if successful, None otherwise
+    """
+    try:
+        client = get_client()
+        data = _podcast_script_to_dict(script)
+
+        response = client.table('podcast_scripts').insert(data)
+
+        if response['error']:
+            logger.error(f"Failed to add podcast script for paper {script.paper_id}: {response['error']}")
+            return None
+
+        # Get the ID from the response
+        if response['data'] and len(response['data']) > 0:
+            script_id = response['data'][0].get('id')
+            logger.info(f"Added podcast script {script_id} for paper {script.paper_id}")
+            return script_id
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Failed to add podcast script for paper {script.paper_id}: {e}")
+        return None
+
+
+def get_podcast_scripts(pillar_id: Optional[str] = None, limit: int = 10) -> List[PodcastScript]:
+    """
+    Get podcast scripts, optionally filtered by pillar.
+
+    Args:
+        pillar_id: Optional pillar to filter by
+        limit: Maximum number of scripts to return
+
+    Returns:
+        List of podcast scripts
+    """
+    try:
+        client = get_client()
+        query = client.table('podcast_scripts').select('*')
+
+        if pillar_id:
+            query = query.eq('pillar_id', pillar_id)
+
+        response = (query
+                   .order('created_at', desc=True)
+                   .limit(limit)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get podcast scripts: {response['error']}")
+            return []
+
+        if not response['data']:
+            return []
+
+        return [_dict_to_podcast_script(row) for row in response['data']]
+
+    except Exception as e:
+        logger.error(f"Failed to get podcast scripts: {e}")
+        return []
+
+
+def get_podcast_script_by_id(script_id: str) -> Optional[PodcastScript]:
+    """
+    Get a specific podcast script by ID.
+
+    Args:
+        script_id: The script ID to fetch
+
+    Returns:
+        PodcastScript if found, None otherwise
+    """
+    try:
+        client = get_client()
+        response = (client.table('podcast_scripts')
+                   .select('*')
+                   .eq('id', script_id)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get podcast script {script_id}: {response['error']}")
+            return None
+
+        if not response['data'] or len(response['data']) == 0:
+            return None
+
+        return _dict_to_podcast_script(response['data'][0])
+
+    except Exception as e:
+        logger.error(f"Failed to get podcast script {script_id}: {e}")
+        return None
 
 
 # =====================================
@@ -530,28 +878,28 @@ def add_quiz_cards(cards: List[QuizCard]) -> int:
     """
     if not cards:
         return 0
-        
+
     added = 0
     client = get_client()
-    
+
     for card in cards:
         try:
             data = _quiz_card_to_dict(card)
             response = client.table('quiz_cards').insert(data)
-            
+
             if response['error']:
                 logger.error(f"Failed to add quiz card: {response['error']}")
             else:
                 added += 1
-                
+
         except Exception as e:
             logger.error(f"Failed to add quiz card: {e}")
-    
+
     logger.info(f"Added {added}/{len(cards)} quiz cards")
     return added
 
 
-def get_quiz_cards_for_review(pillar_id: PillarID, limit: int = 10) -> List[QuizCard]:
+def get_quiz_cards_for_review(pillar_id: str, limit: int = 10) -> List[QuizCard]:
     """
     Get quiz cards due for review for a specific pillar.
     
@@ -564,106 +912,163 @@ def get_quiz_cards_for_review(pillar_id: PillarID, limit: int = 10) -> List[Quiz
     """
     try:
         client = get_client()
-        
+
         # For now, just get cards ordered by last_reviewed (oldest first)
         response = (client.table('quiz_cards')
                    .select('*')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .order('last_reviewed')  # Nulls first, then oldest
                    .limit(limit)
                    .execute())
-        
+
         if response['error']:
-            logger.error(f"Failed to get quiz cards for pillar {pillar_id.value}: {response['error']}")
+            logger.error(f"Failed to get quiz cards for pillar {pillar_id}: {response['error']}")
             return []
-        
+
         if not response['data']:
             return []
-            
+
         return [_dict_to_quiz_card(row) for row in response['data']]
-        
+
     except Exception as e:
-        logger.error(f"Failed to get quiz cards for pillar {pillar_id.value}: {e}")
+        logger.error(f"Failed to get quiz cards for pillar {pillar_id}: {e}")
         return []
 
 
+def review_quiz_card_fsrs(request: QuizReviewRequest) -> QuizReviewResponse:
+    """
+    Review a quiz card using FSRS algorithm.
+    
+    Args:
+        request: Review request with card ID and rating
+        
+    Returns:
+        QuizReviewResponse with updated card and next review date
+    """
+    try:
+        from .services.fsrs_service import get_fsrs_service
+
+        client = get_client()
+        fsrs_service = get_fsrs_service()
+
+        # Get the card
+        response = (client.table('quiz_cards')
+                   .select('*')
+                   .eq('id', request.card_id)
+                   .limit(1)
+                   .execute())
+
+        if response['error'] or not response['data']:
+            return QuizReviewResponse(
+                success=False,
+                card=None,
+                next_review_date=datetime.now(timezone.utc),
+                message="Quiz card not found"
+            )
+
+        # Convert to QuizCard object
+        card = _dict_to_quiz_card(response['data'][0])
+
+        # Get user's FSRS parameters
+        user_params = get_user_fsrs_parameters(card.user_id, card.pillar_id)
+
+        # Schedule the review using FSRS
+        updated_card, next_review_date = fsrs_service.schedule_card_review(
+            card, request.rating, user_params
+        )
+
+        # Create review log
+        review_log = fsrs_service.create_review_log(
+            card, request.rating, request.response_time_ms, request.session_id
+        )
+
+        # Update the card in database
+        update_data = _quiz_card_to_dict(updated_card)
+        update_response = (client.table('quiz_cards')
+                          .eq('id', request.card_id)
+                          .update(update_data))
+
+        if update_response['error']:
+            logger.error(f"Failed to update quiz card: {update_response['error']}")
+            return QuizReviewResponse(
+                success=False,
+                card=card,
+                next_review_date=next_review_date,
+                message="Failed to update card"
+            )
+
+        # Save review log
+        log_data = _review_log_to_dict(review_log)
+        log_response = client.table('review_logs').insert(log_data)
+
+        if log_response['error']:
+            logger.warning(f"Failed to save review log: {log_response['error']}")
+
+        logger.info(f"Reviewed card {request.card_id} with FSRS rating {request.rating}")
+
+        return QuizReviewResponse(
+            success=True,
+            card=updated_card,
+            next_review_date=next_review_date,
+            message="Card reviewed successfully"
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to review quiz card: {e}")
+        return QuizReviewResponse(
+            success=False,
+            card=None,
+            next_review_date=datetime.now(timezone.utc),
+            message=f"Review failed: {str(e)}"
+        )
+
+
 def update_quiz_card_review(
-    pillar_id: PillarID,
+    pillar_id: str,
     paper_id: str,
     card_index: int,
     quality: int  # 0-5, where 5 is perfect recall
 ) -> bool:
     """
     Update quiz card after review using spaced repetition algorithm.
+    DEPRECATED: Use review_quiz_card_fsrs() for new implementations.
     
-    Args:
-        pillar_id: The pillar the card belongs to
-        paper_id: Paper ID the card is from
-        card_index: Index of the card in the paper's quiz set
-        quality: Quality of recall (0-5)
-        
-    Returns:
-        True if successful, False otherwise
+    This function maintains backward compatibility with the old SM-2 implementation.
     """
     try:
+        # Convert old quality rating to FSRS rating
+        if quality <= 2:
+            rating = FSRSRating.AGAIN
+        elif quality == 3:
+            rating = FSRSRating.HARD
+        elif quality == 4:
+            rating = FSRSRating.GOOD
+        else:
+            rating = FSRSRating.EASY
+
+        # Get the card by pillar and paper (legacy approach)
         client = get_client()
-        
-        # First get the card
         response = (client.table('quiz_cards')
                    .select('*')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .eq('paper_id', paper_id)
                    .limit(1)
                    .execute())
-        
+
         if response['error'] or not response['data']:
-            logger.error(f"Quiz card not found")
+            logger.error(f"Quiz card not found for pillar {pillar_id}, paper {paper_id}")
             return False
-        
-        card_data = response['data'][0]
-        
-        # Update using SM-2 algorithm
-        ease_factor = card_data.get('ease_factor', 2.5)
-        interval_days = card_data.get('interval_days', 1)
-        review_count = card_data.get('review_count', 0)
-        
-        # Calculate new values
-        if quality < 3:
-            interval_days = 1
-            review_count = 0
-        else:
-            if review_count == 0:
-                interval_days = 1
-            elif review_count == 1:
-                interval_days = 6
-            else:
-                interval_days = int(interval_days * ease_factor)
-            
-            review_count += 1
-            ease_factor = ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-            ease_factor = max(1.3, ease_factor)
-        
-        # Update the card
-        update_data = {
-            'last_reviewed': datetime.now(timezone.utc).isoformat(),
-            'review_count': review_count,
-            'ease_factor': ease_factor,
-            'interval_days': interval_days
-        }
-        
-        response = (client.table('quiz_cards')
-                   .update(update_data)
-                   .eq('pillar_id', pillar_id.value)
-                   .eq('paper_id', paper_id))
-        
-        if response['error']:
-            logger.error(f"Failed to update quiz card: {response['error']}")
-            return False
-            
-        return True
-        
+
+        card_id = response['data'][0]['id']
+
+        # Use the new FSRS review function
+        request = QuizReviewRequest(card_id=card_id, rating=rating)
+        result = review_quiz_card_fsrs(request)
+
+        return result.success
+
     except Exception as e:
-        logger.error(f"Failed to update quiz card: {e}")
+        logger.error(f"Failed to update quiz card (legacy): {e}")
         return False
 
 
@@ -671,7 +1076,7 @@ def update_quiz_card_review(
 # Paper Queue Operations
 # =====================================
 
-def add_to_paper_queue(pillar_id: PillarID, papers: List[PaperRef], priority: int = 0) -> int:
+def add_to_paper_queue(pillar_id: str, papers: List[PaperRef], priority: int = 5) -> int:
     """
     Add papers to the processing queue for a specific pillar.
     
@@ -685,61 +1090,74 @@ def add_to_paper_queue(pillar_id: PillarID, papers: List[PaperRef], priority: in
     """
     if not papers:
         return 0
-    
+
     client = get_client()
     added = 0
-    
-    # First, get existing paper IDs for this pillar to avoid duplicates
+
+    # Get existing paper IDs and queued paper IDs to avoid duplicates
     try:
-        response = (client.table('papers')
-                   .select('id')
-                   .eq('pillar_id', pillar_id.value)
-                   .execute())
-        
-        if response['error']:
-            logger.error(f"Failed to get existing papers: {response['error']}")
-            raise Exception(f"Failed to add candidates to queue for pillar {pillar_id.value}: {response['error']}")
-        
-        existing_ids = {row['id'] for row in (response['data'] or [])}
-        
+        # Check both existing papers and queued papers
+        papers_response = (client.table('papers')
+                          .select('id')
+                          .eq('pillar_id', pillar_id)
+                          .execute())
+
+        queue_response = (client.table('paper_queue')
+                         .select('paper_id')
+                         .eq('pillar_id', pillar_id)
+                         .eq('processed', False)
+                         .execute())
+
+        if papers_response['error']:
+            logger.error(f"Failed to get existing papers: {papers_response['error']}")
+            raise Exception(f"Failed to add candidates to queue for pillar {pillar_id}: {papers_response['error']}")
+
+        if queue_response['error']:
+            logger.error(f"Failed to get queued papers: {queue_response['error']}")
+            raise Exception(f"Failed to add candidates to queue for pillar {pillar_id}: {queue_response['error']}")
+
+        existing_ids = {row['id'] for row in (papers_response['data'] or [])}
+        queued_ids = {row['paper_id'] for row in (queue_response['data'] or [])}
+        all_existing_ids = existing_ids | queued_ids  # Union of both sets
+
     except Exception as e:
         logger.error(f"Failed to check existing papers: {e}")
-        raise Exception(f"Failed to add candidates to queue for pillar {pillar_id.value}: {e}")
-    
+        raise Exception(f"Failed to add candidates to queue for pillar {pillar_id}: {e}")
+
     # Add papers that don't exist yet
     for paper in papers:
-        if paper.id in existing_ids:
-            logger.debug(f"Paper {paper.id} already exists for pillar {pillar_id.value}, skipping")
+        if paper.id in all_existing_ids:
+            logger.debug(f"Paper {paper.id} already exists or is queued for pillar {pillar_id}, skipping")
             continue
-            
+
         try:
             queue_data = {
                 'paper_id': paper.id,
-                'pillar_id': pillar_id.value,
+                'pillar_id': pillar_id,
                 'title': paper.title,
                 'source': 'arxiv',  # Default source, could be enhanced to track actual source
                 'priority': priority,
                 'processed': False
             }
-            
+
             response = client.table('paper_queue').insert(queue_data)
-            
+
             if response['error']:
                 if 'duplicate' in str(response['error']).lower():
-                    logger.debug(f"Paper {paper.id} already in queue for pillar {pillar_id.value}")
+                    logger.debug(f"Paper {paper.id} already in queue for pillar {pillar_id}")
                 else:
                     logger.error(f"Failed to add paper {paper.id} to queue: {response['error']}")
             else:
                 added += 1
-                
+
         except Exception as e:
             logger.error(f"Failed to add paper {paper.id} to queue: {e}")
-    
-    logger.info(f"Added {added}/{len(papers)} papers to queue for pillar {pillar_id.value}")
+
+    logger.info(f"Added {added}/{len(papers)} papers to queue for pillar {pillar_id}")
     return added
 
 
-def pop_from_paper_queue(pillar_id: PillarID, limit: int = 1) -> List[PaperRef]:
+def pop_from_paper_queue(pillar_id: str, limit: int = 1) -> List[PaperRef]:
     """
     Get and mark papers from the queue as being processed.
     
@@ -752,57 +1170,46 @@ def pop_from_paper_queue(pillar_id: PillarID, limit: int = 1) -> List[PaperRef]:
     """
     try:
         client = get_client()
-        
-        # Get unprocessed papers ordered by priority
+
+        # Get unprocessed papers ordered by priority (high first), then oldest first
         response = (client.table('paper_queue')
                    .select('*')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .eq('processed', False)
-                   .order('priority', desc=True)
-                   .order('added_at', desc=True)
+                   .order('priority.desc,added_at.asc')  # Fixed: proper composite ordering
                    .limit(limit)
                    .execute())
-        
+
         if response['error']:
             logger.error(f"Failed to pop papers from queue: {response['error']}")
-            raise Exception(f"Failed to pop papers from queue for pillar {pillar_id.value}: {response['error']}")
-        
+            raise Exception(f"Failed to pop papers from queue for pillar {pillar_id}: {response['error']}")
+
         if not response['data']:
             return []
-        
+
         papers = []
         for row in response['data']:
-            # Create a basic PaperRef with available data from queue
-            # Note: Full paper data should be retrieved from papers table if needed
-            paper = PaperRef(
-                id=row['paper_id'],
-                title=row['title'],
-                authors=[],  # Not stored in queue, would need to fetch from papers table
-                venue=None,  # Not stored in queue
-                year=None,   # Not stored in queue
-                url_pdf=f"https://arxiv.org/pdf/{row['paper_id']}.pdf",  # Construct arXiv URL
-                abstract=None,  # Not stored in queue
-                citation_count=0  # Not stored in queue
-            )
+            # Create PaperRef with full metadata from ArXiv if available
+            paper = _fetch_full_paper_metadata(row['paper_id'], row['title'], row.get('source', 'arxiv'))
             papers.append(paper)
-            
+
             # Mark as processed
             update_response = (client.table('paper_queue')
-                             .eq('pillar_id', pillar_id.value)
+                             .eq('pillar_id', pillar_id)
                              .eq('paper_id', row['paper_id'])
                              .update({'processed': True}))
-            
+
             if update_response['error']:
                 logger.error(f"Failed to mark paper {row['paper_id']} as processed: {update_response['error']}")
-        
+
         return papers
-        
+
     except Exception as e:
         logger.error(f"Failed to pop papers from queue: {e}")
-        raise Exception(f"Failed to pop papers from queue for pillar {pillar_id.value}: {e}")
+        raise Exception(f"Failed to pop papers from queue for pillar {pillar_id}: {e}")
 
 
-def get_queue_size(pillar_id: PillarID) -> int:
+def get_queue_size(pillar_id: str) -> int:
     """
     Get the number of unprocessed papers in queue for a pillar.
     
@@ -816,19 +1223,75 @@ def get_queue_size(pillar_id: PillarID) -> int:
         client = get_client()
         response = (client.table('paper_queue')
                    .select('paper_id')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .eq('processed', False)
                    .execute())
-        
+
         if response['error']:
             logger.error(f"Failed to get queue size: {response['error']}")
             return 0
-            
+
         return len(response['data'] or [])
-        
+
     except Exception as e:
         logger.error(f"Failed to get queue size: {e}")
         return 0
+
+
+def _fetch_full_paper_metadata(paper_id: str, title: str, source: str) -> PaperRef:
+    """
+    Fetch full paper metadata from ArXiv for a given paper ID.
+    
+    Args:
+        paper_id: Paper ID (arXiv ID)
+        title: Paper title from queue
+        source: Source of the paper ('arxiv', 'searxng', etc.)
+        
+    Returns:
+        PaperRef with full metadata if available, or basic metadata as fallback
+    """
+    if source == 'arxiv' and paper_id:
+        try:
+            # Import here to avoid circular dependencies
+            from .tools.arxiv_tool import ArXivTool
+            from .schemas import SearchQuery
+
+            arxiv_tool = ArXivTool()
+
+            # Search for the specific paper by ID
+            search_query = SearchQuery(
+                pillar_id="models-architectures",  # Default pillar for metadata fetch
+                query=f"id:{paper_id}",
+                filters={},
+                max_results=1
+            )
+
+            results = arxiv_tool.search(search_query)
+
+            if results:
+                # Found full metadata
+                paper = results[0]
+                logger.info(f"Retrieved full metadata for paper {paper_id}: {len(paper.authors)} authors, year {paper.year}")
+                return paper
+            else:
+                logger.warning(f"No metadata found for arXiv paper {paper_id}, using basic data")
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch metadata for paper {paper_id}: {e}")
+
+    # Fallback to basic paper data
+    pdf_url = f"https://arxiv.org/pdf/{paper_id}.pdf" if source == 'arxiv' else None
+
+    return PaperRef(
+        id=paper_id,
+        title=title,
+        authors=[],  # Empty metadata as fallback
+        venue=None,
+        year=None,
+        url_pdf=pdf_url,
+        abstract=None,
+        citation_count=0
+    )
 
 
 # =====================================
@@ -840,7 +1303,7 @@ queue_add_candidates = add_to_paper_queue  # Alias for orchestrator
 queue_pop_next = pop_from_paper_queue  # Alias for orchestrator
 
 # Paper operations aliases
-def upsert_paper(pillar_id: PillarID, paper: PaperRef) -> bool:
+def upsert_paper(pillar_id: str, paper: PaperRef) -> bool:
     """Alias for add_paper to match orchestrator expectations."""
     return add_paper(pillar_id, paper)
 
@@ -860,20 +1323,719 @@ def insert_quiz_cards(cards: List[QuizCard]) -> int:
     return add_quiz_cards(cards)
 
 # Processing status operations
-def mark_processed(pillar_id: PillarID, paper_id: str) -> bool:
+def mark_processed(pillar_id: str, paper_id: str) -> bool:
     """Mark a paper as processed in the queue."""
     try:
         client = get_client()
         response = (client.table('paper_queue')
-                   .eq('pillar_id', pillar_id.value)
+                   .eq('pillar_id', pillar_id)
                    .eq('paper_id', paper_id)
                    .update({'processed': True}))
-        
+
         if response['error']:
             logger.error(f"Failed to mark paper {paper_id} as processed: {response['error']}")
             return False
-        
+
         return True
     except Exception as e:
         logger.error(f"Failed to mark paper {paper_id} as processed: {e}")
         return False
+
+
+# =====================================
+# Pillar CRUD Operations
+# =====================================
+
+def _generate_slug(name: str) -> str:
+    """Generate a URL-friendly slug from a pillar name."""
+    import re
+    # Convert to lowercase and replace spaces/special chars with hyphens
+    slug = re.sub(r'[^\w\s-]', '', name.lower())
+    slug = re.sub(r'[-\s]+', '-', slug)
+    return slug.strip('-')
+
+
+def _pillar_to_dict(pillar: PillarCreate) -> Dict[str, Any]:
+    """Convert PillarCreate to pillars table row."""
+    slug = _generate_slug(pillar.name)
+    return {
+        'id': slug,
+        'name': pillar.name,
+        'goal': pillar.goal,
+        'focus_areas': pillar.focus_areas,
+        'papers_per_day': pillar.papers_per_day
+    }
+
+
+def _dict_to_pillar(row: Dict[str, Any]) -> Pillar:
+    """Convert pillars table row to Pillar."""
+    return Pillar(
+        id=row['id'],
+        name=row['name'],
+        goal=row['goal'],
+        focus_areas=row.get('focus_areas', []),
+        papers_per_day=row.get('papers_per_day', 2),
+        created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else datetime.now(timezone.utc),
+        updated_at=datetime.fromisoformat(row['updated_at']) if row.get('updated_at') else datetime.now(timezone.utc),
+        last_active=datetime.fromisoformat(row['last_active']) if row.get('last_active') else None
+    )
+
+
+class PillarCreateError(Exception):
+    """Custom exception for pillar creation errors."""
+    pass
+
+class PillarExistsError(PillarCreateError):
+    """Exception raised when pillar already exists."""
+    pass
+
+def create_pillar(pillar_data: PillarCreate) -> Pillar:
+    """
+    Create a new pillar.
+    
+    Args:
+        pillar_data: Data for the new pillar
+        
+    Returns:
+        Created pillar
+        
+    Raises:
+        PillarExistsError: If pillar with same name already exists
+        PillarCreateError: If creation fails for other reasons
+    """
+    try:
+        client = get_client()
+        data = _pillar_to_dict(pillar_data)
+
+        response = client.table('pillars').insert(data)
+
+        if response['error']:
+            error_info = response['error']
+            if isinstance(error_info, dict) and (error_info.get('code') == 409 or 'duplicate' in str(error_info).lower()):
+                logger.error(f"Pillar with name '{pillar_data.name}' already exists")
+                raise PillarExistsError(f"Pillar with name '{pillar_data.name}' already exists")
+            logger.error(f"Failed to create pillar: {response['error']}")
+            raise PillarCreateError(f"Failed to create pillar: {response['error']}")
+
+        if response['data']:
+            logger.info(f"Created pillar: {pillar_data.name} (id: {data['id']})")
+            return _dict_to_pillar(response['data'][0])
+
+        raise PillarCreateError("No data returned from database")
+
+    except (PillarCreateError, PillarExistsError):
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create pillar: {e}")
+        raise PillarCreateError(f"Failed to create pillar: {e}")
+
+
+def get_pillars(limit: int = 50) -> List[Pillar]:
+    """
+    Get all pillars.
+    
+    Args:
+        limit: Maximum number of pillars to return
+        
+    Returns:
+        List of pillars
+    """
+    try:
+        client = get_client()
+        response = (client.table('pillars')
+                   .select('*')
+                   .order('created_at', desc=False)
+                   .limit(limit)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get pillars: {response['error']}")
+            return []
+
+        if not response['data']:
+            return []
+
+        return [_dict_to_pillar(row) for row in response['data']]
+
+    except Exception as e:
+        logger.error(f"Failed to get pillars: {e}")
+        return []
+
+
+def get_pillar_by_id(pillar_id: str) -> Optional[Pillar]:
+    """
+    Get a pillar by its ID.
+    
+    Args:
+        pillar_id: The pillar ID (slug)
+        
+    Returns:
+        Pillar or None if not found
+    """
+    try:
+        client = get_client()
+        response = (client.table('pillars')
+                   .select('*')
+                   .eq('id', pillar_id)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to get pillar {pillar_id}: {response['error']}")
+            return None
+
+        if not response['data']:
+            return None
+
+        return _dict_to_pillar(response['data'][0])
+
+    except Exception as e:
+        logger.error(f"Failed to get pillar {pillar_id}: {e}")
+        return None
+
+
+def update_pillar(pillar_id: str, pillar_data: PillarUpdate) -> Optional[Pillar]:
+    """
+    Update an existing pillar.
+    
+    Args:
+        pillar_id: The pillar ID to update
+        pillar_data: Updated pillar data
+        
+    Returns:
+        Updated pillar or None if failed
+    """
+    try:
+        client = get_client()
+
+        # Build update data from non-None fields
+        update_data = {}
+        if pillar_data.name is not None:
+            update_data['name'] = pillar_data.name
+            # Regenerate slug if name changes
+            update_data['id'] = _generate_slug(pillar_data.name)
+        if pillar_data.goal is not None:
+            update_data['goal'] = pillar_data.goal
+        if pillar_data.focus_areas is not None:
+            update_data['focus_areas'] = pillar_data.focus_areas
+        if pillar_data.papers_per_day is not None:
+            update_data['papers_per_day'] = pillar_data.papers_per_day
+
+        if not update_data:
+            # No updates to apply
+            return get_pillar_by_id(pillar_id)
+
+        response = (client.table('pillars')
+                   .eq('id', pillar_id)
+                   .update(update_data))
+
+        if response['error']:
+            logger.error(f"Failed to update pillar {pillar_id}: {response['error']}")
+            return None
+
+        if response['data']:
+            logger.info(f"Updated pillar: {pillar_id}")
+            return _dict_to_pillar(response['data'][0])
+        return None
+
+    except Exception as e:
+        logger.error(f"Failed to update pillar {pillar_id}: {e}")
+        return None
+
+
+def delete_pillar(pillar_id: str) -> bool:
+    """
+    Delete a pillar.
+    
+    Args:
+        pillar_id: The pillar ID to delete
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        client = get_client()
+
+        # Check if pillar has associated data
+        papers_response = (client.table('papers')
+                          .select('id')
+                          .eq('pillar_id', pillar_id)
+                          .limit(1)
+                          .execute())
+
+        if papers_response['data']:
+            logger.warning(f"Cannot delete pillar {pillar_id}: has associated papers")
+            return False
+
+        response = (client.table('pillars')
+                   .eq('id', pillar_id)
+                   .delete())
+
+        if response.get('error'):
+            logger.error(f"Failed to delete pillar {pillar_id}: {response['error']}")
+            return False
+
+        logger.info(f"Deleted pillar: {pillar_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to delete pillar {pillar_id}: {e}")
+        return False
+
+
+def pillar_exists(pillar_id: str) -> bool:
+    """
+    Check if a pillar exists.
+    
+    Args:
+        pillar_id: The pillar ID to check
+        
+    Returns:
+        True if pillar exists, False otherwise
+    """
+    try:
+        client = get_client()
+        response = (client.table('pillars')
+                   .select('id')
+                   .eq('id', pillar_id)
+                   .execute())
+
+        if response['error']:
+            logger.error(f"Failed to check pillar {pillar_id}: {response['error']}")
+            return False
+
+        return bool(response['data'])
+
+    except Exception as e:
+        logger.error(f"Failed to check pillar {pillar_id}: {e}")
+        return False
+
+
+# =====================================
+# FSRS Operations
+# =====================================
+
+def get_user_fsrs_parameters(user_id: str = "default_user", pillar_id: Optional[str] = None) -> Optional[UserFSRSParameters]:
+    """
+    Get FSRS parameters for a user, with pillar-specific fallback to global.
+    
+    Args:
+        user_id: User identifier
+        pillar_id: Optional pillar-specific parameters
+        
+    Returns:
+        UserFSRSParameters or None if not found
+    """
+    try:
+        client = get_client()
+
+        # First try pillar-specific parameters if pillar_id provided
+        if pillar_id:
+            response = (client.table('user_fsrs_parameters')
+                       .select('*')
+                       .eq('user_id', user_id)
+                       .eq('pillar_id', pillar_id)
+                       .limit(1)
+                       .execute())
+
+            if not response['error'] and response['data']:
+                return _dict_to_user_fsrs_parameters(response['data'][0])
+
+        # Fallback to global parameters
+        response = (client.table('user_fsrs_parameters')
+                   .select('*')
+                   .eq('user_id', user_id)
+                   .eq('pillar_id', None)
+                   .limit(1)
+                   .execute())
+
+        if response['error'] or not response['data']:
+            logger.debug(f"No FSRS parameters found for user {user_id}, using defaults")
+            return None
+
+        return _dict_to_user_fsrs_parameters(response['data'][0])
+
+    except Exception as e:
+        logger.error(f"Failed to get FSRS parameters for user {user_id}: {e}")
+        return None
+
+
+def upsert_user_fsrs_parameters(params: UserFSRSParameters) -> bool:
+    """
+    Insert or update FSRS parameters for a user.
+    
+    Args:
+        params: UserFSRSParameters to save
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        client = get_client()
+        data = _user_fsrs_parameters_to_dict(params)
+
+        # Try to update first
+        response = (client.table('user_fsrs_parameters')
+                   .eq('user_id', params.user_id)
+                   .eq('pillar_id', params.pillar_id if params.pillar_id else None)
+                   .update(data))
+
+        if response['error']:
+            # If update failed, try insert
+            response = client.table('user_fsrs_parameters').insert(data)
+
+            if response['error']:
+                logger.error(f"Failed to upsert FSRS parameters: {response['error']}")
+                return False
+
+        logger.info(f"Upserted FSRS parameters for user {params.user_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to upsert FSRS parameters: {e}")
+        return False
+
+
+def get_review_logs(user_id: str = "default_user", pillar_id: Optional[str] = None,
+                   limit: int = 1000) -> List[ReviewLog]:
+    """
+    Get review logs for optimization.
+    
+    Args:
+        user_id: User identifier
+        pillar_id: Optional pillar filter
+        limit: Maximum number of logs to return
+        
+    Returns:
+        List of ReviewLog entries
+    """
+    try:
+        client = get_client()
+
+        query = (client.table('review_logs')
+                .select('*')
+                .eq('user_id', user_id)
+                .order('review_timestamp', desc=False)
+                .limit(limit))
+
+        if pillar_id:
+            query = query.eq('pillar_id', pillar_id)
+
+        response = query.execute()
+
+        if response['error']:
+            logger.error(f"Failed to get review logs: {response['error']}")
+            return []
+
+        if not response['data']:
+            return []
+
+        return [_dict_to_review_log(row) for row in response['data']]
+
+    except Exception as e:
+        logger.error(f"Failed to get review logs: {e}")
+        return []
+
+
+def get_cards_for_review(user_id: str = "default_user", pillar_id: Optional[str] = None,
+                        limit: int = 10) -> List[QuizCard]:
+    """
+    Get quiz cards due for review using FSRS scheduling.
+    
+    Args:
+        user_id: User identifier
+        pillar_id: Optional pillar filter
+        limit: Maximum number of cards to return
+        
+    Returns:
+        List of QuizCard due for review
+    """
+    try:
+        client = get_client()
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Build query for cards due for review
+        query = (client.table('quiz_cards')
+                .select('*')
+                .eq('user_id', user_id)
+                .limit(limit))
+
+        if pillar_id:
+            query = query.eq('pillar_id', pillar_id)
+
+        # For now, get cards where next_review_date is null or <= now
+        # Note: PostgREST doesn't support complex date comparisons easily,
+        # so we'll do this filtering in Python
+        response = query.execute()
+
+        if response['error']:
+            logger.error(f"Failed to get cards for review: {response['error']}")
+            return []
+
+        if not response['data']:
+            return []
+
+        # Filter and sort cards
+        cards = []
+        for row in response['data']:
+            card = _dict_to_quiz_card(row)
+
+            # Include card if:
+            # 1. Never reviewed (next_review_date is None)
+            # 2. Due for review (next_review_date <= now)
+            if card.next_review_date is None or card.next_review_date <= datetime.now(timezone.utc):
+                cards.append(card)
+
+        # Sort by due date (earliest first, None last)
+        cards.sort(key=lambda c: c.next_review_date or datetime.max.replace(tzinfo=timezone.utc))
+
+        return cards[:limit]
+
+    except Exception as e:
+        logger.error(f"Failed to get cards for review: {e}")
+        return []
+
+
+def add_review_log(log: ReviewLog) -> bool:
+    """
+    Add a review log entry.
+    
+    Args:
+        log: ReviewLog to save
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        client = get_client()
+        data = _review_log_to_dict(log)
+
+        response = client.table('review_logs').insert(data)
+
+        if response['error']:
+            logger.error(f"Failed to add review log: {response['error']}")
+            return False
+
+        logger.debug(f"Added review log for card {log.card_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to add review log: {e}")
+        return False
+
+
+# =====================================
+# Paper Citations Operations
+# =====================================
+
+def _paper_citation_to_dict(citation: PaperCitation) -> Dict[str, Any]:
+    """Convert PaperCitation to paper_citations table row."""
+    data = {
+        'paper_id': citation.paper_id,
+        'cited_paper_id': citation.cited_paper_id,
+        'citation_direction': citation.citation_direction,
+        'is_influential': citation.is_influential,
+        'citation_context': citation.citation_context,
+        'source': citation.source,
+        'fetched_at': citation.fetched_at.isoformat() if citation.fetched_at else datetime.now(timezone.utc).isoformat()
+    }
+    # Remove None values
+    return {k: v for k, v in data.items() if v is not None}
+
+
+def _dict_to_paper_citation(row: Dict[str, Any]) -> PaperCitation:
+    """Convert paper_citations table row to PaperCitation."""
+    return PaperCitation(
+        id=row.get('id'),
+        paper_id=row['paper_id'],
+        cited_paper_id=row['cited_paper_id'],
+        citation_direction=row['citation_direction'],
+        is_influential=row.get('is_influential', False),
+        citation_context=row.get('citation_context'),
+        source=row.get('source', 'semantic_scholar'),
+        fetched_at=datetime.fromisoformat(row['fetched_at']) if row.get('fetched_at') else None
+    )
+
+
+def add_paper_citations(citations: List[PaperCitation]) -> int:
+    """
+    Add multiple paper citations to the database.
+
+    Args:
+        citations: List of PaperCitation objects to add
+
+    Returns:
+        Number of citations successfully added
+    """
+    if not citations:
+        return 0
+
+    try:
+        client = get_client()
+        added = 0
+
+        for citation in citations:
+            data = _paper_citation_to_dict(citation)
+
+            response = client.table('paper_citations').insert(data)
+
+            if response['error']:
+                error_str = str(response['error']).lower()
+                # Skip duplicates silently
+                if 'duplicate' in error_str or 'conflict' in error_str or 'unique' in error_str:
+                    continue
+                logger.warning(f"Failed to add citation: {response['error']}")
+                continue
+
+            added += 1
+
+        logger.info(f"Added {added} citations out of {len(citations)}")
+        return added
+
+    except Exception as e:
+        logger.error(f"Failed to add paper citations: {e}")
+        return 0
+
+
+def get_citations_for_paper(paper_id: str, direction: str = None) -> List[PaperCitation]:
+    """
+    Get citations for a paper.
+
+    Args:
+        paper_id: Paper ID to get citations for
+        direction: Optional filter for 'outgoing' or 'incoming'
+
+    Returns:
+        List of PaperCitation objects
+    """
+    try:
+        client = get_client()
+        query = client.table('paper_citations').select('*').eq('paper_id', paper_id)
+
+        if direction:
+            query = query.eq('citation_direction', direction)
+
+        response = query.execute()
+
+        if response['error']:
+            logger.error(f"Failed to get citations: {response['error']}")
+            return []
+
+        citations = [_dict_to_paper_citation(row) for row in response['data']]
+        logger.debug(f"Found {len(citations)} citations for paper {paper_id}")
+        return citations
+
+    except Exception as e:
+        logger.error(f"Failed to get citations for paper {paper_id}: {e}")
+        return []
+
+
+def get_co_cited_papers(paper_ids: List[str], limit: int = 10) -> List[str]:
+    """
+    Get papers that are frequently cited together with the given papers.
+
+    Args:
+        paper_ids: List of paper IDs to find co-cited papers for
+        limit: Maximum number of results
+
+    Returns:
+        List of paper IDs that are frequently co-cited
+    """
+    if not paper_ids:
+        return []
+
+    try:
+        client = get_client()
+
+        # Get all citations for the given papers
+        all_cited = []
+        for paper_id in paper_ids:
+            citations = get_citations_for_paper(paper_id, direction='outgoing')
+            all_cited.extend([c.cited_paper_id for c in citations])
+
+        # Count occurrences
+        from collections import Counter
+        cited_counts = Counter(all_cited)
+
+        # Exclude the input papers
+        for paper_id in paper_ids:
+            cited_counts.pop(paper_id, None)
+
+        # Return most common
+        return [paper_id for paper_id, count in cited_counts.most_common(limit)]
+
+    except Exception as e:
+        logger.error(f"Failed to get co-cited papers: {e}")
+        return []
+
+
+def citation_exists(paper_id: str, cited_paper_id: str, direction: str) -> bool:
+    """
+    Check if a citation relationship already exists.
+
+    Args:
+        paper_id: Source paper ID
+        cited_paper_id: Target paper ID
+        direction: Citation direction ('outgoing' or 'incoming')
+
+    Returns:
+        True if citation exists, False otherwise
+    """
+    try:
+        client = get_client()
+
+        response = client.table('paper_citations') \
+            .select('id') \
+            .eq('paper_id', paper_id) \
+            .eq('cited_paper_id', cited_paper_id) \
+            .eq('citation_direction', direction) \
+            .execute()
+
+        if response['error']:
+            return False
+
+        return len(response['data']) > 0
+
+    except Exception as e:
+        logger.error(f"Failed to check citation existence: {e}")
+        return False
+
+
+def get_citation_network_papers(paper_ids: List[str], limit: int = 20) -> List[str]:
+    """
+    Get paper IDs from the citation network of the given papers.
+
+    Finds papers that cite or are cited by the given papers.
+
+    Args:
+        paper_ids: Seed paper IDs
+        limit: Maximum number of results
+
+    Returns:
+        List of paper IDs in the citation network
+    """
+    if not paper_ids:
+        return []
+
+    try:
+        client = get_client()
+        network_papers = set()
+
+        for paper_id in paper_ids:
+            # Get papers this one cites (outgoing)
+            outgoing = get_citations_for_paper(paper_id, direction='outgoing')
+            for citation in outgoing:
+                network_papers.add(citation.cited_paper_id)
+
+            # Get papers that cite this one (incoming)
+            incoming = get_citations_for_paper(paper_id, direction='incoming')
+            for citation in incoming:
+                network_papers.add(citation.cited_paper_id)
+
+        # Exclude seed papers
+        network_papers -= set(paper_ids)
+
+        return list(network_papers)[:limit]
+
+    except Exception as e:
+        logger.error(f"Failed to get citation network: {e}")
+        return []

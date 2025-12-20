@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Pipeline Control</h2>
+
+<form id="run-form">
+  <div class="grid">
+    <label>
+      Pillar
+      <select name="pillar" required>
+        {% for pillar in pillars %}
+        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Papers
+      <input type="number" name="papers" min="1" max="10" value="1" />
+    </label>
+  </div>
+  <button type="submit">Run Pipeline</button>
+  <span id="status"></span>
+  <pre id="output" style="white-space: pre-wrap"></pre>
+</form>
+
+<script>
+const form = document.getElementById('run-form');
+const statusEl = document.getElementById('status');
+const outputEl = document.getElementById('output');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  statusEl.textContent = 'Running...';
+  outputEl.textContent = '';
+  const data = new FormData(form);
+  const pillar = data.get('pillar');
+  const papers = data.get('papers');
+  try {
+    const res = await fetch(`/pipeline/run?pillar=${pillar}&papers=${papers}`, { method: 'POST' });
+    const json = await res.json();
+    statusEl.textContent = json.success ? 'Success' : 'Failed';
+    outputEl.textContent = JSON.stringify(json, null, 2);
+  } catch (err) {
+    statusEl.textContent = 'Error';
+    outputEl.textContent = String(err);
+  }
+});
+</script>
+{% endblock %}
+
+

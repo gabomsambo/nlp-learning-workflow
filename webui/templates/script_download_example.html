@@ -1,0 +1,604 @@
+<!--
+    Script Download UI Component Examples
+
+    Multiple approaches for triggering file downloads in FastAPI web application.
+    Choose the pattern that best fits your use case.
+-->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Script Download Examples</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        .example-section {
+            margin-top: 3rem;
+            padding: 2rem;
+            background-color: #f8f9fa;
+            border-left: 4px solid #0d6efd;
+        }
+
+        .code-block {
+            background-color: #272822;
+            color: #f8f8f2;
+            padding: 1rem;
+            border-radius: 0.25rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        .download-button {
+            display: inline-block;
+            margin: 0.5rem 0;
+        }
+
+        .preview-content {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            padding: 1rem;
+            border-radius: 0.25rem;
+            margin: 1rem 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>FastAPI Script Download Examples</h1>
+        <p class="lead">Practical implementations for triggering file downloads</p>
+
+        <!-- ============================================================
+             PATTERN 1: Simple HTML Link Download
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 1: Simple HTML Link</h2>
+            <p>The most straightforward approach. Uses standard HTML anchor tag with <code>download</code> attribute.</p>
+
+            <div class="code-block">
+<pre>&lt;a href="/api/scripts/download/script_123"
+   download
+   class="btn btn-primary"&gt;
+    &lt;i class="bi bi-download"&gt;&lt;/i&gt; Download Script
+&lt;/a&gt;</pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>When to use:</strong> Simple pages with static script IDs, no dynamic behavior needed
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <a href="/api/scripts/download/script_123"
+                       download
+                       class="btn btn-primary">
+                        <i class="bi bi-download"></i> Download Script
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             PATTERN 2: JavaScript Trigger
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 2: JavaScript Trigger</h2>
+            <p>Use JavaScript to dynamically generate download links, handle errors, or add logic.</p>
+
+            <div class="code-block">
+<pre>function downloadScript(scriptId) {
+    const link = document.createElement('a');
+    link.href = `/api/scripts/download/${scriptId}`;
+    link.download = true;  // Force download instead of navigation
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}</pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>When to use:</strong> Dynamic script IDs from variables, need to add click handlers, or customize behavior
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <div class="mb-3">
+                        <label class="form-label">Script ID:</label>
+                        <input type="text" id="scriptIdInput" class="form-control" value="script_123" placeholder="Enter script ID">
+                    </div>
+                    <button type="button"
+                            class="btn btn-primary"
+                            onclick="downloadScriptJavaScript()">
+                        <i class="bi bi-download"></i> Download with JS
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             PATTERN 3: Fetch API with Progress
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 3: Fetch API with Progress</h2>
+            <p>Use Fetch API for advanced control - progress tracking, error handling, custom filename extraction.</p>
+
+            <div class="code-block">
+<pre>async function downloadWithFetch(scriptId) {
+    try {
+        const response = await fetch(`/api/scripts/download/${scriptId}`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        // Extract filename from header
+        const contentDisposition = response.headers.get('content-disposition');
+        let filename = 'script.txt';
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename="([^"]+)"/);
+            if (match) filename = match[1];
+        }
+
+        // Get file data
+        const blob = await response.blob();
+
+        // Trigger download
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Download failed:', error);
+        alert('Failed to download script: ' + error.message);
+    }
+}</pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>When to use:</strong> Need error handling, custom filename extraction, or progress tracking
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <div class="mb-3">
+                        <label class="form-label">Script ID:</label>
+                        <input type="text" id="scriptIdFetch" class="form-control" value="script_456" placeholder="Enter script ID">
+                    </div>
+                    <button type="button"
+                            class="btn btn-primary"
+                            onclick="downloadWithFetch()">
+                        <i class="bi bi-download"></i> Download with Fetch
+                    </button>
+                    <div class="mt-2">
+                        <div class="progress" id="downloadProgress" style="display: none;">
+                            <div class="progress-bar" role="progressbar" style="width: 0%" id="progressBar"></div>
+                        </div>
+                        <small id="progressText" class="text-muted"></small>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             PATTERN 4: Fetch with Progress Streaming
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 4: Fetch with Streaming Progress</h2>
+            <p>For larger files, use ReadableStream to show real-time download progress.</p>
+
+            <div class="code-block">
+<pre>async function downloadWithProgress(scriptId) {
+    try {
+        const response = await fetch(`/api/scripts/download/${scriptId}`);
+        const contentLength = response.headers.get('content-length');
+        const reader = response.body.getReader();
+        const chunks = [];
+        let downloadedSize = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            downloadedSize += value.length;
+
+            if (contentLength) {
+                const progress = (downloadedSize / contentLength) * 100;
+                document.getElementById('progressBar').style.width = progress + '%';
+            }
+        }
+
+        const blob = new Blob(chunks);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `script_${scriptId}.txt`;
+        link.click();
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Download failed:', error);
+    }
+}</pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>When to use:</strong> Large files where progress feedback is important for user experience
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <div class="mb-3">
+                        <label class="form-label">Script ID:</label>
+                        <input type="text" id="scriptIdProgress" class="form-control" value="script_789" placeholder="Enter script ID">
+                    </div>
+                    <button type="button"
+                            class="btn btn-primary"
+                            onclick="downloadWithProgress()">
+                        <i class="bi bi-download"></i> Download with Progress
+                    </button>
+                    <div class="mt-2">
+                        <div class="progress" id="downloadProgressStream" style="display: none;">
+                            <div class="progress-bar" role="progressbar" style="width: 0%" id="progressBarStream"></div>
+                        </div>
+                        <small id="progressTextStream" class="text-muted"></small>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             PATTERN 5: Form Submission
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 5: Form Submission</h2>
+            <p>Alternative approach using form submission, sometimes more reliable for certain browsers.</p>
+
+            <div class="code-block">
+<pre>&lt;form method="get" action="/api/scripts/download/{{ script_id }}"&gt;
+    &lt;button type="submit" class="btn btn-primary"&gt;
+        &lt;i class="bi bi-download"&gt;&lt;/i&gt; Download
+    &lt;/button&gt;
+&lt;/form&gt;</pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>When to use:</strong> Legacy browsers, simple cases, or form-based workflows
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <form method="get" action="/api/scripts/download/script_form">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-download"></i> Download via Form
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             PATTERN 6: Modal with Preview
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 6: Modal with Preview & Download</h2>
+            <p>Show script preview in modal before downloading - useful for user confirmation.</p>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <button type="button"
+                            class="btn btn-primary"
+                            data-bs-toggle="modal"
+                            data-bs-target="#scriptModal">
+                        <i class="bi bi-download"></i> Preview & Download
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal -->
+            <div class="modal fade" id="scriptModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Script Preview</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="preview-content" id="previewContent">
+                                Loading preview...
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button"
+                                    class="btn btn-primary"
+                                    onclick="downloadFromModal()">
+                                <i class="bi bi-download"></i> Download Script
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             PATTERN 7: Copy to Clipboard Alternative
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern 7: Copy to Clipboard (Alternative)</h2>
+            <p>Instead of downloading, copy script content directly to clipboard.</p>
+
+            <div class="code-block">
+<pre>async function copyScriptToClipboard(scriptId) {
+    try {
+        const response = await fetch(`/api/scripts/preview/${scriptId}`);
+        const data = await response.json();
+
+        await navigator.clipboard.writeText(data.content);
+
+        alert('Script copied to clipboard!');
+    } catch (error) {
+        alert('Failed to copy: ' + error.message);
+    }
+}</pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>When to use:</strong> When users might want to paste directly into editor, or as complement to download
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Demo</h5>
+                    <button type="button"
+                            class="btn btn-outline-primary"
+                            onclick="copyToClipboard('script_copy')">
+                        <i class="bi bi-clipboard"></i> Copy to Clipboard
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             COMPARISON TABLE
+             ============================================================ -->
+        <section class="example-section">
+            <h2>Pattern Comparison</h2>
+
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Pattern</th>
+                        <th>Simplicity</th>
+                        <th>Error Handling</th>
+                        <th>Progress Tracking</th>
+                        <th>Browser Support</th>
+                        <th>Best For</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>HTML Link</strong></td>
+                        <td><span class="badge bg-success">High</span></td>
+                        <td><span class="badge bg-danger">None</span></td>
+                        <td><span class="badge bg-danger">No</span></td>
+                        <td><span class="badge bg-success">Excellent</span></td>
+                        <td>Static downloads</td>
+                    </tr>
+                    <tr>
+                        <td><strong>JS Trigger</strong></td>
+                        <td><span class="badge bg-success">High</span></td>
+                        <td><span class="badge bg-warning">Limited</span></td>
+                        <td><span class="badge bg-danger">No</span></td>
+                        <td><span class="badge bg-success">Excellent</span></td>
+                        <td>Dynamic IDs</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fetch API</strong></td>
+                        <td><span class="badge bg-warning">Medium</span></td>
+                        <td><span class="badge bg-success">Excellent</span></td>
+                        <td><span class="badge bg-danger">No</span></td>
+                        <td><span class="badge bg-warning">Modern</span></td>
+                        <td>Advanced control</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Streaming Progress</strong></td>
+                        <td><span class="badge bg-danger">Low</span></td>
+                        <td><span class="badge bg-success">Excellent</span></td>
+                        <td><span class="badge bg-success">Yes</span></td>
+                        <td><span class="badge bg-warning">Modern</span></td>
+                        <td>Large files</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Form Submission</strong></td>
+                        <td><span class="badge bg-success">High</span></td>
+                        <td><span class="badge bg-warning">Limited</span></td>
+                        <td><span class="badge bg-danger">No</span></td>
+                        <td><span class="badge bg-success">Excellent</span></td>
+                        <td>Legacy browsers</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // ====================================================================
+        // Pattern 2: JavaScript Trigger
+        // ====================================================================
+        function downloadScriptJavaScript() {
+            const scriptId = document.getElementById('scriptIdInput').value || 'script_123';
+
+            const link = document.createElement('a');
+            link.href = `/api/scripts/download/${scriptId}`;
+            link.download = true;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // ====================================================================
+        // Pattern 3: Fetch API
+        // ====================================================================
+        async function downloadWithFetch() {
+            const scriptId = document.getElementById('scriptIdFetch').value || 'script_456';
+
+            try {
+                const response = await fetch(`/api/scripts/download/${scriptId}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                // Extract filename from Content-Disposition header
+                const contentDisposition = response.headers.get('content-disposition');
+                let filename = 'script.txt';
+
+                if (contentDisposition) {
+                    const match = contentDisposition.match(/filename="([^"]+)"/);
+                    if (match) {
+                        filename = match[1];
+                    }
+                }
+
+                // Create blob from response
+                const blob = await response.blob();
+
+                // Trigger download
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                window.URL.revokeObjectURL(url);
+
+            } catch (error) {
+                console.error('Download failed:', error);
+                alert('Failed to download script: ' + error.message);
+            }
+        }
+
+        // ====================================================================
+        // Pattern 4: Streaming Progress
+        // ====================================================================
+        async function downloadWithProgress() {
+            const scriptId = document.getElementById('scriptIdProgress').value || 'script_789';
+            const progressDiv = document.getElementById('downloadProgressStream');
+            const progressBar = document.getElementById('progressBarStream');
+            const progressText = document.getElementById('progressTextStream');
+
+            progressDiv.style.display = 'block';
+
+            try {
+                const response = await fetch(`/api/scripts/download/${scriptId}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const contentLength = response.headers.get('content-length');
+                const reader = response.body.getReader();
+                const chunks = [];
+                let downloadedSize = 0;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+
+                    if (done) break;
+
+                    chunks.push(value);
+                    downloadedSize += value.length;
+
+                    if (contentLength) {
+                        const progress = (downloadedSize / contentLength) * 100;
+                        progressBar.style.width = progress + '%';
+                        progressText.textContent = `${downloadedSize} / ${contentLength} bytes`;
+                    }
+                }
+
+                // Create blob and download
+                const blob = new Blob(chunks);
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `script_${scriptId}.txt`;
+                link.click();
+
+                window.URL.revokeObjectURL(url);
+
+                progressText.textContent = 'Download complete!';
+
+            } catch (error) {
+                console.error('Download failed:', error);
+                progressText.textContent = 'Download failed: ' + error.message;
+            }
+        }
+
+        // ====================================================================
+        // Pattern 6: Modal Preview
+        // ====================================================================
+        const scriptModalEl = document.getElementById('scriptModal');
+        if (scriptModalEl) {
+            scriptModalEl.addEventListener('show.bs.modal', async function() {
+                const previewContent = document.getElementById('previewContent');
+                previewContent.textContent = 'Loading preview...';
+
+                try {
+                    const response = await fetch('/api/scripts/download/script_preview/preview');
+                    const data = await response.json();
+                    previewContent.textContent = data.content || 'No content available';
+                } catch (error) {
+                    previewContent.textContent = 'Failed to load preview: ' + error.message;
+                }
+            });
+        }
+
+        function downloadFromModal() {
+            downloadWithFetch();
+            const modal = bootstrap.Modal.getInstance(document.getElementById('scriptModal'));
+            modal.hide();
+        }
+
+        // ====================================================================
+        // Pattern 7: Copy to Clipboard
+        // ====================================================================
+        async function copyToClipboard(scriptId) {
+            try {
+                // Fetch preview endpoint (you'd need to implement this)
+                const response = await fetch(`/api/scripts/download/${scriptId}/preview`);
+                const data = await response.json();
+
+                await navigator.clipboard.writeText(data.content);
+
+                alert('Script copied to clipboard!');
+            } catch (error) {
+                console.error('Copy failed:', error);
+                alert('Failed to copy: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -2,13 +2,13 @@
 Summarizer Agent - Fixed version with working implementation.
 """
 
-from ..schemas import PaperNote, SummarizerInput, PillarID
+from ..schemas import PaperNote, SummarizerInput
 from datetime import datetime, timezone
 
 
 class SummarizerAgent:
     """Agent that summarizes research papers into structured notes."""
-    
+
     @classmethod
     def run(cls, input_data: SummarizerInput) -> PaperNote:
         """Generate a paper note from the parsed paper.
@@ -17,10 +17,10 @@ class SummarizerAgent:
         without requiring the full AtomicAgent infrastructure.
         """
         paper = input_data.parsed_paper
-        
+
         # Extract key information from the paper
         abstract = paper.paper_ref.abstract or "No abstract available"
-        
+
         # Create a structured note
         return PaperNote(
             paper_id=paper.paper_ref.id,

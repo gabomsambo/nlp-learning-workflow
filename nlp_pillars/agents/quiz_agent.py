@@ -8,7 +8,7 @@ from ..schemas import QuizCard, QuizGeneratorInput
 
 class QuizAgent:
     """Agent that generates quiz cards for spaced repetition learning."""
-    
+
     @classmethod
     def run(cls, input_data: QuizGeneratorInput) -> List[QuizCard]:
         """Generate quiz cards from the paper note.
@@ -18,7 +18,7 @@ class QuizAgent:
         """
         note = input_data.paper_note
         cards = []
-        
+
         # Generate quiz cards based on the paper content
         cards.append(QuizCard(
             paper_id=note.paper_id,
@@ -28,7 +28,7 @@ class QuizAgent:
             difficulty=1,
             tags=["problem", "overview"]
         ))
-        
+
         cards.append(QuizCard(
             paper_id=note.paper_id,
             pillar_id=note.pillar_id,
@@ -37,7 +37,7 @@ class QuizAgent:
             difficulty=2,
             tags=["methodology", "technical"]
         ))
-        
+
         cards.append(QuizCard(
             paper_id=note.paper_id,
             pillar_id=note.pillar_id,
@@ -46,7 +46,7 @@ class QuizAgent:
             difficulty=2,
             tags=["findings", "results"]
         ))
-        
+
         if note.limitations:
             cards.append(QuizCard(
                 paper_id=note.paper_id,
@@ -56,7 +56,7 @@ class QuizAgent:
                 difficulty=3,
                 tags=["limitations", "critical-thinking"]
             ))
-        
+
         if note.future_work:
             cards.append(QuizCard(
                 paper_id=note.paper_id,
@@ -66,5 +66,5 @@ class QuizAgent:
                 difficulty=2,
                 tags=["future-work", "research-directions"]
             ))
-        
+
         return cards[:input_data.num_questions]  # Return requested number of questions

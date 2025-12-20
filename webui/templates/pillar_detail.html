@@ -1,0 +1,1468 @@
+{% extends "base.html" %}
+
+{% block title %}{{ pillar.name }} - Pillar Details{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="breadcrumb">
+        <a href="/pillars">← Learning Pillars</a>
+    </nav>
+
+    <!-- Pillar header -->
+    <header class="pillar-header">
+        <hgroup>
+            <h1>{{ pillar.name }}</h1>
+            <p class="pillar-goal">{{ pillar.goal }}</p>
+        </hgroup>
+        
+        <div class="pillar-actions">
+            <button class="btn-edit" data-pillar-id="{{ pillar.id }}">
+                ✏️ Edit Pillar
+            </button>
+        </div>
+    </header>
+
+    <!-- Pillar metadata -->
+    <div class="pillar-meta-grid">
+        <div class="meta-card">
+            <h3>📚 Daily Target</h3>
+            <p class="meta-value">{{ pillar.papers_per_day }}</p>
+            <small>papers per day</small>
+        </div>
+        
+        <div class="meta-card">
+            <h3>📅 Created</h3>
+            <p class="meta-value">{{ pillar.created_at.strftime('%b %d, %Y') }}</p>
+            <small>{{ (now - pillar.created_at).days }} days ago</small>
+        </div>
+        
+        <div class="meta-card">
+            <h3>🔄 Last Updated</h3>
+            <p class="meta-value">{{ pillar.updated_at.strftime('%b %d, %Y') }}</p>
+            <small>{{ (now - pillar.updated_at).days }} days ago</small>
+        </div>
+        
+        {% if pillar.last_active %}
+        <div class="meta-card">
+            <h3>⚡ Last Active</h3>
+            <p class="meta-value">{{ pillar.last_active.strftime('%b %d, %Y') }}</p>
+            <small>{{ (now - pillar.last_active).days }} days ago</small>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Focus areas -->
+    {% if pillar.focus_areas %}
+    <section class="focus-section">
+        <h2>🎯 Focus Areas</h2>
+        <div class="focus-areas-grid">
+            {% for area in pillar.focus_areas %}
+                <span class="focus-tag">{{ area }}</span>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Progress overview -->
+    <section class="progress-section">
+        <h2>📊 Progress Overview</h2>
+        <div class="progress-grid">
+            <div class="progress-card">
+                <h3>Papers Processed</h3>
+                <p class="progress-value">{{ stats.papers_count or 0 }}</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {{ (stats.papers_count or 0) / 100 * 100 }}%"></div>
+                </div>
+            </div>
+            
+            <div class="progress-card">
+                <h3>Lessons Generated</h3>
+                <p class="progress-value">{{ stats.lessons_count or 0 }}</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {{ (stats.lessons_count or 0) / 50 * 100 }}%"></div>
+                </div>
+            </div>
+            
+            <div class="progress-card">
+                <h3>Quiz Cards</h3>
+                <p class="progress-value">{{ stats.quiz_cards_count or 0 }}</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {{ (stats.quiz_cards_count or 0) / 200 * 100 }}%"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Recent activity -->
+    <section class="activity-section">
+        <h2>📝 Recent Activity</h2>
+        
+        <div class="activity-tabs">
+            <button class="tab-btn active" data-tab="papers">Papers</button>
+            <button class="tab-btn" data-tab="lessons">Lessons</button>
+            <button class="tab-btn" data-tab="quiz">Quiz Cards</button>
+            <button class="tab-btn" data-tab="upload">📤 Upload</button>
+            <button class="tab-btn" data-tab="search">🔍 Search</button>
+        </div>
+        
+        <div class="tab-content">
+            <!-- Papers tab -->
+            <div id="papers-tab" class="tab-pane active">
+                {% if recent_papers %}
+                <div class="activity-list">
+                    {% for paper in recent_papers %}
+                    <div class="activity-item">
+                        <div class="activity-icon">📄</div>
+                        <div class="activity-content">
+                            <h4>{{ paper.title }}</h4>
+                            <p>{{ paper.authors[:2]|join(', ') }}{% if paper.authors|length > 2 %} et al.{% endif %}</p>
+                            <small>{{ paper.year if paper.year else 'Unknown date' }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <p>No papers processed yet for this pillar.</p>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Lessons tab -->
+            <div id="lessons-tab" class="tab-pane">
+                {% if recent_lessons %}
+                <div class="activity-list">
+                    {% for lesson in recent_lessons %}
+                    <div class="activity-item">
+                        <div class="activity-icon">💡</div>
+                        <div class="activity-content">
+                            <h4>{{ lesson.tl_dr[:100] }}{% if lesson.tl_dr|length > 100 %}...{% endif %}</h4>
+                            <p>{{ lesson.takeaways[:2]|join(', ') }}{% if lesson.takeaways|length > 2 %} et al.{% endif %}</p>
+                            <small>{{ lesson.created_at.strftime('%b %d, %Y') if lesson.created_at else 'Unknown date' }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <p>No lessons generated yet for this pillar.</p>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Quiz cards tab -->
+            <div id="quiz-tab" class="tab-pane">
+                {% if recent_quiz_cards %}
+                <div class="activity-list">
+                    {% for card in recent_quiz_cards %}
+                    <div class="activity-item">
+                        <div class="activity-icon">❓</div>
+                        <div class="activity-content">
+                            <h4>{{ card.question[:100] }}{% if card.question|length > 100 %}...{% endif %}</h4>
+                            <p>Difficulty: {{ card.difficulty }}/3</p>
+                            <small>Due {{ card.due_date.strftime('%b %d, %Y') if card.due_date else 'Unknown date' }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <p>No quiz cards created yet for this pillar.</p>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Upload tab -->
+            <div id="upload-tab" class="tab-pane">
+                <!-- File Upload Section -->
+                <div class="upload-section">
+                    <h3>📁 Upload PDF File</h3>
+                    <div class="upload-container">
+                        <div id="file-drop-zone" class="drop-zone">
+                            <div class="drop-zone-content">
+                                <div class="drop-icon">📎</div>
+                                <p class="drop-text">Drag & drop PDF files here</p>
+                                <p class="drop-subtext">or click to browse</p>
+                                <input type="file" id="file-input" accept=".pdf" multiple style="display: none;">
+                            </div>
+                        </div>
+                        
+                        <!-- File upload form (hidden initially) -->
+                        <div id="file-upload-form" class="upload-form" style="display: none;">
+                            <h4>File Details</h4>
+                            <form id="pdf-upload-form">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="file-title">Title *</label>
+                                        <input type="text" id="file-title" name="title" required placeholder="Enter paper title">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="file-authors">Authors</label>
+                                        <input type="text" id="file-authors" name="authors" placeholder="Author 1, Author 2, Author 3">
+                                        <small>Separate multiple authors with commas</small>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="file-venue">Venue</label>
+                                        <input type="text" id="file-venue" name="venue" placeholder="Conference or Journal">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="file-year">Year</label>
+                                        <input type="number" id="file-year" name="year" min="1900" max="2030" placeholder="2024">
+                                    </div>
+                                </div>
+                                
+                                <!-- Post-upload actions -->
+                                <div class="post-actions">
+                                    <h4>Post-Upload Actions</h4>
+                                    <div class="checkbox-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="file-run-summarizer" name="run_summarizer">
+                                            <span class="checkmark"></span>
+                                            Run Summarizer
+                                            <small>Generate structured notes and summary</small>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="file-generate-quiz" name="generate_quiz">
+                                            <span class="checkmark"></span>
+                                            Generate Quiz Cards
+                                            <small>Create spaced repetition quiz questions</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-actions">
+                                    <button type="button" id="cancel-file-upload" class="btn-secondary">Cancel</button>
+                                    <button type="submit" id="submit-file-upload" class="btn-primary">Upload Paper</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- URL Upload Section -->
+                <div class="upload-section">
+                    <h3>🔗 Upload from URL</h3>
+                    <div class="upload-container">
+                        <form id="url-upload-form" class="upload-form">
+                            <div class="form-group">
+                                <label for="paper-url">PDF URL *</label>
+                                <input type="url" id="paper-url" name="url" required placeholder="https://arxiv.org/pdf/2023.12345.pdf">
+                                <small>Enter a direct link to a PDF file</small>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="url-title">Title Override</label>
+                                    <input type="text" id="url-title" name="title" placeholder="Leave empty to auto-extract">
+                                </div>
+                                <div class="form-group">
+                                    <label for="url-authors">Authors Override</label>
+                                    <input type="text" id="url-authors" name="authors" placeholder="Author 1, Author 2">
+                                    <small>Leave empty to auto-extract if possible</small>
+                                </div>
+                            </div>
+                            
+                            <!-- Post-upload actions -->
+                            <div class="post-actions">
+                                <h4>Post-Upload Actions</h4>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="url-run-summarizer" name="run_summarizer">
+                                        <span class="checkmark"></span>
+                                        Run Summarizer
+                                        <small>Generate structured notes and summary</small>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="url-generate-quiz" name="generate_quiz">
+                                        <span class="checkmark"></span>
+                                        Generate Quiz Cards
+                                        <small>Create spaced repetition quiz questions</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="form-actions">
+                                <button type="submit" id="submit-url-upload" class="btn-primary">Upload from URL</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Upload Status Section -->
+                <div class="upload-section">
+                    <h3>📊 Recent Uploads</h3>
+                    <div id="upload-status-container" class="upload-status-container">
+                        <div class="empty-state">
+                            <p>No recent uploads</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Search tab -->
+            <div id="search-tab" class="tab-pane">
+                <div class="search-section">
+                    <h3>🔍 Search Papers</h3>
+                    <div class="search-container">
+                        <form id="search-form" class="search-form">
+                            <div class="search-input-group">
+                                <input 
+                                    type="text" 
+                                    id="search-query" 
+                                    name="q" 
+                                    placeholder="Search for papers in this pillar..." 
+                                    class="search-input"
+                                    required
+                                >
+                                <button type="submit" class="search-btn">Search</button>
+                            </div>
+                            <div class="search-options">
+                                <label class="search-option">
+                                    <input type="number" id="search-limit" name="top_k" value="10" min="1" max="50" class="search-limit-input">
+                                    <span>Results to show</span>
+                                </label>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    <!-- Search Results Section -->
+                    <div id="search-results-container" class="search-results-container">
+                        <div class="empty-state">
+                            <p>Enter a search query to find relevant papers in this pillar</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick actions -->
+    <section class="actions-section">
+        <h2>🚀 Quick Actions</h2>
+        <div class="action-buttons">
+            <a href="/pipeline?pillar={{ pillar.id }}" class="action-btn">
+                <span class="action-icon">⚙️</span>
+                <span class="action-text">Run Pipeline</span>
+            </a>
+            
+            <a href="/papers?pillar={{ pillar.id }}" class="action-btn">
+                <span class="action-icon">📚</span>
+                <span class="action-text">Browse Papers</span>
+            </a>
+            
+            <a href="/lessons?pillar={{ pillar.id }}" class="action-btn">
+                <span class="action-icon">💡</span>
+                <span class="action-text">View Lessons</span>
+            </a>
+            
+            <a href="/quiz?pillar={{ pillar.id }}" class="action-btn">
+                <span class="action-icon">❓</span>
+                <span class="action-text">Study Quiz</span>
+            </a>
+        </div>
+    </section>
+</div>
+
+<style>
+.breadcrumb {
+    margin-bottom: 1rem;
+}
+
+.breadcrumb a {
+    color: var(--muted-color);
+    text-decoration: none;
+}
+
+.breadcrumb a:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
+.pillar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 2rem;
+}
+
+.pillar-goal {
+    font-size: 1.1rem;
+    color: var(--muted-color);
+    margin-top: 0.5rem;
+}
+
+.pillar-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.meta-card {
+    background: var(--card-background-color);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.meta-card h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--muted-color);
+}
+
+.meta-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin: 0;
+    color: var(--primary);
+}
+
+.focus-section {
+    margin-bottom: 2rem;
+}
+
+.focus-areas-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.focus-tag {
+    background: var(--primary-background);
+    color: var(--primary);
+    padding: 0.5rem 1rem;
+    border-radius: 2rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.progress-section {
+    margin-bottom: 2rem;
+}
+
+.progress-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.progress-card {
+    background: var(--card-background-color);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.progress-card h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--muted-color);
+}
+
+.progress-value {
+    font-size: 2rem;
+    font-weight: bold;
+    margin: 0 0 0.5rem 0;
+    color: var(--primary);
+}
+
+.progress-bar {
+    background: var(--secondary-background);
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    background: var(--primary);
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.activity-section {
+    margin-bottom: 2rem;
+}
+
+.activity-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin: 1rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    color: var(--muted-color);
+    border-bottom: 2px solid transparent;
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.tab-pane {
+    display: none;
+    padding-top: 1rem;
+}
+
+.tab-pane.active {
+    display: block;
+}
+
+.activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.activity-item {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--card-background-color);
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.activity-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.activity-content h4 {
+    margin: 0 0 0.25rem 0;
+    color: var(--color);
+}
+
+.activity-content p {
+    margin: 0 0 0.25rem 0;
+    color: var(--muted-color);
+}
+
+.activity-content small {
+    color: var(--muted-color);
+}
+
+.actions-section {
+    margin-bottom: 2rem;
+}
+
+.action-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.action-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1.5rem 1rem;
+    background: var(--card-background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    text-decoration: none;
+    color: var(--color);
+    transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    text-decoration: none;
+}
+
+.action-icon {
+    font-size: 2rem;
+}
+
+.action-text {
+    font-weight: 500;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 2rem;
+    color: var(--muted-color);
+}
+
+/* Upload Styles */
+.upload-section {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: var(--card-background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+}
+
+.upload-section h3 {
+    margin: 0 0 1rem 0;
+    color: var(--color);
+}
+
+.drop-zone {
+    border: 2px dashed var(--primary);
+    border-radius: 0.5rem;
+    padding: 2rem;
+    text-align: center;
+    background: var(--primary-background);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.drop-zone:hover,
+.drop-zone.dragover {
+    border-color: var(--primary);
+    background: var(--primary-background);
+    transform: translateY(-1px);
+}
+
+.drop-zone-content {
+    pointer-events: none;
+}
+
+.drop-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.drop-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+    margin: 0 0 0.25rem 0;
+    color: var(--primary);
+}
+
+.drop-subtext {
+    margin: 0;
+    color: var(--muted-color);
+    font-size: 0.9rem;
+}
+
+.upload-form {
+    background: var(--background-color);
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-color);
+    margin-top: 1rem;
+}
+
+.upload-form h4 {
+    margin: 0 0 1rem 0;
+    color: var(--color);
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: var(--color);
+}
+
+.form-group input,
+.form-group textarea {
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.25rem;
+    background: var(--background-color);
+    color: var(--color);
+}
+
+.form-group small {
+    margin-top: 0.25rem;
+    color: var(--muted-color);
+    font-size: 0.8rem;
+}
+
+.post-actions {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    background: var(--secondary-background);
+    border-radius: 0.25rem;
+}
+
+.post-actions h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1rem;
+}
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    cursor: pointer;
+    padding: 0.75rem;
+    border-radius: 0.25rem;
+    transition: background 0.2s ease;
+}
+
+.checkbox-label:hover {
+    background: var(--primary-background);
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.checkbox-label > div {
+    flex: 1;
+}
+
+.checkbox-label small {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--muted-color);
+    font-size: 0.8rem;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.btn-primary,
+.btn-secondary {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.btn-secondary {
+    background: var(--secondary);
+    color: var(--color);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+    background: var(--secondary-hover);
+}
+
+.upload-status-container {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.upload-status-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.upload-status-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.upload-status-content {
+    flex: 1;
+}
+
+.upload-status-content h5 {
+    margin: 0 0 0.25rem 0;
+    font-size: 0.9rem;
+}
+
+.upload-status-content p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted-color);
+}
+
+.upload-progress {
+    width: 100%;
+    height: 4px;
+    background: var(--secondary-background);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+
+.upload-progress-bar {
+    height: 100%;
+    background: var(--primary);
+    transition: width 0.3s ease;
+}
+
+.status-pending { color: var(--warning-color); }
+.status-processing { color: var(--primary); }
+.status-completed { color: var(--success-color); }
+.status-failed { color: var(--error-color); }
+
+/* Search interface styles */
+.search-section {
+    padding: 1rem 0;
+}
+
+.search-container {
+    background: var(--card-background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.search-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.search-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    align-items: stretch;
+}
+
+.search-input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid var(--border-color);
+    border-radius: 0.25rem;
+    font-size: 1rem;
+    background: var(--card-background-color);
+    color: var(--color);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+    min-height: 2.5rem;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.2);
+    background: var(--card-background-color);
+}
+
+.search-input::placeholder {
+    color: var(--muted-color);
+    opacity: 0.8;
+}
+
+.search-btn {
+    padding: 0.75rem 1.5rem;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: background-color 0.2s;
+    align-self: flex-start;
+    min-width: 120px;
+}
+
+.search-btn:hover {
+    background: color-mix(in srgb, var(--primary) 80%, black);
+}
+
+.search-btn:disabled {
+    background: var(--muted-color);
+    cursor: not-allowed;
+}
+
+.search-options {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.search-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--muted-color);
+}
+
+.search-limit-input {
+    width: 60px;
+    padding: 0.25rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.25rem;
+    background: var(--background-color);
+    color: var(--color);
+    text-align: center;
+}
+
+.search-results-container {
+    min-height: 200px;
+}
+
+.search-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.search-result-card {
+    background: var(--card-background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-result-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.search-result-header {
+    display: flex;
+    justify-content: between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.search-result-info {
+    flex: 1;
+}
+
+.search-result-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin: 0 0 0.5rem 0;
+    line-height: 1.4;
+}
+
+.search-result-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.9rem;
+    color: var(--muted-color);
+    margin-bottom: 0.5rem;
+}
+
+.search-result-authors {
+    color: var(--text-color);
+}
+
+.search-result-score {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: 0.8rem;
+    color: var(--muted-color);
+}
+
+.search-result-score-main {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.search-result-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.enqueue-btn {
+    padding: 0.5rem 1rem;
+    background: var(--success-color);
+    color: white;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.enqueue-btn:hover {
+    background: color-mix(in srgb, var(--success-color) 80%, black);
+}
+
+.view-paper-btn {
+    padding: 0.5rem 1rem;
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.view-paper-btn:hover {
+    background: var(--primary);
+    color: white;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .form-row {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    
+    .checkbox-group {
+        gap: 0.5rem;
+    }
+    
+    .form-actions {
+        flex-direction: column;
+    }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Tab switching
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabPanes = document.querySelectorAll('.tab-pane');
+    
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.dataset.tab;
+            
+            // Update active states
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabPanes.forEach(p => p.classList.remove('active'));
+            
+            btn.classList.add('active');
+            document.getElementById(targetTab + '-tab').classList.add('active');
+        });
+    });
+    
+    // Edit button
+    document.querySelector('.btn-edit').addEventListener('click', (e) => {
+        const pillarId = e.target.dataset.pillarId;
+        window.location.href = `/pillars/${pillarId}/edit`;
+    });
+    
+    // Upload functionality
+    setupUploadInterface();
+    loadRecentUploads();
+    
+    // Search functionality
+    setupSearchInterface();
+});
+
+// Upload Interface Functions
+function setupUploadInterface() {
+    const pillarId = window.location.pathname.split('/')[2];
+    
+    // File drop zone
+    const dropZone = document.getElementById('file-drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const fileUploadForm = document.getElementById('file-upload-form');
+    
+    // Click to browse
+    dropZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+    
+    // Drag and drop handlers
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        
+        const files = Array.from(e.dataTransfer.files);
+        const pdfFiles = files.filter(file => file.type === 'application/pdf');
+        
+        if (pdfFiles.length === 0) {
+            alert('Please select PDF files only.');
+            return;
+        }
+        
+        handleFileSelection(pdfFiles[0]); // Handle first file for now
+    });
+    
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFileSelection(e.target.files[0]);
+        }
+    });
+    
+    // Form handlers
+    document.getElementById('pdf-upload-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        submitFileUpload(pillarId);
+    });
+    
+    document.getElementById('url-upload-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        submitUrlUpload(pillarId);
+    });
+    
+    document.getElementById('cancel-file-upload').addEventListener('click', () => {
+        fileUploadForm.style.display = 'none';
+        dropZone.style.display = 'block';
+        document.getElementById('pdf-upload-form').reset();
+    });
+}
+
+function handleFileSelection(file) {
+    const dropZone = document.getElementById('file-drop-zone');
+    const fileUploadForm = document.getElementById('file-upload-form');
+    
+    // Hide drop zone, show form
+    dropZone.style.display = 'none';
+    fileUploadForm.style.display = 'block';
+    
+    // Pre-populate title from filename
+    const filename = file.name.replace('.pdf', '');
+    document.getElementById('file-title').value = filename;
+    
+    // Store file reference
+    window.selectedFile = file;
+}
+
+async function submitFileUpload(pillarId) {
+    const formData = new FormData();
+    const form = document.getElementById('pdf-upload-form');
+    
+    // Validate that we have a file
+    if (!window.selectedFile) {
+        alert('Please select a file first');
+        return;
+    }
+    
+    // Add file
+    formData.append('file', window.selectedFile);
+    
+    // Add form data
+    const formDataObj = new FormData(form);
+    for (const [key, value] of formDataObj.entries()) {
+        if (value !== '') { // Only append non-empty values
+            formData.append(key, value);
+        }
+    }
+    
+    // Ensure title is provided (it's required)
+    const title = formData.get('title');
+    if (!title || title.trim() === '') {
+        alert('Please provide a title for the paper');
+        return;
+    }
+    
+    const submitBtn = document.getElementById('submit-file-upload');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = 'Uploading...';
+    
+    try {
+        const response = await fetch(`/api/pillars/${pillarId}/upload/pdf`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            showUploadSuccess(result);
+            form.reset();
+            document.getElementById('file-upload-form').style.display = 'none';
+            document.getElementById('file-drop-zone').style.display = 'block';
+            loadRecentUploads();
+        } else {
+            throw new Error(result.message || 'Upload failed');
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        alert(`Upload failed: ${error.message}`);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
+
+async function submitUrlUpload(pillarId) {
+    const form = document.getElementById('url-upload-form');
+    const formData = new FormData(form);
+    
+    const data = {
+        url: formData.get('url'),
+        title: formData.get('title') || null,
+        authors: formData.get('authors') ? formData.get('authors').split(',').map(a => a.trim()) : null,
+        run_summarizer: formData.get('run_summarizer') === 'on',
+        generate_quiz: formData.get('generate_quiz') === 'on'
+    };
+    
+    const submitBtn = document.getElementById('submit-url-upload');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = 'Uploading...';
+    
+    try {
+        const response = await fetch(`/api/pillars/${pillarId}/upload/url`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            showUploadSuccess(result);
+            form.reset();
+            loadRecentUploads();
+        } else {
+            throw new Error(result.message || 'Upload failed');
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        alert(`Upload failed: ${error.message}`);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
+
+function showUploadSuccess(result) {
+    let message = `Paper "${result.paper.title}" uploaded successfully!`;
+    if (result.actions_triggered && result.actions_triggered.length > 0) {
+        message += ` Triggered: ${result.actions_triggered.join(', ')}`;
+    }
+    alert(message);
+}
+
+async function loadRecentUploads() {
+    const pillarId = window.location.pathname.split('/')[2];
+    const container = document.getElementById('upload-status-container');
+    
+    try {
+        const response = await fetch(`/api/pillars/${pillarId}/uploads/recent`);
+        const uploads = await response.json();
+        
+        if (uploads.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No recent uploads</p></div>';
+            return;
+        }
+        
+        const html = uploads.map(upload => `
+            <div class="upload-status-item">
+                <div class="upload-status-icon">
+                    ${getStatusIcon(upload.status)}
+                </div>
+                <div class="upload-status-content">
+                    <h5>${upload.filename || upload.url || 'Unknown file'}</h5>
+                    <p class="status-${upload.status}">${upload.message}</p>
+                    ${upload.status === 'processing' ? `
+                        <div class="upload-progress">
+                            <div class="upload-progress-bar" style="width: ${upload.progress}%"></div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+        
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Failed to load recent uploads:', error);
+        container.innerHTML = '<div class="empty-state"><p>Failed to load uploads</p></div>';
+    }
+}
+
+function getStatusIcon(status) {
+    switch (status) {
+        case 'pending': return '⏳';
+        case 'processing': return '⚙️';
+        case 'completed': return '✅';
+        case 'failed': return '❌';
+        default: return '📄';
+    }
+}
+
+// Search Interface Functions
+function setupSearchInterface() {
+    const pillarId = window.location.pathname.split('/')[2];
+    const searchForm = document.getElementById('search-form');
+    
+    if (searchForm) {
+        searchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(searchForm);
+            const query = formData.get('q');
+            const topK = formData.get('top_k') || 10;
+            
+            if (!query || query.trim() === '') {
+                alert('Please enter a search query');
+                return;
+            }
+            
+            await performSearch(pillarId, query.trim(), parseInt(topK));
+        });
+    }
+}
+
+async function performSearch(pillarId, query, topK) {
+    const searchBtn = document.querySelector('.search-btn');
+    const resultsContainer = document.getElementById('search-results-container');
+    
+    // Show loading state
+    searchBtn.disabled = true;
+    searchBtn.textContent = 'Searching...';
+    resultsContainer.innerHTML = '<div class="empty-state"><p>Searching...</p></div>';
+    
+    try {
+        const response = await fetch(`/api/pillars/${pillarId}/search?q=${encodeURIComponent(query)}&top_k=${topK}`);
+        
+        if (!response.ok) {
+            throw new Error(`Search failed: ${response.status} ${response.statusText}`);
+        }
+        
+        const results = await response.json();
+        displaySearchResults(results, query);
+        
+    } catch (error) {
+        console.error('Search error:', error);
+        resultsContainer.innerHTML = `
+            <div class="empty-state">
+                <p>Search failed: ${error.message}</p>
+                <button onclick="location.reload()" class="btn-secondary">Try again</button>
+            </div>
+        `;
+    } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = 'Search';
+    }
+}
+
+function displaySearchResults(results, query) {
+    const resultsContainer = document.getElementById('search-results-container');
+    
+    if (!results || results.length === 0) {
+        resultsContainer.innerHTML = `
+            <div class="empty-state">
+                <p>No papers found for "${query}"</p>
+                <small>Try different keywords or broaden your search</small>
+            </div>
+        `;
+        return;
+    }
+    
+    const resultsHtml = `
+        <div class="search-results-header">
+            <h4>Found ${results.length} result${results.length === 1 ? '' : 's'} for "${query}"</h4>
+        </div>
+        <div class="search-results-list">
+            ${results.map(result => createSearchResultCard(result)).join('')}
+        </div>
+    `;
+    
+    resultsContainer.innerHTML = resultsHtml;
+}
+
+function createSearchResultCard(result) {
+    const authors = result.authors && result.authors.length > 0 
+        ? result.authors.slice(0, 3).join(', ') + (result.authors.length > 3 ? ' et al.' : '')
+        : 'Unknown authors';
+    
+    const year = result.year ? result.year : 'Unknown year';
+    const venue = result.venue ? result.venue : 'Unknown venue';
+    
+    return `
+        <div class="search-result-card">
+            <div class="search-result-header">
+                <div class="search-result-info">
+                    <h4 class="search-result-title">${escapeHtml(result.title)}</h4>
+                    <div class="search-result-meta">
+                        <span class="search-result-authors">${escapeHtml(authors)}</span>
+                        <span>${year}</span>
+                        ${venue !== 'Unknown venue' ? `<span>${escapeHtml(venue)}</span>` : ''}
+                    </div>
+                </div>
+                <div class="search-result-score">
+                    <div class="search-result-score-main">${result.score}</div>
+                    <div>Relevance</div>
+                    <div title="Vector similarity: ${result.cosine_similarity}, Keyword overlap: ${result.keyword_overlap}">
+                        📊 Details
+                    </div>
+                </div>
+            </div>
+            <div class="search-result-actions">
+                <button class="enqueue-btn" onclick="enqueuePaper('${result.paper_id}')">
+                    📥 Enqueue
+                </button>
+                <a href="/papers/details/${encodeURIComponent(result.paper_id)}" class="view-paper-btn">
+                    👁️ View Paper
+                </a>
+            </div>
+        </div>
+    `;
+}
+
+function enqueuePaper(paperId) {
+    // For now, just log to console as requested
+    console.log('Enqueue paper:', paperId);
+    alert(`Paper ${paperId} would be enqueued for processing (placeholder functionality)`);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

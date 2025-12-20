@@ -22,6 +22,15 @@ sqlalchemy>=2.0.0
 pypdf>=4.0.0
 pdfplumber>=0.10.0
 pymupdf>=1.23.0  # As fallback
+semchunk>=0.1.0  # For semantic text chunking
+
+# Layout-aware PDF processing
+layoutparser>=0.3.4  # For layout detection
+torch>=2.0.0  # For LayoutLMv3 models
+torchvision>=0.15.0  # For image processing
+pdf2image>=1.16.0  # For PDF to image conversion
+pytesseract>=0.3.10  # For OCR text extraction
+Pillow>=10.0.0  # For image processing
 
 # Web & API Tools
 httpx>=0.25.0
@@ -35,6 +44,9 @@ typer>=0.9.0
 rich>=13.0.0  # For beautiful CLI output
 apscheduler>=3.10.0
 python-crontab>=3.0.0
+
+# FSRS Spaced Repetition
+fsrs>=6.0.0  # Free Spaced Repetition Scheduler (correct package name)
 
 # Data Processing
 numpy>=1.24.0
@@ -69,5 +81,6 @@ pyvis>=0.3.0  # For interactive graphs
 
 # Optional: Advanced Features
 textual>=0.40.0  # For TUI dashboard
-fastapi>=0.104.0  # If adding web interface
-uvicorn>=0.24.0  # ASGI server for FastAPI
+fastapi>=0.110.0
+uvicorn[standard]>=0.24.0
+jinja2>=3.1.0

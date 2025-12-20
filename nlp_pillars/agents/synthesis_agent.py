@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 class SynthesisAgent:
     """Agent that synthesizes paper notes into educational lessons."""
-    
+
     @classmethod
     def run(cls, input_data: SynthesisInput) -> Lesson:
         """Generate a lesson from the paper note.
@@ -18,7 +18,7 @@ class SynthesisAgent:
         """
         note = input_data.paper_note
         pillar = input_data.pillar_config
-        
+
         # Create an educational lesson
         return Lesson(
             paper_id=note.paper_id,
@@ -28,7 +28,7 @@ class SynthesisAgent:
             tl_dr=f"This paper addresses {note.problem[:100]}...",
             takeaways=[
                 "Understanding the problem space",
-                "Learning the methodology", 
+                "Learning the methodology",
                 "Applying the findings"
             ],
             practice_ideas=[

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from nlp_pillars.schemas import (
     SynthesisInput, Lesson, QuizGeneratorInput, QuizCard,
-    PaperNote, PaperRef, PillarConfig, PillarID,
+    PaperNote, PaperRef, PillarConfig,
     DifficultyLevel, QuestionType
 )
 from nlp_pillars.agents.synthesis_agent import (
@@ -27,7 +27,7 @@ def sample_paper_note():
     """Sample paper note for testing."""
     return PaperNote(
         paper_id="test.12345",
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         problem="Limited effectiveness of traditional attention mechanisms in sequence modeling",
         method="Multi-head attention with scaled dot-product computation",
         findings=[
@@ -60,7 +60,7 @@ def sample_paper_note():
 def sample_pillar_config():
     """Sample pillar configuration for testing."""
     return PillarConfig(
-        id=PillarID.P2,  # This is the required field name
+        id="models-architectures",  # This is the required field name
         name="Models & Architectures",
         goal="Master modern neural network architectures and understand their design principles",
         focus_areas=[
@@ -87,7 +87,7 @@ def valid_lesson():
     """Valid Lesson response for testing."""
     return Lesson(
         paper_id="test.12345",
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         tl_dr="Transformers revolutionized sequence modeling by using attention mechanisms instead of recurrence.",
         takeaways=[
             "Multi-head attention allows parallel processing of sequences",
@@ -126,7 +126,7 @@ def valid_quiz_cards():
         QuizCard(
             id="test.12345_q1",
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="What BLEU score did the model achieve on WMT 2014 EN-DE translation?",
             answer="28.4 BLEU score",
             difficulty=DifficultyLevel.EASY,
@@ -135,7 +135,7 @@ def valid_quiz_cards():
         QuizCard(
             id="test.12345_q2",
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="How does multi-head attention improve upon single attention mechanisms?",
             answer="Multi-head attention allows the model to jointly attend to information from different representation subspaces, capturing various types of relationships.",
             difficulty=DifficultyLevel.EASY,
@@ -144,7 +144,7 @@ def valid_quiz_cards():
         QuizCard(
             id="test.12345_q3",
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="What is a key limitation of transformers for very long sequences?",
             answer="Quadratic complexity with sequence length due to the attention mechanism.",
             difficulty=DifficultyLevel.MEDIUM,
@@ -153,7 +153,7 @@ def valid_quiz_cards():
         QuizCard(
             id="test.12345_q4",
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="How would you modify the transformer to handle sequences longer than the training context?",
             answer="Implement sparse attention patterns or use techniques like sliding window attention to reduce computational complexity.",
             difficulty=DifficultyLevel.MEDIUM,
@@ -162,7 +162,7 @@ def valid_quiz_cards():
         QuizCard(
             id="test.12345_q5",
             paper_id="test.12345",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="Design an experiment to compare transformer attention patterns across different linguistic tasks.",
             answer="Train transformers on tasks like translation, summarization, and question answering, then visualize and analyze attention heads for syntactic vs semantic patterns.",
             difficulty=DifficultyLevel.HARD,
@@ -198,7 +198,7 @@ class TestSynthesisAgent:
         # Verify result
         assert isinstance(result, Lesson)
         assert result.paper_id == "test.12345"
-        assert result.pillar_id == PillarID.P2
+        assert result.pillar_id == "models-architectures"
         assert result.tl_dr == valid_lesson.tl_dr
         assert len(result.takeaways) >= 3 and len(result.takeaways) <= 5
         assert len(result.practice_ideas) >= 2 and len(result.practice_ideas) <= 3
@@ -307,7 +307,7 @@ class TestQuizAgent:
         # Verify all cards have required fields
         for card in result:
             assert card.paper_id == "test.12345"
-            assert card.pillar_id == PillarID.P2
+            assert card.pillar_id == "models-architectures"
             assert card.question
             assert card.answer
             assert card.difficulty in [DifficultyLevel.EASY, DifficultyLevel.MEDIUM, DifficultyLevel.HARD]
@@ -401,7 +401,7 @@ class TestQuizAgent:
         all_factual_cards = [
             QuizCard(
                 paper_id="test.12345",
-                pillar_id=PillarID.P2,
+                pillar_id="models-architectures",
                 question=f"Question {i+1}",
                 answer=f"Answer {i+1}",
                 difficulty=DifficultyLevel.MEDIUM,
@@ -430,7 +430,7 @@ class TestQuizAgent:
         too_many_cards = [
             QuizCard(
                 paper_id="test.12345",
-                pillar_id=PillarID.P2,
+                pillar_id="models-architectures",
                 question=f"Question {i+1}",
                 answer=f"Answer {i+1}",
                 difficulty=DifficultyLevel.MEDIUM,

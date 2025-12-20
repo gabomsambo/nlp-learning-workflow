@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Analytics</h2>
+
+<section>
+  <div class="grid">
+    <article><header>Papers</header><h3>{{ total.papers }}</h3></article>
+    <article><header>Lessons</header><h3>{{ total.lessons }}</h3></article>
+    <article><header>Quizzes</header><h3>{{ total.quizzes }}</h3></article>
+  </div>
+</section>
+
+<section>
+  <h3>By Pillar</h3>
+  <table>
+    <thead><tr><th>Pillar</th><th>Papers</th><th>Lessons</th><th>Quizzes</th></tr></thead>
+    <tbody>
+      {% for pillar in pillars %}
+      <tr>
+        <td>{{ pillar.name }}</td>
+        <td>{{ counts[pillar.id].papers if pillar.id in counts else 0 }}</td>
+        <td>{{ counts[pillar.id].lessons if pillar.id in counts else 0 }}</td>
+        <td>{{ counts[pillar.id].quizzes if pillar.id in counts else 0 }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+

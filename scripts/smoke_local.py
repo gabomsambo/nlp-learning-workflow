@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import schemas and orchestrator
 from nlp_pillars.schemas import (
-    PillarID, PaperRef, PaperNote, Lesson, QuizCard, SearchQuery,
+    PaperRef, PaperNote, Lesson, QuizCard, SearchQuery,
     DiscoveryOutput, ParsedPaper, DifficultyLevel, QuestionType
 )
 from nlp_pillars.orchestrator import Orchestrator
@@ -48,7 +48,7 @@ def create_fake_data():
     # Fake PaperNote
     fake_paper_note = PaperNote(
         paper_id="fake.001",
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         problem="Smoke test problem: evaluating neural architecture efficiency",
         method="Smoke test method: comparative analysis framework",
         findings=["Finding 1: architecture performs well", "Finding 2: efficiency gains observed"],
@@ -61,7 +61,7 @@ def create_fake_data():
     # Fake Lesson
     fake_lesson = Lesson(
         paper_id="fake.001",
-        pillar_id=PillarID.P2,
+        pillar_id="models-architectures",
         tl_dr="TL;DR: Smoke test OK.",
         takeaways=[
             "Takeaway 1: Neural architectures can be optimized efficiently",
@@ -81,7 +81,7 @@ def create_fake_data():
     fake_quiz_cards = [
         QuizCard(
             paper_id="fake.001",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="What is the main contribution of this smoke test paper?",
             answer="Advanced neural architecture analysis with efficiency evaluation",
             difficulty=DifficultyLevel.EASY,
@@ -89,7 +89,7 @@ def create_fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="How do attention mechanisms improve model performance?",
             answer="By allowing selective focus on relevant input features",
             difficulty=DifficultyLevel.MEDIUM,
@@ -97,7 +97,7 @@ def create_fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="Compare transformer efficiency with traditional architectures",
             answer="Transformers show better parallelization and context modeling",
             difficulty=DifficultyLevel.HARD,
@@ -105,7 +105,7 @@ def create_fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="What are the key limitations mentioned in this study?",
             answer="Small dataset size and domain-specific constraints",
             difficulty=DifficultyLevel.MEDIUM,
@@ -113,7 +113,7 @@ def create_fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=PillarID.P2,
+            pillar_id="models-architectures",
             question="Design an experiment to validate the architecture claims",
             answer="Cross-domain evaluation with larger datasets and baseline comparisons",
             difficulty=DifficultyLevel.HARD,
@@ -124,8 +124,8 @@ def create_fake_data():
     # Fake DiscoveryOutput
     fake_discovery_output = DiscoveryOutput(
         queries=[
-            SearchQuery(pillar_id=PillarID.P2, query="neural architecture efficiency"),
-            SearchQuery(pillar_id=PillarID.P2, query="transformer attention mechanisms")
+            SearchQuery(pillar_id="models-architectures", query="neural architecture efficiency"),
+            SearchQuery(pillar_id="models-architectures", query="transformer attention mechanisms")
         ],
         rationale="Focus on architecture analysis and attention mechanisms for P2"
     )
@@ -201,7 +201,7 @@ def run_smoke_test():
                 print("🎯 Running orchestrator for Pillar P2...")
                 
                 # Run the orchestrator
-                result = orchestrator.run_daily(PillarID.P2, papers_limit=1)
+                result = orchestrator.run_daily("models-architectures", papers_limit=1)
                 
                 # Print results
                 if result.lessons_created:

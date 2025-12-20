@@ -8,7 +8,6 @@ import hashlib
 from unittest.mock import Mock, patch, MagicMock
 from qdrant_client import models
 
-from nlp_pillars.schemas import PillarID
 from nlp_pillars.vectors import (
     get_client, set_client, set_openai_client, reset_vector_size,
     ensure_collections, upsert_text, search_similar,
@@ -245,8 +244,8 @@ class TestUpsertText:
     def test_upsert_text_no_client(self):
         """Test upsert_text when client is not available."""
         with patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = upsert_text(PillarID.P1, "test.123", "test text")
-            
+            result = upsert_text("linguistic-cognitive-foundations", "test.123", "test text")
+
             assert result == 0
             # Check that the warning about upsert was called (may have other warnings too)
             warning_calls = [call for call in mock_logger.warning.call_args_list]
@@ -257,8 +256,8 @@ class TestUpsertText:
         set_client(mock_qdrant_client)
         
         with patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = upsert_text(PillarID.P1, "test.123", "")
-            
+            result = upsert_text("linguistic-cognitive-foundations", "test.123", "")
+
             assert result == 0
             mock_logger.warning.assert_called_once_with("Empty text provided for upsert")
     
@@ -270,28 +269,28 @@ class TestUpsertText:
         # Test text that will create multiple chunks
         test_text = "This is a long test text. " * 100  # Create text > 1000 chars
         
-        result = upsert_text(PillarID.P2, "test.456", test_text, chunk_size=500, overlap=50)
-        
+        result = upsert_text("models-architectures", "test.456", test_text, chunk_size=500, overlap=50)
+
         # Should have upserted chunks
         assert result > 0
-        
+
         # Verify upsert was called
         mock_qdrant_client.upsert.assert_called_once()
         upsert_call = mock_qdrant_client.upsert.call_args
-        
+
         assert upsert_call[1]['collection_name'] == COLLECTION_NAME
         points = upsert_call[1]['points']
-        
+
         # Verify points structure
         assert len(points) > 0
         first_point = points[0]
-        
+
         # Check deterministic ID format (SHA1 hex)
-        expected_id = hashlib.sha1("P2|test.456|0".encode()).hexdigest()
+        expected_id = hashlib.sha1("models-architectures|test.456|0".encode()).hexdigest()
         assert first_point.id == expected_id
-        
+
         # Check payload
-        assert first_point.payload['pillar_id'] == 'P2'
+        assert first_point.payload['pillar_id'] == 'models-architectures'
         assert first_point.payload['paper_id'] == 'test.456'
         assert first_point.payload['chunk_index'] == 0
         assert 'len' in first_point.payload
@@ -306,8 +305,8 @@ class TestUpsertText:
         # Mock embedding to fail
         with patch('nlp_pillars.vectors._embed', side_effect=Exception("Embedding failed")):
             with patch('nlp_pillars.vectors.logger') as mock_logger:
-                result = upsert_text(PillarID.P1, "test.123", "test text")
-                
+                result = upsert_text("linguistic-cognitive-foundations", "test.123", "test text")
+
                 assert result == 0
                 mock_logger.warning.assert_called()
     
@@ -328,8 +327,8 @@ class TestUpsertText:
             # Create shorter text that generates exactly 2 chunks
             test_text = "A" * 600 + "B" * 600  # Two distinct chunks
             
-            result = upsert_text(PillarID.P1, "test.123", test_text, chunk_size=500, overlap=50)
-            
+            result = upsert_text("linguistic-cognitive-foundations", "test.123", test_text, chunk_size=500, overlap=50)
+
             # Should have upserted chunks except the second one that failed
             # Check that we got some successful embeds but not all
             assert result >= 1
@@ -342,8 +341,8 @@ class TestSearchSimilar:
     def test_search_similar_no_client(self):
         """Test search_similar when client is not available."""
         with patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = search_similar(PillarID.P1, "test query")
-            
+            result = search_similar("linguistic-cognitive-foundations", "test query")
+
             assert result == []
             # Check that the warning about search was called (may have other warnings too)
             warning_calls = [call for call in mock_logger.warning.call_args_list]
@@ -354,8 +353,8 @@ class TestSearchSimilar:
         set_client(mock_qdrant_client)
         
         with patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = search_similar(PillarID.P1, "")
-            
+            result = search_similar("linguistic-cognitive-foundations", "")
+
             assert result == []
             mock_logger.warning.assert_called_once_with("Empty query text provided")
     
@@ -374,24 +373,24 @@ class TestSearchSimilar:
         mock_hit2.score = 0.8
         
         mock_qdrant_client.search.return_value = [mock_hit1, mock_hit2]
-        
-        result = search_similar(PillarID.P3, "test query", top_k=5)
-        
+
+        result = search_similar("data-training-methodologies", "test query", top_k=5)
+
         # Verify search was called with correct parameters
         mock_qdrant_client.search.assert_called_once()
         search_call = mock_qdrant_client.search.call_args
-        
+
         assert search_call[1]['collection_name'] == COLLECTION_NAME
         assert search_call[1]['query_vector'] == [0.1, 0.2, 0.3, 0.4]
         assert search_call[1]['limit'] == 15  # top_k * 3 for deduplication
         assert search_call[1]['with_payload'] is True
-        
+
         # Check pillar filter
         query_filter = search_call[1]['query_filter']
         assert len(query_filter.must) == 1
         field_condition = query_filter.must[0]
         assert field_condition.key == "pillar_id"
-        assert field_condition.match.value == "P3"
+        assert field_condition.match.value == "data-training-methodologies"
         
         # Check results format
         expected_results = [
@@ -419,8 +418,8 @@ class TestSearchSimilar:
         mock_hit3.score = 0.8
         
         mock_qdrant_client.search.return_value = [mock_hit1, mock_hit2, mock_hit3]
-        
-        result = search_similar(PillarID.P1, "test query", top_k=5)
+
+        result = search_similar("linguistic-cognitive-foundations", "test query", top_k=5)
         
         # Should deduplicate and keep highest score for paper.123
         expected_results = [
@@ -443,8 +442,8 @@ class TestSearchSimilar:
             mock_hits.append(hit)
         
         mock_qdrant_client.search.return_value = mock_hits
-        
-        result = search_similar(PillarID.P1, "test query", top_k=3)
+
+        result = search_similar("linguistic-cognitive-foundations", "test query", top_k=3)
         
         # Should return only top 3
         assert len(result) == 3
@@ -458,8 +457,8 @@ class TestSearchSimilar:
         
         with patch('nlp_pillars.vectors._embed', side_effect=Exception("Embedding failed")):
             with patch('nlp_pillars.vectors.logger') as mock_logger:
-                result = search_similar(PillarID.P1, "test query")
-                
+                result = search_similar("linguistic-cognitive-foundations", "test query")
+
                 assert result == []
                 mock_logger.error.assert_called_once()
 
@@ -473,35 +472,40 @@ class TestNamespaceEnforcement:
         set_openai_client(mock_openai_client)
         
         mock_qdrant_client.search.return_value = []
-        
+
         # Test different pillars
-        for pillar in [PillarID.P1, PillarID.P3, PillarID.P5]:
+        pillars = [
+            "linguistic-cognitive-foundations",
+            "data-training-methodologies",
+            "ethics-applications"
+        ]
+        for pillar in pillars:
             search_similar(pillar, "test query")
-            
+
             # Get the last search call
             search_call = mock_qdrant_client.search.call_args
             query_filter = search_call[1]['query_filter']
-            
+
             # Verify pillar filter is present
             assert len(query_filter.must) == 1
             field_condition = query_filter.must[0]
             assert field_condition.key == "pillar_id"
-            assert field_condition.match.value == pillar.value
+            assert field_condition.match.value == pillar
     
     def test_upsert_includes_pillar_payload(self, mock_qdrant_client, mock_openai_client):
         """Test that all upserts include pillar_id in payload."""
         set_client(mock_qdrant_client)
         set_openai_client(mock_openai_client)
         
-        upsert_text(PillarID.P4, "test.789", "test text")
-        
+        upsert_text("evaluation-interpretability", "test.789", "test text")
+
         # Verify upsert was called
         upsert_call = mock_qdrant_client.upsert.call_args
         points = upsert_call[1]['points']
-        
+
         # Check all points have pillar_id in payload
         for point in points:
-            assert point.payload['pillar_id'] == 'P4'
+            assert point.payload['pillar_id'] == 'evaluation-interpretability'
             assert point.payload['paper_id'] == 'test.789'
 
 
@@ -516,8 +520,8 @@ class TestErrorHandling:
         mock_qdrant_client.upsert.side_effect = Exception("Qdrant error")
         
         with patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = upsert_text(PillarID.P1, "test.123", "test text")
-            
+            result = upsert_text("linguistic-cognitive-foundations", "test.123", "test text")
+
             assert result == 0
             mock_logger.error.assert_called_once()
     
@@ -529,23 +533,23 @@ class TestErrorHandling:
         mock_qdrant_client.search.side_effect = Exception("Qdrant error")
         
         with patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = search_similar(PillarID.P1, "test query")
-            
+            result = search_similar("linguistic-cognitive-foundations", "test query")
+
             assert result == []
             mock_logger.error.assert_called_once()
-    
+
     def test_deterministic_ids(self, mock_qdrant_client, mock_openai_client):
         """Test that point IDs are deterministic and stable."""
         set_client(mock_qdrant_client)
         set_openai_client(mock_openai_client)
-        
+
         # Upsert same content twice
-        upsert_text(PillarID.P1, "test.123", "same text")
+        upsert_text("linguistic-cognitive-foundations", "test.123", "same text")
         first_call = mock_qdrant_client.upsert.call_args
-        
+
         mock_qdrant_client.reset_mock()
-        
-        upsert_text(PillarID.P1, "test.123", "same text")
+
+        upsert_text("linguistic-cognitive-foundations", "test.123", "same text")
         second_call = mock_qdrant_client.upsert.call_args
         
         # IDs should be identical
