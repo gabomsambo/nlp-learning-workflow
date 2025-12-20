@@ -21,9 +21,9 @@ from ..schemas import (
 )
 from ..tools.pdf_loader import download_pdf, extract_text, PDFDownloadError, PDFParseError
 from ..agents.ingest_agent import IngestAgent, IngestError
-from ..agents.summarizer_agent_original import SummarizerAgent
-from ..agents.synthesis_agent_original import SynthesisAgent
-from ..agents.quiz_agent_original import QuizAgent
+from ..agents.summarizer_agent import SummarizerAgent
+from ..agents.synthesis_agent import SynthesisAgent
+from ..agents.quiz_agent import QuizAgent
 from ..db import add_paper, get_pillar_by_id
 from ..schemas import SummarizerInput, SynthesisInput, QuizGeneratorInput, PillarConfig
 

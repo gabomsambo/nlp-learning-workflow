@@ -17,9 +17,9 @@ from .schemas import (
 )
 from .agents.discovery_agent import DiscoveryAgent
 from .agents.ingest_agent import IngestAgent
-from .agents.summarizer_agent_original import SummarizerAgent
-from .agents.synthesis_agent_original import SynthesisAgent
-from .agents.quiz_agent_original import QuizAgent
+from .agents.summarizer_agent import SummarizerAgent
+from .agents.synthesis_agent import SynthesisAgent
+from .agents.quiz_agent import QuizAgent
 from .tools.searxng_tool import SearXNGTool
 from .tools.arxiv_tool import ArXivTool
 from .tools.semantic_scholar_tool import SemanticScholarTool

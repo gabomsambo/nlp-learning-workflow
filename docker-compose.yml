@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================
   # PostgreSQL Database
@@ -40,11 +38,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   # ============================================
@@ -58,11 +51,6 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:6333/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   # ============================================
@@ -80,11 +68,6 @@ services:
       - SEARXNG_SECRET=nlp-workflow-secret-key
       - SEARXNG_LIMITER=false
       - SEARXNG_PUBLIC_INSTANCE=false
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   # ============================================
@@ -106,17 +89,17 @@ services:
       # API keys - mount from .env file
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      SUPABASE_KEY: "${SUPABASE_KEY:-}"
+      # Note: SUPABASE_KEY not set - uses anonymous PostgREST access
     depends_on:
       db:
         condition: service_healthy
       postgrest:
-        condition: service_healthy
+        condition: service_started
       qdrant:
-        condition: service_healthy
-    volumes:
+        condition: service_started
+    # volumes:
       # Mount .env for API keys (optional, for development)
-      - ./.env:/app/.env:ro
+      # - ./.env:/app/.env:ro
     restart: unless-stopped
 
 # ============================================
