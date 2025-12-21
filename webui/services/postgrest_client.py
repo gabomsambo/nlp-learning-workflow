@@ -51,8 +51,12 @@ class PostgrestClient:
     """
 
     def __init__(self, base_url: Optional[str] = None, token: Optional[str] = None, client: Optional[httpx.AsyncClient] = None):
-        url = base_url or os.getenv("POSTGREST_URL") or "http://localhost:3000"
-        self.base_url = url.rstrip("/")
+        url = base_url or os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL") or "http://localhost:3000"
+        url = url.rstrip("/")
+        # Supabase cloud uses /rest/v1/ path, local PostgREST uses root
+        if "supabase.co" in url and "/rest/v1" not in url:
+            url = f"{url}/rest/v1"
+        self.base_url = url
         auth_token = token or os.getenv("SUPABASE_KEY")
 
         headers = {"Accept": "application/json", "Prefer": "count=exact"}

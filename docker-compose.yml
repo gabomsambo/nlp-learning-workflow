@@ -1,47 +1,6 @@
 services:
   # ============================================
-  # PostgreSQL Database
-  # ============================================
-  db:
-    image: postgres:15
-    container_name: nlp_postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./docker/init-db:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  # ============================================
-  # PostgREST API Layer
-  # ============================================
-  postgrest:
-    image: postgrest/postgrest:latest
-    container_name: nlp_postgrest
-    ports:
-      - "3000:3000"
-    environment:
-      PGRST_DB_URI: "postgres://postgres:mysecretpassword@db:5432/postgres"
-      PGRST_DB_SCHEMA: "public"
-      PGRST_DB_ANON_ROLE: "postgres"
-      PGRST_JWT_SECRET: "beynh0R/7n76K3dpTaCDj2PEncSaRQ/a/AVDTWgrhxw="
-      PGRST_DB_USE_LEGACY_GUCS: "false"
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # ============================================
-  # Qdrant Vector Database
+  # Qdrant Vector Database (Local)
   # ============================================
   qdrant:
     image: qdrant/qdrant:latest
@@ -54,7 +13,7 @@ services:
     restart: unless-stopped
 
   # ============================================
-  # SearXNG Search Engine
+  # SearXNG Search Engine (Local)
   # ============================================
   searxng:
     image: searxng/searxng:latest
@@ -72,6 +31,7 @@ services:
 
   # ============================================
   # NLP Workflow WebUI (FastAPI)
+  # Connects to Cloud Supabase for data
   # ============================================
   webui:
     build:
@@ -80,33 +40,20 @@ services:
     container_name: nlp_webui
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
-      # Database connections (use Docker service names)
-      SUPABASE_URL: "http://postgrest:3000"
-      POSTGREST_URL: "http://postgrest:3000"
+      # Override for Docker networking
       QDRANT_URL: "http://qdrant:6333"
       SEARXNG_URL: "http://searxng:8080"
-      # API keys - mount from .env file
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      # Note: SUPABASE_KEY not set - uses anonymous PostgREST access
+      # Supabase URL and KEY come from .env file
     depends_on:
-      db:
-        condition: service_healthy
-      postgrest:
-        condition: service_started
-      qdrant:
-        condition: service_started
-    # volumes:
-      # Mount .env for API keys (optional, for development)
-      # - ./.env:/app/.env:ro
+      - qdrant
     restart: unless-stopped
 
 # ============================================
-# Named Volumes (Docker-managed, not in repo)
+# Named Volumes (Docker-managed)
 # ============================================
 volumes:
-  postgres_data:
-    name: nlp_postgres_data
   qdrant_data:
     name: nlp_qdrant_data

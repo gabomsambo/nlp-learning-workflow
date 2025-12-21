@@ -23,7 +23,11 @@ class PostgRESTClient:
     """Simple PostgREST client that works with vanilla PostgREST."""
 
     def __init__(self, url: str, key: str):
-        self.base_url = url.rstrip('/')
+        url = url.rstrip('/')
+        # Supabase cloud uses /rest/v1/ path, local PostgREST uses root
+        if "supabase.co" in url and "/rest/v1" not in url:
+            url = f"{url}/rest/v1"
+        self.base_url = url
         self.headers = {
             'apikey': key,
             'Authorization': f'Bearer {key}',
