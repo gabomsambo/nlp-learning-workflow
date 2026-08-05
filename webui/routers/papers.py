@@ -16,7 +16,7 @@ async def list_papers(request: Request, pillar: Optional[str] = None) -> HTMLRes
     data = await client.list_papers(pillar=pillar, limit=100)
     pillars = get_pillars(limit=100)
     return request.app.state.templates.TemplateResponse(
-        "papers.html", {"request": request, "papers": data, "pillar": pillar, "pillars": pillars}
+        request, "papers.html", {"papers": data, "pillar": pillar, "pillars": pillars}
     )
 
 

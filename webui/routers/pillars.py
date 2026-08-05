@@ -37,9 +37,9 @@ async def pillars_page(request: Request) -> HTMLResponse:
         # Render template
         templates = request.app.state.templates
         return templates.TemplateResponse(
+            request,
             "pillars.html",
             {
-                "request": request,
                 "pillars": pillars,
                 "now": datetime.now(timezone.utc)
             }
@@ -81,9 +81,9 @@ async def pillar_detail_page(request: Request, pillar_id: str) -> HTMLResponse:
         # Render template
         templates = request.app.state.templates
         return templates.TemplateResponse(
+            request,
             "pillar_detail.html",
             {
-                "request": request,
                 "pillar": pillar,
                 "recent_papers": recent_papers,
                 "recent_lessons": recent_lessons,

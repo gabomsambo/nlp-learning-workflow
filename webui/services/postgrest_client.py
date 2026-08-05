@@ -93,7 +93,12 @@ class PostgrestClient:
         """
 
         async def count_table(table: str) -> int:
-            _, resp = await self._get(table, params={"select": "id", "limit": 1})
+            # Degrade to 0 when the database is unreachable, mirroring how
+            # get_recent_activity() tolerates per-table failures.
+            try:
+                _, resp = await self._get(table, params={"select": "id", "limit": 1})
+            except Exception:
+                return 0
             return self._parse_count_from_content_range(resp)
 
         papers = await count_table("papers")
@@ -161,7 +166,11 @@ class PostgrestClient:
         params: Dict[str, Any] = {"select": "id,title,authors,year,citation_count,pillar_id,added_at", "order": "added_at.desc", "limit": limit}
         if pillar:
             params["pillar_id"] = f"eq.{pillar}"
-        data, _ = await self._get("papers", params=params)
+        # Degrade to an empty list when the database is unreachable.
+        try:
+            data, _ = await self._get("papers", params=params)
+        except Exception:
+            return []
         return data
 
     async def list_lessons(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
@@ -169,7 +178,11 @@ class PostgrestClient:
         params: Dict[str, Any] = {"select": "id,paper_id,tl_dr,pillar_id,created_at,difficulty,estimated_time,takeaways", "order": "created_at.desc", "limit": limit}
         if pillar:
             params["pillar_id"] = f"eq.{pillar}"
-        data, _ = await self._get("lessons", params=params)
+        # Degrade to an empty list when the database is unreachable.
+        try:
+            data, _ = await self._get("lessons", params=params)
+        except Exception:
+            return []
         return data
 
     async def list_podcast_scripts(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
@@ -206,7 +219,11 @@ class PostgrestClient:
             params["pillar_id"] = f"eq.{pillar}"
         if difficulty is not None:
             params["difficulty"] = f"eq.{difficulty}"
-        data, _ = await self._get("quiz_cards", params=params)
+        # Degrade to an empty list when the database is unreachable.
+        try:
+            data, _ = await self._get("quiz_cards", params=params)
+        except Exception:
+            return []
         return data
 
     async def counts_by_pillar(self) -> Dict[str, Dict[str, int]]:

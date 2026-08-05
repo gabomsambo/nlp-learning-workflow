@@ -13,7 +13,7 @@ router = APIRouter(prefix="/pipeline")
 @router.get("/", response_class=HTMLResponse)
 async def pipeline_home(request: Request) -> HTMLResponse:
     pillars = get_pillars(limit=100)
-    return request.app.state.templates.TemplateResponse("pipeline.html", {"request": request, "pillars": pillars})
+    return request.app.state.templates.TemplateResponse(request, "pipeline.html", {"pillars": pillars})
 
 
 @router.post("/run")

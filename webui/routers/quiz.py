@@ -34,8 +34,9 @@ async def quiz_home(request: Request, pillar: Optional[str] = None, difficulty: 
         
         pillars = get_pillars(limit=100)
         return request.app.state.templates.TemplateResponse(
+            request,
             "quiz.html",
-            {"request": request, "cards": cards, "pillar": pillar, "difficulty": difficulty, "pillars": pillars},
+            {"cards": cards, "pillar": pillar, "difficulty": difficulty, "pillars": pillars},
         )
 
     except Exception as e:
@@ -46,8 +47,9 @@ async def quiz_home(request: Request, pillar: Optional[str] = None, difficulty: 
         cards = await client.list_quiz_cards(pillar=pillar, difficulty=target_difficulty, limit=30)
         pillars = get_pillars(limit=100)
         return request.app.state.templates.TemplateResponse(
+            request,
             "quiz.html",
-            {"request": request, "cards": cards, "pillar": pillar, "difficulty": difficulty, "pillars": pillars},
+            {"cards": cards, "pillar": pillar, "difficulty": difficulty, "pillars": pillars},
         )
 
 

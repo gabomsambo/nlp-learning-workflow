@@ -15,8 +15,9 @@ async def home(request: Request) -> HTMLResponse:
     recent = await client.get_recent_activity()
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "dashboard.html",
-        {"request": request, "stats": stats, "recent": recent},
+        {"stats": stats, "recent": recent},
     )
 
 

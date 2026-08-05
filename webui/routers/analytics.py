@@ -16,6 +16,6 @@ async def analytics_home(request: Request) -> HTMLResponse:
         "lessons": sum(v["lessons"] for v in counts.values()),
         "quizzes": sum(v["quizzes"] for v in counts.values()),
     }
-    return request.app.state.templates.TemplateResponse("analytics.html", {"request": request, "counts": counts, "total": total})
+    return request.app.state.templates.TemplateResponse(request, "analytics.html", {"counts": counts, "total": total})
 
 

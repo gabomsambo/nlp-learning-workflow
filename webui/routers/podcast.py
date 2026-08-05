@@ -24,9 +24,9 @@ async def podcast_home(request: Request) -> HTMLResponse:
     scripts = get_podcast_scripts(limit=20)
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "podcast.html",
         {
-            "request": request,
             "title": "Podcast Script Generation",
             "pillars": pillars,
             "papers": papers,
