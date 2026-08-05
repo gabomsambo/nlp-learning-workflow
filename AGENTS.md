@@ -85,7 +85,41 @@ not in the image at all and must be `docker compose cp`'d in.
 
 `requirements.txt` is entirely unpinned (`>=` everywhere), so a rebuild can silently move
 the whole stack. Check resolved versions with `docker compose exec webui pip list` before
-debugging anything version-sensitive.
+debugging anything version-sensitive. This has already bitten once: `atomic-agents` now
+requires Python >= 3.12, so a host virtualenv must be `uv venv --python 3.12` even though
+`pyproject.toml` still says 3.11.
+
+## Configuration is loaded in an order that surprises people
+
+`config.py::get_settings()` runs `load_dotenv(find_dotenv(), override=True)`. Two
+consequences that cost real debugging time:
+
+- `find_dotenv()` walks up from `config.py` itself, not from the cwd, so it finds the
+  repo's `.env` no matter where you run a script from.
+- `override=True` means **exported environment variables lose to `.env`**. And
+  `db.py::get_client()` reads `os.environ` directly rather than `Settings`, so pointing a
+  script at a different database means setting `os.environ` *after* the first
+  `get_settings()` call. Setting it before, or passing it on the command line, is silently
+  ignored.
+
+## Agent LLM conventions
+
+`summarizer_agent` / `synthesis_agent` / `quiz_agent` are real `instructor` + OpenAI
+structured-output agents. Two deliberate conventions, both easy to "helpfully" undo:
+
+- **No hand-rolled retry.** `instructor` retries internally with validation feedback
+  (`max_retries` defaults to 3) and raises `InstructorRetryException`, which is *not* a
+  `pydantic.ValidationError`. An `except ValidationError` retry branch is unreachable dead
+  code. Each agent makes exactly one `create()` call and wraps failures `from e`.
+- **Lazy singletons.** `SummarizerAgent` / `SynthesisAgent` / `QuizAgent` are `_Lazy*`
+  proxies, not agent instances. `orchestrator.py` and `upload_service.py` import them by
+  value at module load, so an eagerly-built `None` singleton surfaced a missing API key as
+  `AttributeError: 'NoneType' object has no attribute 'run'`. The proxy builds the client on
+  first `.run()` and names the missing key instead.
+
+`quiz_agent` trusts the model's `question_type` but still overwrites `difficulty` from
+`QuizGeneratorInput.difficulty_mix` — that mix is a declared caller input and seeds FSRS
+initial scheduling, so it is enforced, not advisory.
 
 ## Maintaining this file
 

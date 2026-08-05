@@ -7,13 +7,15 @@ import pytest
 import logging
 from unittest.mock import Mock, patch, MagicMock
 from pydantic import ValidationError
+from instructor.core.exceptions import InstructorRetryException
 
 from nlp_pillars.schemas import SummarizerInput, PaperNote, ParsedPaper, PaperRef
 from nlp_pillars.agents.summarizer_agent import (
     SummarizerAgentImpl, 
     SummarizerValidationError,
     summarize,
-    _make_client
+    _make_client,
+    _LazySummarizerAgent
 )
 
 
@@ -55,7 +57,7 @@ def sample_summarizer_input(sample_parsed_paper):
     """Sample SummarizerInput for testing."""
     return SummarizerInput(
         parsed_paper=sample_parsed_paper,
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         recent_notes=[
             "Previous paper on RNNs showed limited parallelization capabilities",
             "Recent work on transformers achieved breakthrough performance"
@@ -68,7 +70,7 @@ def valid_paper_note():
     """Valid PaperNote response for testing."""
     return PaperNote(
         paper_id="test.12345",
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         problem="Limited effectiveness of traditional attention mechanisms in sequence-to-sequence learning",
         method="Multi-head attention mechanism with parallel processing capabilities",
         findings=[
@@ -124,7 +126,7 @@ class TestSummarizerAgentImpl:
         # Verify result
         assert isinstance(result, PaperNote)
         assert result.paper_id == "test.12345"
-        assert result.pillar_id == models-architectures
+        assert result.pillar_id == "models-architectures"
         assert result.problem == valid_paper_note.problem
         assert result.method == valid_paper_note.method
         assert len(result.findings) == 3
@@ -133,7 +135,7 @@ class TestSummarizerAgentImpl:
         
         # Verify logging
         mock_logger.info.assert_any_call("Starting summarization for paper: Test Paper: Attention Mechanisms")
-        mock_logger.info.assert_any_call("Summarization completed successfully on first attempt")
+        mock_logger.info.assert_any_call("Summarization completed successfully")
         
         # Verify client was called correctly
         mock_instructor_client.chat.completions.create.assert_called_once()
@@ -145,74 +147,59 @@ class TestSummarizerAgentImpl:
         assert call_args[1]['messages'][0]['role'] == 'system'
         assert call_args[1]['messages'][1]['role'] == 'user'
     
-    def test_retry_on_validation_error(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
-        """Test retry logic when first attempt fails validation."""
-        # Mock first call to fail, second to succeed
+    def test_instructor_retry_exception_is_wrapped(self, mock_instructor_client, sample_summarizer_input):
+        """A real instructor retry failure surfaces as SummarizerValidationError.
+
+        This is what production actually raises: instructor retries internally
+        (max_retries defaults to 3) and then raises InstructorRetryException.
+        It is NOT a pydantic.ValidationError, which is why the agent has no
+        hand-rolled retry layer of its own.
+        """
+        retry_exc = InstructorRetryException(
+            "validation failed after 3 attempts",
+            n_attempts=3,
+            total_usage=0,
+            messages=[],
+        )
+        mock_instructor_client.chat.completions.create.side_effect = retry_exc
+
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+
+        with pytest.raises(SummarizerValidationError) as exc_info:
+            agent.run(sample_summarizer_input)
+
+        assert "Instructor completion failed" in str(exc_info.value)
+        assert "validation failed after 3 attempts" in str(exc_info.value)
+
+        # The original traceback is preserved (B904 `raise ... from e`).
+        assert exc_info.value.__cause__ is retry_exc
+
+        # Instructor owns retrying; the agent must not re-issue the call itself.
+        assert mock_instructor_client.chat.completions.create.call_count == 1
+
+    def test_no_hand_rolled_retry_on_validation_error(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
+        """A pydantic ValidationError is wrapped, not retried locally.
+
+        Guards against reintroducing the dead retry layer: it caught
+        pydantic.ValidationError, which instructor never raises out of create().
+        """
         validation_error = ValidationError.from_exception_data(
-            "ValidationError", 
+            "ValidationError",
             [{"type": "missing", "loc": ("problem",), "msg": "Field required"}]
         )
         mock_instructor_client.chat.completions.create.side_effect = [
             validation_error,
             valid_paper_note
         ]
-        
+
         agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
-        
-        with patch('nlp_pillars.agents.summarizer_agent.logger') as mock_logger:
-            result = agent.run(sample_summarizer_input)
-        
-        # Verify successful result after retry
-        assert isinstance(result, PaperNote)
-        assert result.paper_id == "test.12345"
-        
-        # Verify retry logging
-        mock_logger.warning.assert_called_once()
-        mock_logger.info.assert_any_call("Attempting retry with corrective message")
-        mock_logger.info.assert_any_call("Summarization completed successfully on retry")
-        
-        # Verify client was called twice
-        assert mock_instructor_client.chat.completions.create.call_count == 2
-        
-        # Check that retry included corrective suffix
-        retry_call_args = mock_instructor_client.chat.completions.create.call_args_list[1]
-        retry_message = retry_call_args[1]['messages'][1]['content']
-        assert "Your last output was invalid JSON for PaperNote" in retry_message
-    
-    def test_fails_after_retry(self, mock_instructor_client, sample_summarizer_input):
-        """Test that SummarizerValidationError is raised when both attempts fail."""
-        # Mock both calls to fail validation
-        validation_error1 = ValidationError.from_exception_data(
-            "ValidationError", 
-            [{"type": "missing", "loc": ("problem",), "msg": "Field required"}]
-        )
-        validation_error2 = ValidationError.from_exception_data(
-            "ValidationError", 
-            [{"type": "missing", "loc": ("method",), "msg": "Field required"}]
-        )
-        mock_instructor_client.chat.completions.create.side_effect = [
-            validation_error1,
-            validation_error2
-        ]
-        
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
-        
-        with patch('nlp_pillars.agents.summarizer_agent.logger') as mock_logger:
-            with pytest.raises(SummarizerValidationError) as exc_info:
-                agent.run(sample_summarizer_input)
-        
-        # Verify error message contains both validation errors
-        error_message = str(exc_info.value)
-        assert "Failed to generate valid PaperNote after retry" in error_message
-        assert "Original error:" in error_message
-        assert "Retry error:" in error_message
-        
-        # Verify error logging
-        mock_logger.error.assert_called_once()
-        
-        # Verify both calls were made
-        assert mock_instructor_client.chat.completions.create.call_count == 2
-    
+
+        with pytest.raises(SummarizerValidationError):
+            agent.run(sample_summarizer_input)
+
+        # Exactly one call - the second side_effect entry is never consumed.
+        assert mock_instructor_client.chat.completions.create.call_count == 1
+
     def test_context_pass_through(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
         """Test that recent_notes context is included in the prompt."""
         mock_instructor_client.chat.completions.create.return_value = valid_paper_note
@@ -294,7 +281,7 @@ class TestConvenienceFunctions:
         
         result = summarize(
             parsed_paper=sample_parsed_paper,
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             recent_notes=["Recent note"]
         )
         
@@ -306,7 +293,7 @@ class TestConvenienceFunctions:
         call_args = mock_agent.run.call_args[0][0]
         assert isinstance(call_args, SummarizerInput)
         assert call_args.parsed_paper == sample_parsed_paper
-        assert call_args.pillar_id == models-architectures
+        assert call_args.pillar_id == "models-architectures"
         assert call_args.recent_notes == ["Recent note"]
     
     @patch('nlp_pillars.agents.summarizer_agent.SummarizerAgent', None)
@@ -315,7 +302,7 @@ class TestConvenienceFunctions:
         with pytest.raises(ValueError, match="SummarizerAgent is not initialized"):
             summarize(
                 parsed_paper=sample_parsed_paper,
-                pillar_id=models-architectures
+                pillar_id="models-architectures"
             )
     
     @patch('nlp_pillars.agents.summarizer_agent.get_settings')
@@ -348,6 +335,61 @@ class TestConvenienceFunctions:
             _make_client()
 
 
+class TestLazySingleton:
+    """The module-level SummarizerAgent defers construction to first use."""
+
+    def test_import_constructs_no_client(self):
+        """Importing the module must not build an OpenAI client."""
+        from nlp_pillars.agents.summarizer_agent import SummarizerAgent
+
+        assert isinstance(SummarizerAgent, _LazySummarizerAgent)
+        assert SummarizerAgent._impl is None
+
+    @patch('nlp_pillars.agents.summarizer_agent.get_settings')
+    def test_missing_api_key_names_the_missing_key(self, mock_get_settings, sample_summarizer_input):
+        """With no API key, calling run() names the key - not AttributeError.
+
+        The eager singleton was None when no key was set, so orchestrator's
+        `SummarizerAgent.run(...)` raised
+        `AttributeError: 'NoneType' object has no attribute 'run'`.
+        """
+        mock_settings = Mock()
+        mock_settings.openai_api_key = None
+        mock_get_settings.return_value = mock_settings
+
+        agent = _LazySummarizerAgent()
+
+        with pytest.raises(ValueError) as exc_info:
+            agent.run(sample_summarizer_input)
+
+        message = str(exc_info.value)
+        assert "SummarizerAgent is not initialized" in message
+        assert "OPENAI_API_KEY" in message
+
+    @patch('nlp_pillars.agents.summarizer_agent._make_client')
+    @patch('nlp_pillars.agents.summarizer_agent.get_settings')
+    def test_impl_built_once_and_reused(self, mock_get_settings, mock_make_client,
+                                        sample_summarizer_input, valid_paper_note):
+        """The underlying impl is constructed on first run() and cached."""
+        mock_settings = Mock()
+        mock_settings.openai_api_key = "test-api-key"
+        mock_settings.default_model = "gpt-4o-mini"
+        mock_get_settings.return_value = mock_settings
+
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = valid_paper_note
+        mock_make_client.return_value = mock_client
+
+        agent = _LazySummarizerAgent()
+        assert agent._impl is None
+
+        agent.run(sample_summarizer_input)
+        agent.run(sample_summarizer_input)
+
+        assert agent._impl is not None
+        mock_make_client.assert_called_once()
+
+
 class TestIntegration:
     """Integration tests combining multiple components."""
     
@@ -375,7 +417,7 @@ class TestIntegration:
         # Verify result
         assert isinstance(result, PaperNote)
         assert result.paper_id == "test.12345"
-        assert result.pillar_id == models-architectures
+        assert result.pillar_id == "models-architectures"
         
         # Verify all required fields are present
         assert result.problem
