@@ -123,6 +123,54 @@ class TestPodcastAgent:
 
             assert result == "Hello World"
 
+    def test_get_full_text_extracts_from_pdf(self, mock_paper):
+        """Test full text extraction works for valid paper with PDF URL."""
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+
+            # Mock ingest agent
+            mock_parsed_paper = MagicMock()
+            mock_parsed_paper.full_text = "This is the full paper text content..."
+            agent.ingest_agent = MagicMock()
+            agent.ingest_agent.ingest.return_value = mock_parsed_paper
+
+            # Add PDF URL to mock paper
+            mock_paper.url_pdf = "http://example.com/test.pdf"
+
+            result = agent._get_full_text(mock_paper)
+
+            assert "full paper text content" in result
+            agent.ingest_agent.ingest.assert_called_once_with(mock_paper)
+
+    def test_get_full_text_handles_missing_url(self, mock_paper):
+        """Test returns empty string when no PDF URL."""
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+            agent.ingest_agent = MagicMock()
+
+            # Remove PDF URL
+            mock_paper.url_pdf = None
+
+            result = agent._get_full_text(mock_paper)
+
+            assert result == ""
+            agent.ingest_agent.ingest.assert_not_called()
+
+    def test_get_full_text_handles_ingest_error(self, mock_paper):
+        """Test returns empty string when ingest fails."""
+        from nlp_pillars.agents.ingest_agent import IngestError
+
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+            agent.ingest_agent = MagicMock()
+            agent.ingest_agent.ingest.side_effect = IngestError("PDF download failed")
+
+            mock_paper.url_pdf = "http://example.com/test.pdf"
+
+            result = agent._get_full_text(mock_paper)
+
+            assert result == ""
+
     @pytest.mark.asyncio
     async def test_generate_full_workflow(
         self,
@@ -141,6 +189,9 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
 
+            # Mock full text extraction (new!)
+            agent._get_full_text = MagicMock(return_value="Full paper content here...")
+
             # Mock all Claude calls
             agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
             agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
@@ -158,6 +209,9 @@ class TestPodcastAgent:
             assert result.word_count > 0
             assert "[HOST]:" in result.script
             assert "Deep Dive:" in result.title
+
+            # Verify full text was retrieved
+            agent._get_full_text.assert_called_once_with(mock_paper)
 
             # Verify all prompts were called
             agent._generate_facts_outline.assert_called_once()

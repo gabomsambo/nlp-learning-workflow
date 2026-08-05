@@ -88,6 +88,8 @@ def valid_lesson():
     return Lesson(
         paper_id="test.12345",
         pillar_id="models-architectures",
+        title="Understanding Multi-Head Attention in Transformers",
+        content="This lesson explores the transformer architecture and its key innovation: multi-head attention. The method addresses limitations in traditional sequence modeling by enabling parallel processing and capturing long-range dependencies effectively.",
         tl_dr="Transformers revolutionized sequence modeling by using attention mechanisms instead of recurrence.",
         takeaways=[
             "Multi-head attention allows parallel processing of sequences",
