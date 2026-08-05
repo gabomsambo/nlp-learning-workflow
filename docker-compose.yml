@@ -1,5 +1,80 @@
 services:
   # ============================================
+  # Postgres (Self-hosted application database)
+  # Replaces the hosted Supabase project, whose host no longer resolves.
+  # ============================================
+  db:
+    # Pinned to a major version on purpose. `latest` would let a rebuild move
+    # the server major underneath an existing data volume, which Postgres
+    # refuses to start against.
+    image: postgres:16-alpine
+    container_name: nlp_postgres
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-nlp}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-nlp_local_dev}"
+      POSTGRES_DB: "${POSTGRES_DB:-nlp}"
+      # Consumed by db/init/01-roles.sh to create the PostgREST login role.
+      AUTHENTICATOR_PASSWORD: "${AUTHENTICATOR_PASSWORD:-authenticator_local_dev}"
+    volumes:
+      # Named volume, NOT a bind mount into the repo: data must survive
+      # `docker compose down` and must never end up staged in git.
+      - pg_data:/var/lib/postgresql/data
+      # Init scripts run once, only when the data directory is empty, in
+      # alphabetical order. 01 creates roles, 02 is the repo's schema.sql
+      # mounted in place (mounted rather than copied so there is exactly one
+      # authoritative schema file), 03 grants on the tables 02 created.
+      - ./db/init/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+      - ./schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./db/init/03-grants.sql:/docker-entrypoint-initdb.d/03-grants.sql:ro
+    ports:
+      # Loopback only. The auth model (see db/init/01-roles.sh) assumes this
+      # port is not reachable from the network.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nlp} -d ${POSTGRES_DB:-nlp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ============================================
+  # PostgREST (REST interface the app already speaks)
+  # nlp_pillars/db.py is a hand-written PostgREST client, so this needs no
+  # application code change — only the URL changes.
+  # ============================================
+  postgrest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: nlp_postgrest
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:${AUTHENTICATOR_PASSWORD:-authenticator_local_dev}@db:5432/${POSTGRES_DB:-nlp}"
+      PGRST_DB_SCHEMAS: "public"
+      PGRST_DB_ANON_ROLE: "web_anon"
+      PGRST_SERVER_PORT: "3000"
+      # A JWT secret IS required here, and this was verified the hard way.
+      # Both database clients send `Authorization: Bearer <SUPABASE_KEY>` on
+      # every request and neither can be told not to (nlp_pillars/db.py's
+      # get_client() raises if SUPABASE_KEY is empty, and PostgRESTClient sets
+      # the header unconditionally). With no secret configured, PostgREST does
+      # NOT ignore that token — it fails the whole request with
+      # HTTP 500 PGRST300 "Server lacks JWT secret".
+      #
+      # So the stack supplies a secret, and hands the app a matching token
+      # (LOCAL_API_TOKEN on the webui service below) whose only claim is
+      # role=web_anon. Loopback-only single-user tool, so the default below is
+      # a committed placeholder, exactly like POSTGRES_PASSWORD. Override both
+      # it and LOCAL_API_TOKEN in .env if this is ever exposed beyond
+      # localhost — they must be changed together, since the token is signed
+      # with this secret.
+      PGRST_JWT_SECRET: "${PGRST_JWT_SECRET:-nlp-local-dev-jwt-secret-change-me-please-32}"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
   # Qdrant Vector Database (Local)
   # ============================================
   qdrant:
@@ -31,7 +106,7 @@ services:
 
   # ============================================
   # NLP Workflow WebUI (FastAPI)
-  # Connects to Cloud Supabase for data
+  # Reads and writes through the self-hosted postgrest service above.
   # ============================================
   webui:
     build:
@@ -43,14 +118,45 @@ services:
     env_file:
       - .env
     environment:
-      # Override for Docker networking.
+      # Overrides for Docker networking. Values set here beat anything in the
+      # env_file above, which matters for POSTGREST_URL in particular.
+      #
       # NOTE: QDRANT_URL is intentionally NOT overridden here — it comes from
       # .env so the app talks to the managed Qdrant Cloud cluster. The local
       # `qdrant` service below stays available as an offline option.
+      #
+      # The three database variables below ARE overridden, and all three are
+      # needed. Nothing is deleted from .env — these only shadow it for this
+      # container, so SUPABASE_URL / SUPABASE_KEY stay on disk and the old
+      # project remains reachable if its data is ever recovered.
+      #
+      # There are TWO database clients and they resolve the URL differently:
+      #   - webui/services/postgrest_client.py:54 reads
+      #     POSTGREST_URL -> SUPABASE_URL -> http://localhost:3000
+      #   - nlp_pillars/db.py's get_client() reads SUPABASE_URL ONLY. It has
+      #     no POSTGREST_URL fallback, and it is the client behind
+      #     /api/pillars/ and the rest of the pipeline.
+      # So POSTGREST_URL alone is NOT sufficient — SUPABASE_URL must be
+      # overridden too, or half the app keeps dialling the dead host. (.env
+      # still contains stale values for both.)
+      #
+      # SUPABASE_KEY is overridden because it is sent as an
+      # `Authorization: Bearer` token on every request and cannot be disabled:
+      # get_client() raises outright if it is empty. The stale Supabase JWT
+      # cannot be verified by this PostgREST, so a locally-signed web_anon
+      # token replaces it. See PGRST_JWT_SECRET on the postgrest service.
       SEARXNG_URL: "http://searxng:8080"
-      # Supabase URL and KEY come from .env file
+      POSTGREST_URL: "http://postgrest:3000"
+      SUPABASE_URL: "http://postgrest:3000"
+      SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
     depends_on:
-      - qdrant
+      # Map form (not the list form used before) so postgrest can carry a
+      # condition. `qdrant` is kept deliberately even though the app talks to
+      # Qdrant Cloud — see the QDRANT_URL note above.
+      qdrant:
+        condition: service_started
+      postgrest:
+        condition: service_started
     restart: unless-stopped
 
 # ============================================
@@ -59,3 +165,6 @@ services:
 volumes:
   qdrant_data:
     name: nlp_qdrant_data
+  # Application database. Named so `docker compose down` (without -v) keeps it.
+  pg_data:
+    name: nlp_pg_data

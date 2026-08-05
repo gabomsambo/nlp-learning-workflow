@@ -11,14 +11,18 @@ load_dotenv(Path(__file__).parent / ".env")
 
 import httpx
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Resolve the REST endpoint the same way the application does
+# (webui/services/postgrest_client.py), so this script follows the database
+# wherever the app is pointed: self-hosted PostgREST first, hosted Supabase
+# only as a fallback.
+SUPABASE_URL = os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Error: SUPABASE_URL and SUPABASE_KEY must be set in .env")
+    print("Error: POSTGREST_URL (or SUPABASE_URL) and SUPABASE_KEY must be set in .env")
     sys.exit(1)
 
-print(f"Supabase URL: {SUPABASE_URL}")
+print(f"REST URL: {SUPABASE_URL}")
 print(f"Key present: {bool(SUPABASE_KEY)}")
 
 # Define the 8 pillars
@@ -147,15 +151,21 @@ headers = {
 
 base_url = SUPABASE_URL.rstrip("/")
 
+# Hosted Supabase serves PostgREST under /rest/v1; a self-hosted PostgREST
+# serves it at the root. Same conditional as nlp_pillars/db.py:28 and
+# webui/services/postgrest_client.py, so the path is no longer hardcoded.
+if "supabase.co" in base_url and "/rest/v1" not in base_url:
+    base_url = f"{base_url}/rest/v1"
+
 # First, let's delete old pillars to start fresh
 print("\nClearing old pillars...")
-resp = httpx.delete(f"{base_url}/rest/v1/pillars?id=neq.NONEXISTENT", headers=headers)
+resp = httpx.delete(f"{base_url}/pillars?id=neq.NONEXISTENT", headers=headers)
 print(f"Delete response: {resp.status_code}")
 
 # Insert new pillars
 print("\nInserting new pillars...")
 for pillar in pillars:
-    resp = httpx.post(f"{base_url}/rest/v1/pillars", json=pillar, headers=headers)
+    resp = httpx.post(f"{base_url}/pillars", json=pillar, headers=headers)
     if resp.status_code in [200, 201]:
         print(f"✅ Created: {pillar['name']}")
     else:
