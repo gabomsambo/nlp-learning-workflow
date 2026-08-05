@@ -6,35 +6,75 @@ All Qdrant and OpenAI calls are mocked for fast, reliable testing.
 import pytest
 import hashlib
 from unittest.mock import Mock, patch, MagicMock
-from qdrant_client import models
+from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from nlp_pillars.vectors import (
     get_client, set_client, set_openai_client, reset_vector_size,
     ensure_collections, upsert_text, search_similar,
-    _embed, _get_vector_size, COLLECTION_NAME
+    _embed, _get_vector_size, COLLECTION_NAME, PILLAR_ID_FIELD
 )
+
+
+def make_hit(paper_id, score, chunk_index=0):
+    """One ScoredPoint-shaped search hit."""
+    hit = Mock()
+    hit.payload = {"paper_id": paper_id, "chunk_index": chunk_index}
+    hit.score = score
+    return hit
+
+
+def query_response(hits):
+    """query_points() returns a QueryResponse; its hits live on `.points`."""
+    response = Mock()
+    response.points = hits
+    return response
+
+
+def unexpected_response(status_code, content=b"boom"):
+    """A qdrant-client UnexpectedResponse with the given HTTP status."""
+    return UnexpectedResponse(
+        status_code=status_code,
+        reason_phrase="Bad Request" if status_code < 500 else "Server Error",
+        content=content,
+        headers=None,
+    )
 
 
 # Test fixtures
 @pytest.fixture
 def mock_qdrant_client():
-    """Mock Qdrant client for testing."""
-    mock_client = Mock()
-    
+    """Mock Qdrant client for testing.
+
+    spec=QdrantClient is load-bearing, not tidiness. This fixture used to be a
+    bare Mock(), which happily answered `client.search(...)` long after
+    qdrant-client 1.19 removed that method — so the whole search suite passed
+    green against a read path that raised AttributeError on every real query.
+    A spec'd mock fails the same way the library does.
+    """
+    mock_client = Mock(spec=QdrantClient)
+
     # Mock collections response
     mock_collections = Mock()
     mock_collections.collections = []
     mock_client.get_collections.return_value = mock_collections
-    
+
     # Mock create collection
     mock_client.create_collection.return_value = None
-    
+
+    # Collection info, with the payload index already in place so
+    # _ensure_payload_indexes() is a no-op unless a test says otherwise.
+    collection_info = Mock()
+    collection_info.payload_schema = {PILLAR_ID_FIELD: Mock()}
+    mock_client.get_collection.return_value = collection_info
+    mock_client.create_payload_index.return_value = None
+
     # Mock upsert
     mock_client.upsert.return_value = None
-    
+
     # Mock search
-    mock_client.search.return_value = []
-    
+    mock_client.query_points.return_value = query_response([])
+
     return mock_client
 
 
@@ -367,24 +407,19 @@ class TestSearchSimilar:
         set_openai_client(mock_openai_client)
         
         # Mock search results
-        mock_hit1 = Mock()
-        mock_hit1.payload = {"paper_id": "paper.123"}
-        mock_hit1.score = 0.9
-        
-        mock_hit2 = Mock()
-        mock_hit2.payload = {"paper_id": "paper.456"}
-        mock_hit2.score = 0.8
-        
-        mock_qdrant_client.search.return_value = [mock_hit1, mock_hit2]
+        mock_qdrant_client.query_points.return_value = query_response([
+            make_hit("paper.123", 0.9),
+            make_hit("paper.456", 0.8),
+        ])
 
         result = search_similar("data-training-methodologies", "test query", top_k=5)
 
         # Verify search was called with correct parameters
-        mock_qdrant_client.search.assert_called_once()
-        search_call = mock_qdrant_client.search.call_args
+        mock_qdrant_client.query_points.assert_called_once()
+        search_call = mock_qdrant_client.query_points.call_args
 
         assert search_call[1]['collection_name'] == COLLECTION_NAME
-        assert search_call[1]['query_vector'] == [0.1, 0.2, 0.3, 0.4]
+        assert search_call[1]['query'] == [0.1, 0.2, 0.3, 0.4]
         assert search_call[1]['limit'] == 15  # top_k * 3 for deduplication
         assert search_call[1]['with_payload'] is True
 
@@ -408,19 +443,11 @@ class TestSearchSimilar:
         set_openai_client(mock_openai_client)
         
         # Mock search results with duplicates
-        mock_hit1 = Mock()
-        mock_hit1.payload = {"paper_id": "paper.123"}
-        mock_hit1.score = 0.9
-        
-        mock_hit2 = Mock()
-        mock_hit2.payload = {"paper_id": "paper.123"}  # Same paper
-        mock_hit2.score = 0.7  # Lower score
-        
-        mock_hit3 = Mock()
-        mock_hit3.payload = {"paper_id": "paper.456"}
-        mock_hit3.score = 0.8
-        
-        mock_qdrant_client.search.return_value = [mock_hit1, mock_hit2, mock_hit3]
+        mock_qdrant_client.query_points.return_value = query_response([
+            make_hit("paper.123", 0.9),
+            make_hit("paper.123", 0.7),  # Same paper, lower score
+            make_hit("paper.456", 0.8),
+        ])
 
         result = search_similar("linguistic-cognitive-foundations", "test query", top_k=5)
         
@@ -437,14 +464,9 @@ class TestSearchSimilar:
         set_openai_client(mock_openai_client)
         
         # Mock many search results
-        mock_hits = []
-        for i in range(10):
-            hit = Mock()
-            hit.payload = {"paper_id": f"paper.{i}"}
-            hit.score = 0.9 - (i * 0.1)  # Decreasing scores
-            mock_hits.append(hit)
-        
-        mock_qdrant_client.search.return_value = mock_hits
+        mock_hits = [make_hit(f"paper.{i}", 0.9 - (i * 0.1)) for i in range(10)]
+
+        mock_qdrant_client.query_points.return_value = query_response(mock_hits)
 
         result = search_similar("linguistic-cognitive-foundations", "test query", top_k=3)
         
@@ -457,13 +479,141 @@ class TestSearchSimilar:
     def test_search_similar_embedding_failure(self, mock_qdrant_client):
         """Test search_similar when embedding fails."""
         set_client(mock_qdrant_client)
-        
+
         with patch('nlp_pillars.vectors._embed', side_effect=Exception("Embedding failed")):
             with patch('nlp_pillars.vectors.logger') as mock_logger:
                 result = search_similar("linguistic-cognitive-foundations", "test query")
 
                 assert result == []
                 mock_logger.error.assert_called_once()
+
+
+class TestSearchSimilarFailsLoudly:
+    """A broken read path must not be reported as 'nothing matched'.
+
+    The original bug: search_similar() called client.search(), removed in
+    qdrant-client 1.19, and its blanket `except` turned the AttributeError into
+    `[]` on every single query for months. Same precedent as
+    pdf_loader.chunk_text() after PR #8 — a call the library rejects is a bug,
+    not a miss, so it raises; genuine runtime failures still degrade to [].
+    """
+
+    def test_installed_client_has_query_points_and_no_search(self):
+        """Canary on the pinned library, so a version bump cannot go unnoticed."""
+        assert hasattr(QdrantClient, "query_points")
+        assert not hasattr(QdrantClient, "search")
+
+    def test_raises_when_method_is_missing(self, mock_qdrant_client, mock_openai_client):
+        """AttributeError (the 1.19 removal) propagates as RuntimeError."""
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+        mock_qdrant_client.query_points.side_effect = AttributeError(
+            "'QdrantClient' object has no attribute 'query_points'"
+        )
+
+        with pytest.raises(RuntimeError, match="incompatible with the installed"):
+            search_similar("linguistic-cognitive-foundations", "test query")
+
+    def test_raises_when_signature_is_rejected(self, mock_qdrant_client, mock_openai_client):
+        """TypeError (a renamed/removed keyword) propagates as RuntimeError."""
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+        mock_qdrant_client.query_points.side_effect = TypeError(
+            "query_points() got an unexpected keyword argument 'query_vector'"
+        )
+
+        with pytest.raises(RuntimeError, match="incompatible with the installed"):
+            search_similar("linguistic-cognitive-foundations", "test query")
+
+    def test_raises_when_server_rejects_request(self, mock_qdrant_client, mock_openai_client):
+        """A 4xx — e.g. the missing pillar_id payload index under strict mode."""
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+        mock_qdrant_client.query_points.side_effect = unexpected_response(
+            400, b'{"status":{"error":"Bad request: Index required but not found for \\"pillar_id\\""}}'
+        )
+
+        with pytest.raises(RuntimeError, match="Qdrant rejected the search"):
+            search_similar("linguistic-cognitive-foundations", "test query")
+
+    def test_returns_empty_on_server_error(self, mock_qdrant_client, mock_openai_client):
+        """A 5xx is a runtime failure, not a contract mismatch: still degrades."""
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+        mock_qdrant_client.query_points.side_effect = unexpected_response(503)
+
+        assert search_similar("linguistic-cognitive-foundations", "test query") == []
+
+    def test_raises_on_unexpected_response_shape(self, mock_qdrant_client, mock_openai_client):
+        """A bare list (the old search() shape) is not silently read as no hits."""
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+        mock_qdrant_client.query_points.return_value = [make_hit("paper.123", 0.9)]
+
+        with pytest.raises(RuntimeError, match="unexpected query_points"):
+            search_similar("linguistic-cognitive-foundations", "test query")
+
+
+class TestPayloadIndex:
+    """Every read filters on pillar_id, so that key must carry a payload index.
+
+    Qdrant Cloud runs strict mode (`unindexed_filtering_retrieve: false`) and
+    answers a filtered query on an unindexed key with 400. The live collection
+    had 170 points and an empty payload_schema, so the filter could never work.
+    """
+
+    def test_creates_index_when_missing(self, mock_qdrant_client, mock_openai_client):
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+
+        existing = Mock()
+        existing.name = COLLECTION_NAME
+        mock_qdrant_client.get_collections.return_value.collections = [existing]
+        mock_qdrant_client.get_collection.return_value.payload_schema = {}
+
+        ensure_collections()
+
+        mock_qdrant_client.create_payload_index.assert_called_once()
+        call = mock_qdrant_client.create_payload_index.call_args
+        assert call[1]["collection_name"] == COLLECTION_NAME
+        assert call[1]["field_name"] == PILLAR_ID_FIELD
+        assert call[1]["field_schema"] == models.PayloadSchemaType.KEYWORD
+
+    def test_does_not_recreate_existing_index(self, mock_qdrant_client, mock_openai_client):
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+
+        existing = Mock()
+        existing.name = COLLECTION_NAME
+        mock_qdrant_client.get_collections.return_value.collections = [existing]
+        # fixture already reports pillar_id in payload_schema
+
+        ensure_collections()
+
+        mock_qdrant_client.create_payload_index.assert_not_called()
+
+    def test_index_created_for_new_collection(self, mock_qdrant_client, mock_openai_client):
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+        mock_qdrant_client.get_collections.return_value.collections = []
+        mock_qdrant_client.get_collection.return_value.payload_schema = {}
+
+        ensure_collections()
+
+        mock_qdrant_client.create_collection.assert_called_once()
+        mock_qdrant_client.create_payload_index.assert_called_once()
+
+    def test_index_failure_is_not_fatal(self, mock_qdrant_client, mock_openai_client):
+        """Writes do not need the index; search_similar() raises if it is absent."""
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+
+        existing = Mock()
+        existing.name = COLLECTION_NAME
+        mock_qdrant_client.get_collections.return_value.collections = [existing]
+        mock_qdrant_client.get_collection.side_effect = Exception("index lookup failed")
+
+        ensure_collections()  # must not raise
 
 
 class TestNamespaceEnforcement:
@@ -474,7 +624,7 @@ class TestNamespaceEnforcement:
         set_client(mock_qdrant_client)
         set_openai_client(mock_openai_client)
         
-        mock_qdrant_client.search.return_value = []
+        mock_qdrant_client.query_points.return_value = query_response([])
 
         # Test different pillars
         pillars = [
@@ -486,7 +636,7 @@ class TestNamespaceEnforcement:
             search_similar(pillar, "test query")
 
             # Get the last search call
-            search_call = mock_qdrant_client.search.call_args
+            search_call = mock_qdrant_client.query_points.call_args
             query_filter = search_call[1]['query_filter']
 
             # Verify pillar filter is present
@@ -529,12 +679,12 @@ class TestErrorHandling:
             mock_logger.error.assert_called_once()
     
     def test_search_qdrant_error(self, mock_qdrant_client, mock_openai_client):
-        """Test search_similar handles Qdrant errors gracefully."""
+        """Test search_similar handles transport-level Qdrant errors gracefully."""
         set_client(mock_qdrant_client)
         set_openai_client(mock_openai_client)
-        
-        mock_qdrant_client.search.side_effect = Exception("Qdrant error")
-        
+
+        mock_qdrant_client.query_points.side_effect = Exception("Qdrant error")
+
         with patch('nlp_pillars.vectors.logger') as mock_logger:
             result = search_similar("linguistic-cognitive-foundations", "test query")
 
