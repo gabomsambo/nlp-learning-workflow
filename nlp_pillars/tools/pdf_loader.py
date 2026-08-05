@@ -19,6 +19,32 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 try:
     import pymupdf4llm
+
+    # pymupdf4llm 1.28 ships a layout-analysis mode (pymupdf-layout, an ONNX
+    # model plus Tesseract) and enables it by DEFAULT. It produces richer
+    # markdown — more tables, more headings — but on papers where its OCR path
+    # engages it silently drops prose, which is far worse for this project than
+    # missing a heading. Measured on real papers with this exact pin:
+    #
+    #   arXiv:1706.03762  layout on: all of section 3.1 "Encoder and Decoder
+    #                     Stacks" absent from the output (no "LayerNorm", no
+    #                     "residual connection"); 23% of sentences missing.
+    #   arXiv:2106.09685  layout on: 1154 of 8933 word instances lost (~13%),
+    #                     ending up with FEWER words than plain pypdf.
+    #
+    # There is no knob to keep the layout analysis and skip the OCR step
+    # (pymupdf.layout.activate() takes no arguments), so the choice is binary
+    # and this project takes the lossless side. The classic parser still gives
+    # everything this path was added for: correct multi-column reading order,
+    # de-hyphenation across line breaks, ligatures normalised to ASCII
+    # (pypdf emits raw U+FB01 etc., which no downstream tokenizer wants) and
+    # markdown tables.
+    #
+    # `use_layout` arrived together with the layout mode it disables. An older
+    # install has neither, and that is already the behaviour wanted here, so a
+    # missing attribute is not an error.
+    if hasattr(pymupdf4llm, "use_layout"):
+        pymupdf4llm.use_layout(False)
 except ImportError:
     pymupdf4llm = None
 
@@ -223,13 +249,21 @@ def extract_text(pdf_path: str, min_len_threshold: int = 800) -> str:
 
         # Fallback 1: Try PyMuPDF4LLM (good for general LLM processing)
         if pymupdf4llm:
-            text = _extract_with_pymupdf4llm(pdf_path)
-            if len(text.strip()) >= min_len_threshold:
-                duration = time.time() - start_time
-                logger.info(f"Extracted {len(text)} chars with pymupdf4llm in {duration:.2f}s")
-                return _normalize_whitespace(text)
-            else:
-                logger.info(f"pymupdf4llm extracted only {len(text.strip())} chars, trying fallback")
+            # Wrapped, like the layout branch above. A raise here used to be
+            # unreachable because pymupdf4llm was never installed; now that it
+            # is, and is the first path that actually runs, an unwrapped raise
+            # would propagate straight out of extract_text and abandon a PDF
+            # that pypdf or pdfminer could still have read.
+            try:
+                text = _extract_with_pymupdf4llm(pdf_path)
+                if len(text.strip()) >= min_len_threshold:
+                    duration = time.time() - start_time
+                    logger.info(f"Extracted {len(text)} chars with pymupdf4llm in {duration:.2f}s")
+                    return _normalize_whitespace(text)
+                else:
+                    logger.info(f"pymupdf4llm extracted only {len(text.strip())} chars, trying fallback")
+            except Exception as e:
+                logger.warning(f"pymupdf4llm extraction failed: {e}, trying fallback")
 
         # Fallback 2: Try pypdf
         if pypdf:
