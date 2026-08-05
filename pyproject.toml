@@ -10,7 +10,10 @@ readme = "README.md"
 packages = [{include = "nlp_pillars"}]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+# 3.12 is the real floor: atomic-agents requires >= 3.12, and the Docker
+# image runs 3.12. This said ^3.11 for a while, which made the documented
+# `uv venv --python 3.11` recipe fail at install time.
+python = "^3.12"
 atomic-agents = "^2.0.0"
 instructor = "^1.0.0"
 pydantic = "^2.0.0"
@@ -54,7 +57,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 88
-target-version = ['py311']
+target-version = ['py312']
 
 [tool.ruff]
 line-length = 88
@@ -62,7 +65,7 @@ select = ["E", "F", "I", "N", "W", "B", "C90", "D"]
 ignore = ["D100", "D104"]  # Missing docstring in public module/package
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

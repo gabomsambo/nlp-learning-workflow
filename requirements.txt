@@ -1,86 +1,116 @@
 # Python dependencies for NLP Learning Workflow
-
+#
+# EVERY version here is an exact `==` pin, and that is deliberate. This file
+# used to be `>=` throughout, which meant a rebuild silently moved the whole
+# stack. That already broke this project three separate times: Starlette 1.x
+# dropped the legacy `TemplateResponse(name, context)` signature and 500'd
+# every HTML page, semchunk 4.1.1 changed its signature so `pdf_loader`
+# silently fell back to naive chunking, and atomic-agents started requiring
+# Python >= 3.12 which broke the documented `uv venv --python 3.11` recipe.
+#
+# These are the versions the code is KNOWN GOOD against, captured from a real
+# resolved environment, not the newest available. Do not bump anything here to
+# fix an unrelated problem.
+#
+# Two files, one policy:
+#   - requirements.txt      (this file) direct dependencies only. Readable, and
+#                           the place a human edits to change a version.
+#   - requirements.lock.txt full transitive set, `pip freeze` of a known-good
+#                           build. This is what the image installs, because the
+#                           breakages above came from TRANSITIVE packages
+#                           (starlette is not listed below; it arrives via
+#                           fastapi) and direct-only pins would not have caught
+#                           them.
+#
+# To upgrade something:
+#   1. edit the pin below
+#   2. rebuild without the lock:
+#        docker build --no-cache --build-arg REQS=requirements.txt -t nlp-reqs-probe .
+#   3. capture the new resolution:
+#        docker run --rm nlp-reqs-probe pip freeze > requirements.lock.txt
+#   4. rebuild normally, exercise the app, commit both files together.
+#
 # Core Framework
-atomic-agents>=2.0.0
-instructor>=1.0.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
+atomic-agents==2.9.1
+instructor==1.14.5
+pydantic==2.13.4
+pydantic-settings==2.14.2
 
 # LLM Providers
-openai>=1.0.0
-anthropic>=0.25.0
-groq>=0.5.0
-google-generativeai>=0.5.0  # For Gemini
+openai==2.53.0
+anthropic==0.120.2
+groq==1.6.0
+google-generativeai==0.8.6  # For Gemini
 
 # Database & Vector Store
-supabase>=2.0.0
-qdrant-client>=1.8.0
-psycopg2-binary>=2.9.0
-sqlalchemy>=2.0.0
+supabase==2.31.0
+qdrant-client==1.19.0
+psycopg2-binary==2.9.12
+sqlalchemy==2.0.51
 
 # PDF Processing
-pypdf>=4.0.0
-pdfplumber>=0.10.0
-pymupdf>=1.23.0  # As fallback
-semchunk>=0.1.0  # For semantic text chunking
+pypdf==6.14.2
+pdfplumber==0.11.10
+pymupdf==1.28.0  # As fallback
+semchunk==4.1.1  # For semantic text chunking
 
 # Layout-aware PDF processing
-layoutparser>=0.3.4  # For layout detection
-torch>=2.0.0  # For LayoutLMv3 models
-torchvision>=0.15.0  # For image processing
-pdf2image>=1.16.0  # For PDF to image conversion
-pytesseract>=0.3.10  # For OCR text extraction
-Pillow>=10.0.0  # For image processing
+layoutparser==0.3.4  # For layout detection
+torch==2.13.0  # For LayoutLMv3 models
+torchvision==0.28.0  # For image processing
+pdf2image==1.17.0  # For PDF to image conversion
+pytesseract==0.3.13  # For OCR text extraction
+Pillow==12.3.0  # For image processing
 
 # Web & API Tools
-httpx>=0.25.0
-arxiv>=2.1.0
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-aiohttp>=3.9.0
+httpx==0.28.1
+arxiv==4.0.1
+beautifulsoup4==4.15.0
+requests==2.34.2
+aiohttp==3.14.3
 
 # CLI & Scheduling
-typer>=0.9.0
-rich>=13.0.0  # For beautiful CLI output
-apscheduler>=3.10.0
-python-crontab>=3.0.0
+typer==0.27.1
+rich==13.9.4  # For beautiful CLI output
+apscheduler==3.11.3
+python-crontab==3.3.0
 
 # FSRS Spaced Repetition
-fsrs>=6.0.0  # Free Spaced Repetition Scheduler (correct package name)
+fsrs==6.3.1  # Free Spaced Repetition Scheduler (correct package name)
 
 # Data Processing
-numpy>=1.24.0
-pandas>=2.0.0
-tiktoken>=0.5.0  # For token counting
+numpy==2.5.1
+pandas==3.0.5
+tiktoken==0.13.0  # For token counting
 
 # Utilities
-python-dotenv>=1.0.0
-structlog>=24.0.0  # For structured logging
-tenacity>=8.0.0  # For retry logic
-cachetools>=5.0.0
-python-dateutil>=2.8.0
+python-dotenv==1.2.2
+structlog==26.1.0  # For structured logging
+tenacity==9.1.4  # For retry logic
+cachetools==7.1.7
+python-dateutil==2.9.0.post0
 
 # Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-cov>=4.1.0
-pytest-mock>=3.11.0
-faker>=20.0.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest-mock==3.15.1
+faker==40.36.0
 
 # Development Tools
-black>=23.0.0
-ruff>=0.1.0
-mypy>=1.5.0
-pre-commit>=3.5.0
+black==26.5.1
+ruff==0.16.1
+mypy==2.3.0
+pre-commit==4.6.1
 
 # Optional: Visualization
-matplotlib>=3.7.0
-plotly>=5.17.0
-networkx>=3.2.0  # For knowledge graphs
-pyvis>=0.3.0  # For interactive graphs
+matplotlib==3.11.1
+plotly==6.9.0
+networkx==3.6.1  # For knowledge graphs
+pyvis==0.3.2  # For interactive graphs
 
 # Optional: Advanced Features
-textual>=0.40.0  # For TUI dashboard
-fastapi>=0.110.0
-uvicorn[standard]>=0.24.0
-jinja2>=3.1.0
+textual==5.3.0  # For TUI dashboard
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+jinja2==3.1.6

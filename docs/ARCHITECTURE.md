@@ -511,7 +511,7 @@ def test_summarizer_agent():
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Framework | Atomic Agents v2.0 | Modular, typed, composable |
-| Language | Python 3.11+ | Async support, type hints |
+| Language | Python 3.12+ | Async support, type hints |
 | Database | Supabase/PostgreSQL | Managed, scalable, free tier |
 | Vector DB | Qdrant | Fast, supports namespaces |
 | LLM | OpenAI GPT-4o-mini | Cost-effective, reliable |
