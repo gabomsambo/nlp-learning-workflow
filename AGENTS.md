@@ -75,9 +75,36 @@ uses — do not re-add a `QDRANT_URL` override to the `webui` service in `docker
 `depends_on: qdrant` on `webui` is therefore cosmetic and is left in place deliberately.
 
 `nlp_pillars/vectors.py::ensure_collections()` creates the single `nlp_pillars` collection
-(1536-dim, cosine). It runs from `VectorSearchTool.__init__`, so constructing an
-`Orchestrator` is enough to create it. The cloud cluster is a small free tier — do not
-bulk-load it.
+(1536-dim, cosine) **and** the `pillar_id` keyword payload index. It runs from
+`VectorSearchTool.__init__`, so constructing an `Orchestrator` is enough to create both.
+The cloud cluster is a small free tier — do not bulk-load it.
+
+That index is not optional. The cloud cluster runs Qdrant **strict mode**
+(`unindexed_filtering_retrieve: false`), which answers a filtered query on an unindexed
+payload key with `400 Bad Request: Index required but not found`. Every read in
+`vectors.py` filters by `pillar_id` — that is the namespace isolation — so without the
+index no search can succeed however it is spelled. Only `pillar_id` is indexed; filtering
+or scrolling by `paper_id` still 400s, so filter that one client-side.
+
+Read the collection with `client.query_points()`. `search()`, `search_batch()`,
+`search_groups()`, `recommend()` and `discover()` were all removed in qdrant-client 1.19
+(the pinned version); `query_points()` returns a `QueryResponse` whose hits are on
+`.points`, where `search()` returned the hit list directly. `search_similar()` therefore
+**raises** `RuntimeError` on `AttributeError`/`TypeError` or on a 4xx from the server,
+rather than returning `[]` — those mean this code disagrees with its library or its server,
+and reporting them as "nothing matched" is what hid the dead read path for months. Genuine
+runtime failures (embedding call, transport, 5xx) still degrade to `[]`. Same precedent as
+`pdf_loader.chunk_text()`; do not re-widen it to a blanket `except`. The one caller that
+can surface the raise to a user is `GET /api/pillars/{id}/search`, which turns it into a
+500 with the message — deliberately, since the alternative is a silent empty result page.
+
+Mock the client with `Mock(spec=QdrantClient)` in tests. A bare `Mock()` answers any
+attribute, so `tests/test_vectors.py` passed green for months against a read path calling
+a method the installed library no longer had.
+
+Stored payloads carry only `pillar_id`, `paper_id`, `chunk_index` and `len` — **no chunk
+text**. `search_similar()` is a paper-level discovery API, not a snippet API; recovering
+the text of a hit means re-chunking the source with the same parameters.
 
 ## There are eight pillars, and three places must agree
 
@@ -107,7 +134,7 @@ marked `INFERRED:` inline. `scripts` is a pure stub: its only mention in the cod
 commented-out example in a docstring (`webui/routers/api/script_download.py`), so that grep
 for table names reports 11 while only 10 have live call sites.
 
-Three pre-existing application bugs, all left alone deliberately:
+Two pre-existing application bugs, both left alone deliberately:
 
 - `TableQuery.eq()` in `nlp_pillars/db.py` renders Python `None` as the literal string
   `"None"`, so a `pillar_id IS NULL` filter becomes `pillar_id=eq.None` and matches nothing.
@@ -115,11 +142,12 @@ Three pre-existing application bugs, all left alone deliberately:
   matched) as success, so it never falls through to INSERT. The table is fine — a direct
   insert of the converter's payload round-trips all 18 weights — but the upsert can only
   ever update a row that already exists.
-- `vectors.search_similar()` calls `client.search()`, removed in qdrant-client 1.19 (the
-  pinned version), so **every** query fails with `'QdrantClient' object has no attribute
-  'search'` — swallowed by its `except`, which returns `[]`. Writes are unaffected:
-  `upsert_text()` works and `client.query_points(...)` over the same collection returns
-  hits. Verified live 2026-08-05 against the cloud cluster.
+
+`upsert_text()` wraps its whole body in `except Exception: return 0`, and that body calls
+`chunk_text()` — so the `RuntimeError` PR #8 added there is caught and reported as "0 chunks
+upserted". Both `upsert_text()` callers (`orchestrator.py`, `upload_service.py`) invoke it
+un-guarded, so making it propagate would abort a daily run mid-paper. Left alone; know that
+a chunker contract break shows up here as a zero, not an exception.
 
 `webui/routers/api/script_download.py` is dead code and must **not** be registered in
 `webui/app.py`: importing it aborts application startup (FastAPI rejects its
