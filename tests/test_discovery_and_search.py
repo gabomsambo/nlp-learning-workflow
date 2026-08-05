@@ -303,23 +303,80 @@ class TestSearXNGTool:
         assert paper_ref.venue == "arXiv"
         assert len(paper_ref.authors) > 0  # Should extract some authors
     
-    def test_generate_paper_id(self):
-        """Test paper ID generation from URLs."""
+    def test_extract_paper_id(self):
+        """Paper IDs come from the URL, and there is no invented fallback."""
         tool = SearXNGTool()
-        
-        # Test arXiv URL
-        arxiv_url = "https://arxiv.org/abs/2301.12345"
-        assert tool._generate_paper_id(arxiv_url, "title") == "2301.12345"
-        
-        # Test DOI URL
-        doi_url = "https://doi.org/10.1038/nature12345"
-        assert tool._generate_paper_id(doi_url, "title") == "10.1038/nature12345"
-        
-        # Test fallback
-        other_url = "https://example.com/paper"
-        paper_id = tool._generate_paper_id(other_url, "title")
-        assert paper_id.startswith("searxng_")
-    
+
+        # arXiv, new style, with and without a version suffix
+        assert tool._extract_paper_id("https://arxiv.org/abs/2301.12345") == "2301.12345"
+        assert tool._extract_paper_id("https://arxiv.org/abs/2301.12345v2") == "2301.12345"
+        assert tool._extract_paper_id("http://arxiv.org/pdf/2301.12345.pdf") == "2301.12345"
+
+        # arXiv, old style — these are still live and used to be unparseable
+        assert tool._extract_paper_id("https://arxiv.org/abs/cs/0501001") == "cs/0501001"
+        assert tool._extract_paper_id("https://arxiv.org/abs/math.GT/0309136") == "math.GT/0309136"
+
+        # DOI
+        assert tool._extract_paper_id("https://doi.org/10.1038/nature12345") == "10.1038/nature12345"
+        assert tool._extract_paper_id("https://dx.doi.org/10.1145/3292500.3330701") == "10.1145/3292500.3330701"
+
+        # Anything else has no identifier. Returning None is the point: the old
+        # `searxng_<hash>` fallback became https://arxiv.org/pdf/searxng_078015.pdf
+        # at ingest and 404'd.
+        assert tool._extract_paper_id("https://example.com/paper") is None
+        assert tool._extract_paper_id("https://en.wikipedia.org/wiki/Transformer") is None
+        assert tool._extract_paper_id("https://example.com/what-is-a-pdf-guide") is None
+
+    def test_unidentifiable_results_are_dropped(self):
+        """A result with no paper identifier never becomes a candidate."""
+        tool = SearXNGTool()
+
+        assert tool._convert_result_to_paper_ref({
+            "title": "Transformer (deep learning) - Wikipedia",
+            "url": "https://en.wikipedia.org/wiki/Transformer_(deep_learning)",
+            "content": "In deep learning, the transformer is...",
+            "engine": "duckduckgo",
+        }) is None
+
+        # ...and the same through the HTML-scraping fallback path.
+        article = (
+            '<h3><a href="https://www.ibm.com/topics/transformer-model">'
+            'What is a Transformer Model? | IBM</a></h3>'
+            '<p class="content">A transformer model is a neural network...</p>'
+        )
+        assert tool._extract_paper_from_html(article) is None
+
+    def test_arxiv_result_gets_a_downloadable_pdf_url(self):
+        """An /abs/ hit is turned into a PDF URL, not left without one."""
+        tool = SearXNGTool()
+
+        paper_ref = tool._convert_result_to_paper_ref({
+            "title": "Attention Is All You Need",
+            "url": "https://arxiv.org/abs/1706.03762",
+            "content": "The dominant sequence transduction models...",
+            "engine": "arxiv",
+        })
+
+        assert paper_ref is not None
+        assert paper_ref.id == "1706.03762"
+        assert paper_ref.url_pdf == "https://arxiv.org/pdf/1706.03762.pdf"
+
+    def test_parse_results_filters_before_truncating(self):
+        """max_results counts kept papers, not scanned results."""
+        tool = SearXNGTool()
+
+        data = {"results": [
+            {"title": "Blog post", "url": "https://example.com/a", "engine": "ddg"},
+            {"title": "Another blog post", "url": "https://example.com/b", "engine": "ddg"},
+            {"title": "Real paper", "url": "https://arxiv.org/abs/2301.12345", "engine": "arxiv"},
+        ]}
+
+        papers = tool._parse_searxng_results(data, max_results=2)
+
+        assert len(papers) == 1
+        assert papers[0].id == "2301.12345"
+
+
     def test_extract_year(self):
         """Test year extraction from text."""
         tool = SearXNGTool()

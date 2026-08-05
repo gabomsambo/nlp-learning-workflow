@@ -99,6 +99,27 @@ carries on with arXiv alone. `SearXNGTool.search()` prefers JSON (arXiv engine, 
 paper IDs) and falls back to scraping the HTML UI, which returns general-web results —
 tutorials and blog posts, not papers. If discovery quality drops, check that key first.
 
+## A paper identifier must resolve to a PDF, or it is not an identifier
+
+`nlp_pillars/paper_ids.py` is the single place that answers "is this a real paper id, and
+what PDF does it point at?", and every producer of ids uses it. The rule it enforces:
+**discovery returns `None` rather than inventing an id**, and `add_to_paper_queue` refuses
+any candidate for which `resolvable_pdf_url()` is `None`.
+
+This is load-bearing, not stylistic. `SearXNGTool` used to mint `searxng_{hash(url) %
+1000000:06d}` for URLs it could not parse; `add_to_paper_queue` recorded `source: 'arxiv'`
+for every row; and `_fetch_full_paper_metadata` therefore rebuilt the download URL as
+`https://arxiv.org/pdf/searxng_078015.pdf`, which 404s. The failure surfaced as "the pillar
+failed at ingest today", three stages after the mistake. (`hash()` is also salted per
+process, so the same URL got a different id every run and the "already queued" check never
+matched.) Measured live 2026-08-06 with SearXNG's JSON API disabled: 0/2 pillars succeeded
+before, 2/2 after.
+
+`paper_queue` carries `url_pdf` so a non-arXiv paper survives the round trip — added by
+`docs/migrations/008_paper_queue_url_pdf.sql`, which **must be run against any database
+created before it**. `add_to_paper_queue` degrades to arXiv-only queueing and logs the
+migration path if PostgREST reports the column missing.
+
 ## Sharp edges
 
 `schema.sql` now covers all 11 tables, but it was **reconstructed from application code**,

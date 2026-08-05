@@ -17,6 +17,12 @@ from tenacity import (
 )
 
 from ..config import get_settings
+from ..paper_ids import (
+    arxiv_pdf_url,
+    extract_arxiv_id,
+    extract_doi,
+    looks_like_pdf_url,
+)
 from ..schemas import PaperRef, SearchQuery
 
 logger = logging.getLogger(__name__)
@@ -276,7 +282,13 @@ class SearXNGTool:
         papers = []
         results = data.get("results", [])
 
-        for i, result in enumerate(results[:max_results]):
+        # Scan the whole result list and stop at max_results, rather than
+        # truncating first: results without a paper id are now dropped, so
+        # slicing up front would silently shrink the yield to whatever survived
+        # in the first `max_results` hits.
+        for i, result in enumerate(results):
+            if len(papers) >= max_results:
+                break
             try:
                 paper_ref = self._convert_result_to_paper_ref(result)
                 if paper_ref:
@@ -284,6 +296,12 @@ class SearXNGTool:
             except Exception as e:
                 logger.warning(f"Failed to convert SearXNG result {i}: {e}")
                 continue
+
+        if len(results) > len(papers):
+            logger.info(
+                f"SearXNG returned {len(results)} results, kept {len(papers)} "
+                f"with resolvable paper ids"
+            )
 
         return papers
 
@@ -311,7 +329,10 @@ class SearXNGTool:
             article_pattern = r'<article class="result[^"]*"[^>]*>(.*?)</article>'
             articles = re.findall(article_pattern, html_content, re.DOTALL)
 
-            for i, article_html in enumerate(articles[:max_results]):
+            # Same reasoning as the JSON parser: filter first, truncate after.
+            for i, article_html in enumerate(articles):
+                if len(papers) >= max_results:
+                    break
                 try:
                     paper_ref = self._extract_paper_from_html(article_html)
                     if paper_ref:
@@ -320,7 +341,9 @@ class SearXNGTool:
                     logger.warning(f"Failed to parse HTML result {i}: {e}")
                     continue
 
-            logger.info(f"Parsed {len(papers)} papers from HTML results")
+            logger.info(
+                f"Parsed {len(papers)} papers from {len(articles)} HTML results"
+            )
 
         except Exception as e:
             logger.error(f"Failed to parse HTML results: {e}")
@@ -365,18 +388,22 @@ class SearXNGTool:
             if content_match:
                 content = re.sub(r'<[^>]+>', '', content_match.group(1)).strip()
 
-            # Generate paper ID
-            paper_id = self._generate_paper_id(url, title)
+            # The HTML UI searches the general web, so most of what comes back
+            # here is tutorials and blog posts. Those have no paper identifier
+            # and are dropped rather than queued under an invented one.
+            paper_id = self._extract_paper_id(url)
+            if not paper_id:
+                logger.info(
+                    f"Dropping SearXNG HTML result with no resolvable paper id: {url}"
+                )
+                return None
 
             # Extract basic paper info
             authors = self._extract_authors(title, content)
             year = self._extract_year(title, content, url)
             venue = self._extract_venue_from_url(url)
 
-            # Check if it's a PDF
-            pdf_url = None
-            if url.endswith('.pdf') or 'pdf' in url.lower():
-                pdf_url = url
+            pdf_url = self._resolve_pdf_url(paper_id, url)
 
             # Use content as abstract if available
             abstract = content[:500] if content else None
@@ -445,8 +472,13 @@ class SearXNGTool:
             if not title or not url:
                 return None
 
-            # Generate ID from URL or title
-            paper_id = self._generate_paper_id(url, title)
+            # A result we cannot identify is a result we cannot ingest.
+            paper_id = self._extract_paper_id(url)
+            if not paper_id:
+                logger.info(
+                    f"Dropping SearXNG result with no resolvable paper id: {url}"
+                )
+                return None
 
             # Extract authors from content or title
             authors = self._extract_authors(title, content)
@@ -454,10 +486,9 @@ class SearXNGTool:
             # Extract year from title, content, or URL
             year = self._extract_year(title, content, url)
 
-            # Determine if this is a PDF link
-            pdf_url = None
-            if url.endswith('.pdf') or 'pdf' in url.lower():
-                pdf_url = url
+            # arXiv results are usually /abs/ links, so derive the PDF URL from
+            # the id rather than hoping the result URL happens to be one.
+            pdf_url = self._resolve_pdf_url(paper_id, url)
 
             # Extract venue/source information
             venue = self._extract_venue(result, url)
@@ -480,20 +511,34 @@ class SearXNGTool:
             logger.warning(f"Error converting SearXNG result: {e}")
             return None
 
-    def _generate_paper_id(self, url: str, title: str) -> str:
-        """Generate a unique ID for the paper."""
-        # Try to extract arXiv ID from URL
-        arxiv_match = re.search(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)', url)
-        if arxiv_match:
-            return arxiv_match.group(1)
+    def _extract_paper_id(self, url: str) -> Optional[str]:
+        """Return the paper's real identifier, or None if the URL has none.
 
-        # Try to extract DOI from URL
-        doi_match = re.search(r'doi\.org/(.+)$', url)
-        if doi_match:
-            return doi_match.group(1)
+        There is deliberately no fallback. This used to return
+        `searxng_{hash(url) % 1000000:06d}` for anything it could not parse,
+        which was wrong twice over: the id resolved to no paper anywhere (it
+        became `https://arxiv.org/pdf/searxng_078015.pdf` at ingest and 404'd),
+        and `hash()` is salted per process, so the same URL produced a different
+        id on every run and the "already queued" check never matched.
 
-        # Fall back to URL hash
-        return f"searxng_{hash(url) % 1000000:06d}"
+        A result with no identifier is a result we cannot ingest — the caller
+        drops it here rather than letting it fail several stages downstream.
+        """
+        return extract_arxiv_id(url) or extract_doi(url)
+
+    def _resolve_pdf_url(self, paper_id: str, url: str) -> Optional[str]:
+        """Best downloadable PDF URL for a result, or None if there is not one.
+
+        arXiv hits are nearly always `/abs/` links, so the PDF URL is derived
+        from the id. For anything else only a genuine `.pdf` link counts — the
+        old `'pdf' in url.lower()` test matched URLs like
+        `.../what-is-a-pdf-explained` and handed ingest a web page.
+        """
+        if extract_arxiv_id(url):
+            return arxiv_pdf_url(paper_id)
+        if looks_like_pdf_url(url):
+            return url
+        return None
 
     def _extract_authors(self, title: str, content: str) -> List[str]:
         """Extract author names from title or content."""
