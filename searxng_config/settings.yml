@@ -5,6 +5,12 @@ general:
 
 search:
   default_lang: "en"
+  # SearXNG defaults to HTML only, and answers ?format=json with 403.
+  # nlp_pillars/tools/searxng_tool.py asks for JSON, so the API format has to
+  # be enabled explicitly here or paper discovery via SearXNG returns nothing.
+  formats:
+    - html
+    - json
 
 server:
   secret_key: "nlp-workflow-secret-key-change-this-in-production"
