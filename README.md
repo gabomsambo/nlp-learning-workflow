@@ -24,7 +24,7 @@ Each pillar maintains its own queue, memory, and progress:
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.11+
+- Python 3.12+ (atomic-agents requires >= 3.12)
 - OpenAI API key (required)
 - Supabase account (free tier works)
 - Qdrant instance (optional, can use local)

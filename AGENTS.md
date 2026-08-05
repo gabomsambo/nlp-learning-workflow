@@ -101,11 +101,18 @@ script run from elsewhere in the container needs `PYTHONPATH=/app`
 (`docker compose exec -e PYTHONPATH=/app webui python /tmp/x.py`); `create_pillars.py` is
 not in the image at all and must be `docker compose cp`'d in.
 
-`requirements.txt` is entirely unpinned (`>=` everywhere), so a rebuild can silently move
-the whole stack. Check resolved versions with `docker compose exec webui pip list` before
-debugging anything version-sensitive. This has already bitten once: `atomic-agents` now
-requires Python >= 3.12, so a host virtualenv must be `uv venv --python 3.12` even though
-`pyproject.toml` still says 3.11.
+## Dependencies are pinned, and there are two files
+
+`requirements.txt` (direct deps, exact `==`) and `requirements.lock.txt` (full transitive
+`pip freeze`) are both installed by one `pip install` in the `Dockerfile`, so pip fails the
+build if they drift apart. The lock is the one that matters: the breakages that motivated
+pinning came from *transitive* packages — Starlette 1.x arrives via `fastapi` and is not
+listed in `requirements.txt` at all. The upgrade/regeneration recipe lives in the header of
+`requirements.txt`; follow it rather than hand-editing the lock.
+
+Python 3.12 is the floor everywhere (`pyproject.toml`, `Dockerfile`, README): `atomic-agents`
+requires >= 3.12, so a host virtualenv must be `uv venv --python 3.12`. The `Dockerfile` pins
+the interpreter patch release too — a floating `3.12-slim` would undo half the point.
 
 ## Configuration is loaded in an order that surprises people
 
