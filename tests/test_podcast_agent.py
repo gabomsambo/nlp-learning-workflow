@@ -2,11 +2,15 @@
 Tests for PodcastAgent.
 """
 
-import pytest
+import asyncio
+import time
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime
 
-from nlp_pillars.agents.podcast_agent import PodcastAgent
+import pytest
+
+from nlp_pillars.agents.ingest_agent import IngestAgent
+from nlp_pillars.agents.podcast_agent import MAX_FULL_TEXT_CHARS, PodcastAgent
 from nlp_pillars.schemas import PodcastScript, PaperRef, PaperNote
 
 
@@ -123,6 +127,199 @@ class TestPodcastAgent:
 
             assert result == "Hello World"
 
+    def test_get_full_text_extracts_from_pdf(self, mock_paper):
+        """Test full text extraction works for valid paper with PDF URL."""
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+
+            # Mock ingest agent
+            mock_parsed_paper = MagicMock()
+            mock_parsed_paper.full_text = "This is the full paper text content..."
+            agent.ingest_agent = MagicMock()
+            agent.ingest_agent.ingest.return_value = mock_parsed_paper
+
+            # Add PDF URL to mock paper
+            mock_paper.url_pdf = "http://example.com/test.pdf"
+
+            result = agent._get_full_text(mock_paper)
+
+            assert "full paper text content" in result
+            agent.ingest_agent.ingest.assert_called_once_with(mock_paper)
+
+    def test_get_full_text_handles_missing_url(self, mock_paper):
+        """Test returns empty string when no PDF URL."""
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+            agent.ingest_agent = MagicMock()
+
+            # Remove PDF URL
+            mock_paper.url_pdf = None
+
+            result = agent._get_full_text(mock_paper)
+
+            assert result == ""
+            agent.ingest_agent.ingest.assert_not_called()
+
+    def test_get_full_text_handles_ingest_error(self, mock_paper):
+        """Test returns empty string when ingest fails."""
+        from nlp_pillars.agents.ingest_agent import IngestError
+
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+            agent.ingest_agent = MagicMock()
+            agent.ingest_agent.ingest.side_effect = IngestError("PDF download failed")
+
+            mock_paper.url_pdf = "http://example.com/test.pdf"
+
+            result = agent._get_full_text(mock_paper)
+
+            assert result == ""
+
+    def test_init_configures_timeout_and_ingest_agent(self):
+        """Constructor wires up the HTTP timeout and the IngestAgent.
+
+        The rest of this suite stubs out ``__init__``, so without this test
+        neither the client timeout nor the IngestAgent wiring is ever
+        exercised.
+        """
+        with patch('nlp_pillars.agents.podcast_agent.get_settings') as mock_settings:
+            mock_settings.return_value.anthropic_api_key = "sk-ant-test-key"
+
+            agent = PodcastAgent()
+
+            assert agent.model == "claude-sonnet-4-5-20250929"
+            assert isinstance(agent.ingest_agent, IngestAgent)
+            # Timeouts matter: without them a hung Anthropic call would pin a
+            # request forever.
+            assert agent.client.timeout.read == 120.0
+            assert agent.client.timeout.connect == 10.0
+
+    @staticmethod
+    def _embedded_full_text(paper_content: str) -> str:
+        """Pull the paper body back out of an assembled prompt."""
+        body = paper_content.split("=== FULL PAPER TEXT ===", 1)[1]
+        return body.split("=== END FULL TEXT ===", 1)[0].strip()
+
+    @pytest.mark.asyncio
+    async def test_full_text_is_truncated_at_guard(
+        self, mock_paper, mock_ground_pack, mock_script_content
+    ):
+        """Over-long full text is cut to the guard before it reaches Claude.
+
+        This is the cost-critical path: paper_content is sent to five separate
+        Claude calls, so an unbounded paper would multiply straight onto the
+        bill.
+        """
+        oversized = "A" * (MAX_FULL_TEXT_CHARS + 50_000)
+
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper
+            mock_get_notes.return_value = None
+
+            agent = PodcastAgent()
+            agent._get_full_text = MagicMock(return_value=oversized)
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            await agent.generate("test-paper-123", "models-architectures")
+
+            sent = agent._generate_facts_outline.call_args[0][0]
+            body = self._embedded_full_text(sent)
+            assert body.endswith("[TRUNCATED - paper continues...]")
+            kept = body.split("\n\n[TRUNCATED", 1)[0]
+            assert kept == "A" * MAX_FULL_TEXT_CHARS
+            # Every prompt gets the same truncated content, including the
+            # expensive final synthesis call.
+            for call in (
+                agent._generate_core_concepts,
+                agent._generate_metrics_datasets,
+                agent._generate_limitations,
+            ):
+                assert call.call_args[0][0] == sent
+            assert agent._generate_final_script.call_args[0][1] == sent
+
+    @pytest.mark.asyncio
+    async def test_full_text_is_not_truncated_below_guard(
+        self, mock_paper, mock_ground_pack, mock_script_content
+    ):
+        """Text at or under the guard is passed through untouched."""
+        exact = "B" * MAX_FULL_TEXT_CHARS
+
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper
+            mock_get_notes.return_value = None
+
+            agent = PodcastAgent()
+            agent._get_full_text = MagicMock(return_value=exact)
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            await agent.generate("test-paper-123", "models-architectures")
+
+            sent = agent._generate_facts_outline.call_args[0][0]
+            assert "[TRUNCATED" not in sent
+            assert self._embedded_full_text(sent) == exact
+
+    @pytest.mark.asyncio
+    async def test_pdf_extraction_does_not_block_event_loop(
+        self, mock_paper, mock_ground_pack, mock_script_content
+    ):
+        """PDF ingest runs off the event loop.
+
+        ``_get_full_text`` downloads and parses a PDF (~7s cold) and
+        ``generate`` is awaited straight from a FastAPI route, so running it
+        inline made the whole web UI unresponsive for its duration.
+        """
+        blocking_duration = 0.3
+
+        def slow_ingest(paper):
+            time.sleep(blocking_duration)
+            return "Full paper content here..."
+
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper
+            mock_get_notes.return_value = None
+
+            agent = PodcastAgent()
+            agent._get_full_text = slow_ingest
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            # A co-running coroutine standing in for another HTTP request.
+            ticks = 0
+
+            async def other_request():
+                nonlocal ticks
+                while True:
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            ticker = asyncio.create_task(other_request())
+            await agent.generate("test-paper-123", "models-architectures")
+            ticker.cancel()
+
+            # If the ingest ran inline the loop would have been frozen and the
+            # ticker could not have advanced.
+            assert ticks > 5, f"event loop appears blocked; only {ticks} ticks"
+
     @pytest.mark.asyncio
     async def test_generate_full_workflow(
         self,
@@ -141,6 +338,9 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
 
+            # Mock full text extraction
+            agent._get_full_text = MagicMock(return_value="Full paper content here...")
+
             # Mock all Claude calls
             agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
             agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
@@ -158,6 +358,9 @@ class TestPodcastAgent:
             assert result.word_count > 0
             assert "[HOST]:" in result.script
             assert "Deep Dive:" in result.title
+
+            # Verify full text was retrieved
+            agent._get_full_text.assert_called_once_with(mock_paper)
 
             # Verify all prompts were called
             agent._generate_facts_outline.assert_called_once()

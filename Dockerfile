@@ -33,6 +33,13 @@ COPY nlp_pillars/ ./nlp_pillars/
 COPY webui/ ./webui/
 COPY scripts/ ./scripts/
 
+# Retained uploaded PDFs live here (docker-compose backs it with the
+# nlp_uploads named volume). Created in the image, before the chown below, so a
+# fresh empty named volume is seeded with appuser ownership — Docker copies the
+# image directory's contents *and* permissions into it, and a root-owned mount
+# point would make every upload fail for the non-root user.
+RUN mkdir -p /app/data/uploads
+
 # Change ownership to app user
 RUN chown -R appuser:appuser /app
 

@@ -39,6 +39,19 @@ Editing `schema.sql` does nothing to an existing volume; migrate by hand or recr
 `nlp_pg_data`. Never `docker compose down -v` casually — that volume is the real data, and
 `qdrant_data` is shared with any other worktree running this compose file.
 
+## Uploaded PDFs are retained, and are the only copy
+
+A file upload stores `papers.url_pdf = file:///app/data/uploads/<hash>.pdf` and the podcast
+agent dereferences that path to get the paper body, so the file is real data, not a cache.
+It lives in the `nlp_uploads` named volume (mounted at `/app/data`, created and chowned in
+the `Dockerfile` so the non-root `appuser` can write into a fresh volume) and
+`upload_service.py` deletes it only when the upload never reached the database. Do not
+"tidy" that directory and do not move it under `.cache/`. There is deliberately **no**
+retention or cleanup policy yet — retained PDFs accumulate at ~1-5 MB/paper.
+
+Papers added by URL keep the http URL in `url_pdf` and are re-downloaded on demand, so
+only the file-upload path depends on this.
+
 ## Which Qdrant the app talks to
 
 `webui` uses `QDRANT_URL` from `.env`, which points at a managed Qdrant Cloud cluster.
@@ -78,6 +91,11 @@ resulting ImportError surfaced as a JSON 500 on `/api/quiz/*` and, in
 fallback that made the page look healthy while ignoring FSRS scheduling entirely. Fixed
 in `fm/nlp-quiz-api-broken`; keep new `webui` → `nlp_pillars` imports absolute.
 
+`docker compose logs webui` shows only WARNING and above from `nlp_pillars` — uvicorn never
+configures those loggers, so every `logger.info` in the pipeline (timings, extracted char
+counts, token usage) is invisible there. To see them, run the code under
+`docker compose exec` with `logging.basicConfig(level=logging.INFO)`.
+
 `/app` is on `sys.path` only because it is the `WORKDIR` uvicorn starts in. A one-off
 script run from elsewhere in the container needs `PYTHONPATH=/app`
 (`docker compose exec -e PYTHONPATH=/app webui python /tmp/x.py`); `create_pillars.py` is
@@ -116,6 +134,15 @@ structured-output agents. Two deliberate conventions, both easy to "helpfully" u
   value at module load, so an eagerly-built `None` singleton surfaced a missing API key as
   `AttributeError: 'NoneType' object has no attribute 'run'`. The proxy builds the client on
   first `.run()` and names the missing key instead.
+
+`podcast_agent` is the exception to the lazy-proxy rule and deliberately so: it has no
+module-level singleton (`webui/routers/api/podcast.py` constructs it per request), so there
+is nothing built at import time to fail. Its `_get_full_text` is synchronous and must stay
+behind `asyncio.to_thread` — `generate()` is awaited straight from a FastAPI route, and
+running the PDF ingest inline froze the event loop for every other request. Measured live:
+0 co-running requests served inline vs 13/13 through `to_thread`. One podcast is five
+Claude calls that each carry the full paper text; measured end to end on a 5-page paper at
+37.8K input + 9.6K output tokens ≈ **$0.26**.
 
 `quiz_agent` trusts the model's `question_type` but still overwrites `difficulty` from
 `QuizGeneratorInput.difficulty_mix` — that mix is a declared caller input and seeds FSRS

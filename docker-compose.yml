@@ -149,6 +149,13 @@ services:
       POSTGREST_URL: "http://postgrest:3000"
       SUPABASE_URL: "http://postgrest:3000"
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
+    volumes:
+      # Uploaded PDFs are retained, not temporary: papers.url_pdf stores
+      # file:///app/data/uploads/<hash>.pdf and podcast generation reads the
+      # paper body back out of it. A named volume (same pattern as pg_data,
+      # not a bind mount into the repo) so uploads survive `docker compose
+      # down` and image rebuilds, and never end up staged in git.
+      - uploads_data:/app/data
     depends_on:
       # Map form (not the list form used before) so postgrest can carry a
       # condition. `qdrant` is kept deliberately even though the app talks to
@@ -168,3 +175,8 @@ volumes:
   # Application database. Named so `docker compose down` (without -v) keeps it.
   pg_data:
     name: nlp_pg_data
+  # Retained uploaded PDFs. Same reasoning as pg_data: this is real data, not a
+  # cache — for a file-uploaded paper it is the only copy of the PDF, and
+  # papers.url_pdf points into it.
+  uploads_data:
+    name: nlp_uploads

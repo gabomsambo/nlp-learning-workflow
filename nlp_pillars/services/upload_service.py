@@ -52,8 +52,18 @@ class UploadError(Exception):
 class UploadService:
     """Service for handling paper uploads and processing."""
 
-    def __init__(self, upload_dir: str = ".cache/uploads"):
-        """Initialize the upload service with a directory for uploads."""
+    def __init__(self, upload_dir: Optional[str] = None):
+        """Initialize the upload service with a directory for uploads.
+
+        Uploaded PDFs are *retained*: ``_create_paper_ref_from_file`` stores
+        ``url_pdf = file://<abs path>`` and podcast generation dereferences that
+        path later, so the file is the paper's only copy for file-sourced
+        papers. The default therefore lives under ``data/`` rather than
+        ``.cache/`` — it is not regenerable — and docker-compose backs
+        ``/app/data`` with the ``nlp_uploads`` named volume so it survives
+        `docker compose down` and image rebuilds. Override with UPLOAD_DIR.
+        """
+        upload_dir = upload_dir or os.environ.get("UPLOAD_DIR", "data/uploads")
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.ingest_agent = IngestAgent()
@@ -192,17 +202,18 @@ class UploadService:
         )
         self.upload_statuses[upload_id] = status
 
-        temp_path = None
+        saved_path = None
+        paper_persisted = False
         try:
             # Step 1: Save uploaded file
             status.progress = 20
-            temp_path = await self._save_uploaded_file(file)
+            saved_path = await self._save_uploaded_file(file)
 
             # Step 2: Create paper reference
             status.progress = 40
             status.message = "Creating paper reference..."
             paper = await self._create_paper_ref_from_file(
-                temp_path, file.filename, request
+                saved_path, file.filename, request
             )
 
             # Step 3: Add to database
@@ -213,6 +224,10 @@ class UploadService:
             success = add_paper(pillar_id, paper)
             if not success:
                 raise UploadError("Failed to add paper to database")
+
+            # From here on the papers row holds url_pdf = file://<saved_path>,
+            # so the file must outlive this request (see the finally block).
+            paper_persisted = True
 
             # Step 4: Run full pipeline processing
             status.progress = 60
@@ -248,12 +263,22 @@ class UploadService:
             raise UploadError(f"Failed to upload file: {e}") from e
 
         finally:
-            # Clean up temporary file
-            if temp_path and os.path.exists(temp_path):
+            # The uploaded PDF is deliberately RETAINED once the paper row
+            # exists. It used to be deleted here unconditionally, which left
+            # every file-uploaded paper pointing at url_pdf = file://<gone>;
+            # podcast full-text extraction then silently fell back to the
+            # abstract. Only a failure that never reached the database drops
+            # the file, because in that case nothing refers to it.
+            #
+            # No retention/cleanup policy is implied — retained PDFs currently
+            # accumulate (~1-5 MB per paper) and pruning them is a separate,
+            # deliberate decision.
+            if not paper_persisted and saved_path and os.path.exists(saved_path):
                 try:
-                    os.unlink(temp_path)
+                    os.unlink(saved_path)
+                    logger.info(f"Discarded upload for failed request: {saved_path}")
                 except Exception as e:
-                    logger.warning(f"Failed to clean up temp file {temp_path}: {e}")
+                    logger.warning(f"Failed to clean up file {saved_path}: {e}")
 
     def get_upload_status(self, upload_id: str) -> Optional[UploadStatus]:
         """Get upload status by ID."""
@@ -270,19 +295,23 @@ class UploadService:
         return pillar_uploads[:limit]
 
     async def _save_uploaded_file(self, file: UploadFile) -> str:
-        """Save uploaded file to temporary location."""
+        """Save an uploaded file to the retained upload directory.
+
+        The returned path is what ends up in ``papers.url_pdf`` as a ``file://``
+        URL, so it must remain valid for the life of the paper.
+        """
         # Generate unique filename
         file_id = f"{file.filename}_{uuid.uuid4()}"
         file_hash = hashlib.sha256(file_id.encode()).hexdigest()
-        temp_path = self.upload_dir / f"{file_hash}.pdf"
+        saved_path = self.upload_dir / f"{file_hash}.pdf"
 
         # Save file
-        with open(temp_path, "wb") as buffer:
+        with open(saved_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
 
-        logger.info(f"Saved uploaded file to {temp_path}")
-        return str(temp_path)
+        logger.info(f"Saved uploaded file to {saved_path}")
+        return str(saved_path)
 
     async def _create_paper_ref_from_url(
         self,

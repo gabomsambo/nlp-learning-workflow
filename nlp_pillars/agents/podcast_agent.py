@@ -3,16 +3,28 @@ Podcast Agent for generating educational podcast scripts from papers.
 Uses a 4-prompt Ground Pack system with Claude Sonnet 4.
 """
 
+import asyncio
 import logging
+import time
 from datetime import datetime
 
+import httpx
 from anthropic import AsyncAnthropic
 
 from ..config import get_settings
-from ..schemas import PodcastScript
+from ..schemas import PaperRef, PodcastScript
 from ..db import get_paper_by_id, get_notes_by_paper_id
+from .ingest_agent import IngestAgent, IngestError
 
 logger = logging.getLogger(__name__)
+
+# Full text is passed to five separate Claude calls (the four Ground Pack
+# prompts plus the final synthesis prompt), so this bound is multiplied by five
+# on the bill. Measured end to end on an 18K-char paper: 37.8K input + 9.6K
+# output tokens = $0.26 at Sonnet list price. A paper at this ceiling would be
+# ~128K input tokens, so ~$0.53. Output is roughly constant; only the input
+# side scales with the paper. _call_claude logs real per-call token usage.
+MAX_FULL_TEXT_CHARS = 100000
 
 
 # Ground Pack Prompts
@@ -129,13 +141,25 @@ OUTPUT ONLY THE SCRIPT IN THE REQUIRED SPEAKER FORMAT."""
 class PodcastAgent:
     """Generate podcast scripts using 4-prompt Ground Pack system."""
 
+    # Unlike the OpenAI-backed agents, this class has no module-level singleton
+    # (webui/routers/api/podcast.py constructs it per request), so the lazy-proxy
+    # pattern used by SummarizerAgent/SynthesisAgent/QuizAgent does not apply
+    # here: there is nothing built at import time to fail, and a missing key
+    # already raises a ValueError that names the variable.
     def __init__(self):
         settings = get_settings()
         if not settings.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for podcast generation")
 
-        self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # Configure client with timeout to prevent hangs
+        self.client = AsyncAnthropic(
+            api_key=settings.anthropic_api_key,
+            timeout=httpx.Timeout(120.0, connect=10.0)  # 2 min for long prompts
+        )
         self.model = "claude-sonnet-4-5-20250929"
+
+        # Used by _get_full_text to pull the paper body out of its PDF.
+        self.ingest_agent = IngestAgent()
 
     async def _call_claude(self, system: str, user: str, max_tokens: int = 4000) -> str:
         """Make streaming API call to Claude."""
@@ -149,6 +173,17 @@ class PodcastAgent:
         ) as stream:
             async for text in stream.text_stream:
                 full_text += text
+
+            # Real token counts per call. Full paper text goes to five calls, so
+            # this is how the actual bill is observed rather than estimated.
+            try:
+                usage = (await stream.get_final_message()).usage
+                logger.info(
+                    f"Claude call usage: input={usage.input_tokens} "
+                    f"output={usage.output_tokens} tokens"
+                )
+            except Exception as e:  # usage logging must never fail a generation
+                logger.debug(f"Could not read token usage: {e}")
 
         return full_text
 
@@ -233,6 +268,41 @@ LIMITATIONS & THREATS:
         # Limit to top 5 key points
         return key_points[:5]
 
+    def _get_full_text(self, paper: PaperRef) -> str:
+        """Extract full text from paper PDF using IngestAgent.
+
+        Blocking: this downloads and parses a PDF. Call it through
+        ``asyncio.to_thread`` from async code — see ``generate``.
+
+        Args:
+            paper: Paper reference with url_pdf
+
+        Returns:
+            Full text content or empty string on failure
+        """
+        if not paper.url_pdf:
+            logger.warning(f"No PDF URL for paper {paper.id}, cannot extract full text")
+            return ""
+
+        try:
+            start_time = time.time()
+            logger.info(f"Extracting full text from PDF: {paper.url_pdf}")
+
+            parsed_paper = self.ingest_agent.ingest(paper)
+            elapsed = time.time() - start_time
+
+            logger.info(
+                f"Extracted {len(parsed_paper.full_text)} chars from PDF in {elapsed:.1f}s"
+            )
+            return parsed_paper.full_text
+
+        except IngestError as e:
+            logger.error(f"Failed to extract text for {paper.id}: {e}")
+            return ""
+        except Exception as e:
+            logger.error(f"Unexpected error extracting text for {paper.id}: {e}")
+            return ""
+
     async def generate(self, paper_id: str, pillar_id: str) -> PodcastScript:
         """
         Generate complete podcast script for a paper.
@@ -244,6 +314,7 @@ LIMITATIONS & THREATS:
         Returns:
             PodcastScript with generated content
         """
+        total_start = time.time()
         logger.info(f"Starting podcast generation for paper {paper_id}")
 
         # Fetch paper data
@@ -254,24 +325,48 @@ LIMITATIONS & THREATS:
         # Fetch notes for additional context
         notes = get_notes_by_paper_id(paper_id)
 
-        # Assemble paper content from available data
+        # Get full text from the PDF. This is the whole point of the Ground Pack:
+        # prompts 3 and 4 ask for hyperparameters, SOTA numbers and the
+        # Limitations section, none of which exist in an abstract.
+        #
+        # to_thread because _get_full_text downloads and parses a PDF (~7s cold)
+        # and generate() is awaited directly from a FastAPI route — running it
+        # inline froze the event loop for every other request.
+        full_text = await asyncio.to_thread(self._get_full_text, paper)
+
+        # Truncate if too long (keep under 100K chars for Claude context safety)
+        if len(full_text) > MAX_FULL_TEXT_CHARS:
+            logger.warning(
+                f"Truncating full_text from {len(full_text)} to {MAX_FULL_TEXT_CHARS} chars"
+            )
+            full_text = full_text[:MAX_FULL_TEXT_CHARS] + "\n\n[TRUNCATED - paper continues...]"
+
+        # Assemble paper content with FULL TEXT
         paper_content = f"""
 Title: {paper.title}
 Authors: {', '.join(paper.authors) if paper.authors else 'Unknown'}
 Year: {paper.year or 'Unknown'}
 Abstract: {paper.abstract or 'No abstract available'}
+
+=== FULL PAPER TEXT ===
+{full_text if full_text else '[Full text not available - using abstract and notes only]'}
+=== END FULL TEXT ===
 """
 
-        # Add notes content if available
+        # Add notes content if available (supplements full text with structured data)
         if notes:
             paper_content += f"""
+=== EXTRACTED NOTES ===
 Problem Statement: {notes.problem}
 Methodology: {notes.method}
 Key Findings: {', '.join(notes.findings) if notes.findings else 'N/A'}
 Limitations: {', '.join(notes.limitations) if notes.limitations else 'N/A'}
 Future Work: {', '.join(notes.future_work) if notes.future_work else 'N/A'}
 Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
+=== END NOTES ===
 """
+
+        logger.info(f"Paper content assembled: {len(paper_content)} chars")
 
         # Run 4 Ground Pack prompts sequentially
         ground_pack = {
@@ -296,5 +391,9 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
             created_at=datetime.now()
         )
 
-        logger.info(f"Generated podcast script with {podcast_script.word_count} words")
+        total_elapsed = time.time() - total_start
+        logger.info(
+            f"Generated podcast script with {podcast_script.word_count} words "
+            f"in {total_elapsed:.1f}s"
+        )
         return podcast_script
