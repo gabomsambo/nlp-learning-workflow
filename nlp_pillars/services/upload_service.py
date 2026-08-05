@@ -569,37 +569,48 @@ class UploadService:
         return paper
 
     def _enrich_from_semantic_scholar(self, paper: PaperRef) -> PaperRef:
-        """Enrich paper metadata from Semantic Scholar API."""
-        from ..tools.semantic_scholar_tool import SemanticScholarTool
+        """Enrich paper metadata from Semantic Scholar API.
 
-        s2 = SemanticScholarTool()
-        enriched = None
+        This is a best-effort enrichment - failures are logged but don't
+        stop the upload process.
+        """
+        try:
+            from ..tools.semantic_scholar_tool import SemanticScholarTool
 
-        # Try by arXiv ID first if we have one
-        if paper.id and re.match(r'\d{4}\.\d{4,5}', paper.id.replace('arxiv:', '')):
-            arxiv_id = paper.id.replace('arxiv:', '')
-            logger.info(f"Trying S2 lookup by arXiv ID: {arxiv_id}")
-            enriched = s2.get_paper(arxiv_id)  # Tool handles arXiv: prefix
+            s2 = SemanticScholarTool()
+            enriched = None
 
-        # Fallback: search by title
-        if not enriched and paper.title and len(paper.title) > 10:
-            logger.info(f"Trying S2 search by title: {paper.title[:30]}...")
-            results = s2.search(paper.title, limit=1)
-            if results and self._titles_similar(paper.title, results[0].title):
-                enriched = results[0]
+            # Try by arXiv ID first if we have one
+            if paper.id and re.match(r'\d{4}\.\d{4,5}', paper.id.replace('arxiv:', '')):
+                arxiv_id = paper.id.replace('arxiv:', '')
+                logger.info(f"Trying S2 lookup by arXiv ID: {arxiv_id}")
+                enriched = s2.get_paper(arxiv_id)  # Tool handles arXiv: prefix
 
-        if enriched:
-            # Only fill empty fields (preserve user overrides)
-            if not paper.authors and enriched.authors:
-                paper.authors = enriched.authors
-            if not paper.year and enriched.year:
-                paper.year = enriched.year
-            if not paper.abstract and enriched.abstract:
-                paper.abstract = enriched.abstract
-            if enriched.citation_count:
-                paper.citation_count = enriched.citation_count
+            # Fallback: search by title
+            if not enriched and paper.title and len(paper.title) > 10:
+                logger.info(f"Trying S2 search by title: {paper.title[:30]}...")
+                results = s2.search(paper.title, limit=1)
+                if results and self._titles_similar(paper.title, results[0].title):
+                    enriched = results[0]
 
-            logger.info(f"Enriched from S2: citations={paper.citation_count}")
+            if enriched:
+                # Only fill empty fields (preserve user overrides)
+                if not paper.authors and enriched.authors:
+                    paper.authors = enriched.authors
+                if not paper.year and enriched.year:
+                    paper.year = enriched.year
+                if not paper.abstract and enriched.abstract:
+                    paper.abstract = enriched.abstract
+                if enriched.citation_count:
+                    paper.citation_count = enriched.citation_count
+
+                logger.info(f"Enriched from S2: citations={paper.citation_count}")
+
+        except Exception as e:
+            # Semantic Scholar enrichment is optional - don't fail the upload
+            logger.warning(
+                f"Semantic Scholar enrichment failed (continuing without): {e}"
+            )
 
         return paper
 

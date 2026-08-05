@@ -7,6 +7,7 @@ import pytest
 import logging
 from unittest.mock import Mock, patch
 from pydantic import ValidationError
+from instructor.core.exceptions import InstructorRetryException
 
 from nlp_pillars.schemas import (
     SynthesisInput, Lesson, QuizGeneratorInput, QuizCard,
@@ -88,6 +89,8 @@ def valid_lesson():
     return Lesson(
         paper_id="test.12345",
         pillar_id="models-architectures",
+        title="Understanding Multi-Head Attention in Transformers",
+        content="This lesson explores the transformer architecture and its key innovation: multi-head attention. The method addresses limitations in traditional sequence modeling by enabling parallel processing and capturing long-range dependencies effectively.",
         tl_dr="Transformers revolutionized sequence modeling by using attention mechanisms instead of recurrence.",
         takeaways=[
             "Multi-head attention allows parallel processing of sequences",
@@ -206,7 +209,7 @@ class TestSynthesisAgent:
         
         # Verify logging
         mock_logger.info.assert_any_call("Starting synthesis for paper: test.12345")
-        mock_logger.info.assert_any_call("Synthesis completed successfully on first attempt")
+        mock_logger.info.assert_any_call("Synthesis completed successfully")
         
         # Verify client was called correctly
         mock_instructor_client.chat.completions.create.assert_called_once()
@@ -215,73 +218,47 @@ class TestSynthesisAgent:
         assert call_args[1]['response_model'] == Lesson
         assert call_args[1]['temperature'] == 0.2
     
-    def test_synthesis_retry_on_validation_error(self, mock_instructor_client, sample_synthesis_input, valid_lesson):
-        """Test retry logic when first attempt fails validation."""
-        # Mock first call to fail, second to succeed
+    def test_synthesis_instructor_retry_exception_is_wrapped(self, mock_instructor_client, sample_synthesis_input):
+        """A real instructor retry failure surfaces as SynthesisValidationError.
+
+        See test_summarizer_agent.test_instructor_retry_exception_is_wrapped -
+        instructor retries internally and raises InstructorRetryException, which
+        is not a pydantic.ValidationError, so the agent has no retry layer.
+        """
+        retry_exc = InstructorRetryException(
+            "validation failed after 3 attempts",
+            n_attempts=3,
+            total_usage=0,
+            messages=[],
+        )
+        mock_instructor_client.chat.completions.create.side_effect = retry_exc
+
+        agent = SynthesisAgentImpl(mock_instructor_client, "gpt-4")
+
+        with pytest.raises(SynthesisValidationError) as exc_info:
+            agent.run(sample_synthesis_input)
+
+        assert "Instructor completion failed" in str(exc_info.value)
+        assert exc_info.value.__cause__ is retry_exc
+        assert mock_instructor_client.chat.completions.create.call_count == 1
+
+    def test_synthesis_no_hand_rolled_retry_on_validation_error(self, mock_instructor_client, sample_synthesis_input, valid_lesson):
+        """A pydantic ValidationError is wrapped, not retried locally."""
         validation_error = ValidationError.from_exception_data(
-            "ValidationError", 
+            "ValidationError",
             [{"type": "missing", "loc": ("tl_dr",), "msg": "Field required"}]
         )
         mock_instructor_client.chat.completions.create.side_effect = [
             validation_error,
             valid_lesson
         ]
-        
+
         agent = SynthesisAgentImpl(mock_instructor_client, "gpt-4")
-        
-        with patch('nlp_pillars.agents.synthesis_agent.logger') as mock_logger:
-            result = agent.run(sample_synthesis_input)
-        
-        # Verify successful result after retry
-        assert isinstance(result, Lesson)
-        assert result.paper_id == "test.12345"
-        
-        # Verify retry logging
-        mock_logger.warning.assert_called_once()
-        mock_logger.info.assert_any_call("Attempting retry with corrective message")
-        mock_logger.info.assert_any_call("Synthesis completed successfully on retry")
-        
-        # Verify client was called twice
-        assert mock_instructor_client.chat.completions.create.call_count == 2
-        
-        # Check that retry included corrective suffix
-        retry_call_args = mock_instructor_client.chat.completions.create.call_args_list[1]
-        retry_message = retry_call_args[1]['messages'][1]['content']
-        assert "Your last output was invalid JSON for Lesson" in retry_message
-    
-    def test_synthesis_fails_after_retry(self, mock_instructor_client, sample_synthesis_input):
-        """Test that SynthesisValidationError is raised when both attempts fail."""
-        # Mock both calls to fail validation
-        validation_error1 = ValidationError.from_exception_data(
-            "ValidationError", 
-            [{"type": "missing", "loc": ("tl_dr",), "msg": "Field required"}]
-        )
-        validation_error2 = ValidationError.from_exception_data(
-            "ValidationError", 
-            [{"type": "missing", "loc": ("takeaways",), "msg": "Field required"}]
-        )
-        mock_instructor_client.chat.completions.create.side_effect = [
-            validation_error1,
-            validation_error2
-        ]
-        
-        agent = SynthesisAgentImpl(mock_instructor_client, "gpt-4")
-        
-        with patch('nlp_pillars.agents.synthesis_agent.logger') as mock_logger:
-            with pytest.raises(SynthesisValidationError) as exc_info:
-                agent.run(sample_synthesis_input)
-        
-        # Verify error message contains both validation errors
-        error_message = str(exc_info.value)
-        assert "Failed to generate valid Lesson after retry" in error_message
-        assert "Original error:" in error_message
-        assert "Retry error:" in error_message
-        
-        # Verify error logging
-        mock_logger.error.assert_called_once()
-        
-        # Verify both calls were made
-        assert mock_instructor_client.chat.completions.create.call_count == 2
+
+        with pytest.raises(SynthesisValidationError):
+            agent.run(sample_synthesis_input)
+
+        assert mock_instructor_client.chat.completions.create.call_count == 1
 
 
 class TestQuizAgent:
@@ -330,74 +307,50 @@ class TestQuizAgent:
         mock_logger.info.assert_any_call("Starting quiz generation for paper: test.12345")
         mock_logger.info.assert_any_call("Requested 5 questions with mix: {'easy': 2, 'medium': 2, 'hard': 1}")
     
-    def test_quiz_retry_on_validation_error(self, mock_instructor_client, sample_quiz_input, valid_quiz_cards):
-        """Test retry logic when first attempt fails validation."""
-        # Mock first call to fail, second to succeed
+    def test_quiz_instructor_retry_exception_is_wrapped(self, mock_instructor_client, sample_quiz_input):
+        """A real instructor retry failure surfaces as QuizValidationError."""
+        retry_exc = InstructorRetryException(
+            "validation failed after 3 attempts",
+            n_attempts=3,
+            total_usage=0,
+            messages=[],
+        )
+        mock_instructor_client.chat.completions.create.side_effect = retry_exc
+
+        agent = QuizAgentImpl(mock_instructor_client, "gpt-4")
+
+        with pytest.raises(QuizValidationError) as exc_info:
+            agent.run(sample_quiz_input)
+
+        assert "Instructor completion failed" in str(exc_info.value)
+        assert exc_info.value.__cause__ is retry_exc
+        assert mock_instructor_client.chat.completions.create.call_count == 1
+
+    def test_quiz_no_hand_rolled_retry_on_validation_error(self, mock_instructor_client, sample_quiz_input, valid_quiz_cards):
+        """A pydantic ValidationError is wrapped, not retried locally."""
         validation_error = ValidationError.from_exception_data(
-            "ValidationError", 
+            "ValidationError",
             [{"type": "missing", "loc": (0, "question"), "msg": "Field required"}]
         )
         mock_instructor_client.chat.completions.create.side_effect = [
             validation_error,
             valid_quiz_cards
         ]
-        
+
         agent = QuizAgentImpl(mock_instructor_client, "gpt-4")
-        
-        with patch('nlp_pillars.agents.quiz_agent.logger') as mock_logger:
-            result = agent.run(sample_quiz_input)
-        
-        # Verify successful result after retry
-        assert isinstance(result, list)
-        assert len(result) == 5
-        
-        # Verify retry logging
-        mock_logger.warning.assert_called_once()
-        mock_logger.info.assert_any_call("Attempting retry with corrective message")
-        
-        # Verify client was called twice
-        assert mock_instructor_client.chat.completions.create.call_count == 2
-        
-        # Check that retry included corrective suffix
-        retry_call_args = mock_instructor_client.chat.completions.create.call_args_list[1]
-        retry_message = retry_call_args[1]['messages'][1]['content']
-        assert "Your last output was invalid JSON for QuizCard array" in retry_message
-    
-    def test_quiz_fails_after_retry(self, mock_instructor_client, sample_quiz_input):
-        """Test that QuizValidationError is raised when both attempts fail."""
-        # Mock both calls to fail validation
-        validation_error1 = ValidationError.from_exception_data(
-            "ValidationError", 
-            [{"type": "missing", "loc": (0, "question"), "msg": "Field required"}]
-        )
-        validation_error2 = ValidationError.from_exception_data(
-            "ValidationError", 
-            [{"type": "missing", "loc": (0, "answer"), "msg": "Field required"}]
-        )
-        mock_instructor_client.chat.completions.create.side_effect = [
-            validation_error1,
-            validation_error2
-        ]
-        
-        agent = QuizAgentImpl(mock_instructor_client, "gpt-4")
-        
-        with patch('nlp_pillars.agents.quiz_agent.logger') as mock_logger:
-            with pytest.raises(QuizValidationError) as exc_info:
-                agent.run(sample_quiz_input)
-        
-        # Verify error message contains both validation errors
-        error_message = str(exc_info.value)
-        assert "Failed to generate valid QuizCard array after retry" in error_message
-        
-        # Verify error logging
-        mock_logger.error.assert_called_once()
-        
-        # Verify both calls were made
-        assert mock_instructor_client.chat.completions.create.call_count == 2
-    
-    def test_quiz_type_distribution_sanity(self, mock_instructor_client, sample_quiz_input):
-        """Test that quiz ensures type diversity even if LLM returns all same type."""
-        # Create quiz cards all with FACTUAL type (should be fixed by agent)
+
+        with pytest.raises(QuizValidationError):
+            agent.run(sample_quiz_input)
+
+        assert mock_instructor_client.chat.completions.create.call_count == 1
+
+    def test_quiz_preserves_model_question_types(self, mock_instructor_client, sample_quiz_input):
+        """question_type is whatever the model said, never fabricated from index.
+
+        The agent used to overwrite question_type with types[i % 3], so cards the
+        model labelled all-FACTUAL were stored as factual/conceptual/application
+        purely by array position.
+        """
         all_factual_cards = [
             QuizCard(
                 paper_id="test.12345",
@@ -408,22 +361,60 @@ class TestQuizAgent:
                 question_type=QuestionType.FACTUAL  # All same type
             ) for i in range(5)
         ]
-        
+
         mock_instructor_client.chat.completions.create.return_value = all_factual_cards
-        
+
         agent = QuizAgentImpl(mock_instructor_client, "gpt-4")
         result = agent.run(sample_quiz_input)
-        
-        # Verify that type diversity was enforced
-        question_types = set(card.question_type for card in result)
-        assert len(question_types) >= 2  # Should have at least 2 different types
-        
-        # Verify that types cycle through the available options
-        expected_types = [QuestionType.FACTUAL, QuestionType.CONCEPTUAL, QuestionType.APPLICATION]
-        for i, card in enumerate(result):
-            expected_type = expected_types[i % len(expected_types)]
-            assert card.question_type == expected_type
-    
+
+        # The model said FACTUAL for every card; that is what we store.
+        assert [card.question_type for card in result] == [QuestionType.FACTUAL] * 5
+
+    def test_quiz_preserves_mixed_model_question_types(self, mock_instructor_client, sample_quiz_input, valid_quiz_cards):
+        """A varied set of model labels survives post-processing unchanged."""
+        expected = [card.question_type for card in valid_quiz_cards]
+        mock_instructor_client.chat.completions.create.return_value = valid_quiz_cards
+
+        agent = QuizAgentImpl(mock_instructor_client, "gpt-4")
+        result = agent.run(sample_quiz_input)
+
+        assert [card.question_type for card in result] == expected
+        # Sanity: the fixture is not accidentally uniform, so this would have
+        # caught positional reassignment too.
+        assert len(set(expected)) >= 2
+
+    def test_quiz_difficulty_mix_is_still_enforced(self, mock_instructor_client, sample_quiz_input):
+        """difficulty IS reassigned - it honours the caller's difficulty_mix.
+
+        Unlike question_type, difficulty is a deliberate curriculum control:
+        difficulty_mix is a declared field of QuizGeneratorInput and difficulty
+        seeds FSRS initial scheduling, so the requested mix wins over the model.
+        """
+        all_hard_cards = [
+            QuizCard(
+                paper_id="test.12345",
+                pillar_id="models-architectures",
+                question=f"Question {i+1}",
+                answer=f"Answer {i+1}",
+                difficulty=DifficultyLevel.HARD,  # Model said HARD for all
+                question_type=QuestionType.FACTUAL
+            ) for i in range(5)
+        ]
+
+        mock_instructor_client.chat.completions.create.return_value = all_hard_cards
+
+        agent = QuizAgentImpl(mock_instructor_client, "gpt-4")
+        result = agent.run(sample_quiz_input)
+
+        # sample_quiz_input asks for {"easy": 2, "medium": 2, "hard": 1}
+        assert [card.difficulty for card in result] == [
+            DifficultyLevel.EASY,
+            DifficultyLevel.EASY,
+            DifficultyLevel.MEDIUM,
+            DifficultyLevel.MEDIUM,
+            DifficultyLevel.HARD,
+        ]
+
     def test_quiz_exact_count_enforcement(self, mock_instructor_client, sample_quiz_input):
         """Test that quiz returns exactly the requested number of questions."""
         # Test with too many questions returned by LLM
