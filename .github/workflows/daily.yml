@@ -1,9 +1,23 @@
 name: Daily NLP Pillar Run
 
 on:
-  schedule:
-    - cron: "0 12 * 3-11 *"  # 08:00 EDT (Mar–Nov)
-    - cron: "0 13 * 12,1,2 *" # 08:00 EST (Dec–Feb)
+  # The schedule trigger is disabled, NOT deleted. The database this workflow
+  # writes to is no longer hosted: it is Postgres + PostgREST in this repo's
+  # docker-compose.yml, bound to 127.0.0.1 on the owner's machine. GitHub's
+  # runners cannot reach it, so every scheduled run would fail. The daily run
+  # now fires from the app's own scheduler inside the compose stack
+  # (SCHEDULE_ENABLED / SCHEDULE_TIME / SCHEDULE_TIMEZONE — see docs/SCHEDULING.md).
+  #
+  # To turn this back on, uncomment the `schedule:` block below. That is the
+  # only change needed here, but it is only useful once the database is
+  # reachable from GitHub's runners again — i.e. the app is hosted somewhere
+  # public, or SUPABASE_URL points at a hosted Postgres/PostgREST/Supabase
+  # again. The secrets this job reads are left referenced deliberately so it
+  # works the moment that is true.
+  #
+  # schedule:
+  #   - cron: "0 12 * 3-11 *"  # 08:00 EDT (Mar–Nov)
+  #   - cron: "0 13 * 12,1,2 *" # 08:00 EST (Dec–Feb)
   workflow_dispatch: {}
 
 jobs:

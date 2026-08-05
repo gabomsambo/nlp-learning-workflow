@@ -166,6 +166,54 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # ============================================
+  # Daily-run scheduler
+  # Replaces the schedule trigger on .github/workflows/daily.yml, which cannot
+  # reach this database from GitHub's runners. Same image as webui, different
+  # command — no duplicated code, and a rebuild moves both together.
+  #
+  # Deliberately its own service rather than a thread inside webui: a webui
+  # crash or restart must not silently stop the daily learning run, and this way
+  # its logs are its own (`docker compose logs scheduler`).
+  # ============================================
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nlp_scheduler
+    command: ["python", "-m", "nlp_pillars.scheduler"]
+    env_file:
+      - .env
+    environment:
+      # Same three database overrides as webui, and for the same reasons — see
+      # the long comment on that service. The scheduler drives the pipeline
+      # through nlp_pillars/db.py, which reads SUPABASE_URL only.
+      SEARXNG_URL: "http://searxng:8080"
+      POSTGREST_URL: "http://postgrest:3000"
+      SUPABASE_URL: "http://postgrest:3000"
+      SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
+    volumes:
+      # A scheduled run can ingest PDFs, so it needs the same retained uploads
+      # volume webui writes to — not a second, divergent copy.
+      - uploads_data:/app/data
+    depends_on:
+      postgrest:
+        condition: service_started
+      searxng:
+        condition: service_started
+    # The Dockerfile's HEALTHCHECK curls http://localhost:8000/health, which only
+    # exists in the webui container. Inherited here it can never pass, so this
+    # service would sit permanently "unhealthy" while working perfectly. There is
+    # nothing useful to probe instead — the scheduler *is* the container's main
+    # process, so if it dies the container exits and `restart: on-failure` reacts.
+    healthcheck:
+      disable: true
+    # NOT `unless-stopped`: with SCHEDULE_ENABLED=false the process exits 0 on
+    # purpose, and `unless-stopped` would restart it forever. `on-failure`
+    # leaves the disabled state visible as "Exited (0)" in `docker compose ps`
+    # while still restarting a scheduler that genuinely crashed.
+    restart: on-failure
+
 # ============================================
 # Named Volumes (Docker-managed)
 # ============================================

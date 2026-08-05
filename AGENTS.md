@@ -6,14 +6,29 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## Running the stack
 
-`docker compose up -d --build` brings up five containers: `webui` (FastAPI on :8000),
-`db` (Postgres on :5432), `postgrest` (:3000), `searxng` (:8080) and a local `qdrant`
-(:6333). The build is slow and the image is large — `requirements.txt` pulls torch and
-layoutparser.
+`docker compose up -d --build` brings up six containers: `webui` (FastAPI on :8000),
+`db` (Postgres on :5432), `postgrest` (:3000), `searxng` (:8080), a local `qdrant`
+(:6333) and `scheduler` (no ports). The build is slow and the image is large —
+`requirements.txt` pulls torch and layoutparser.
 
 `.env` is gitignored and is not in the repo; compose reads it via `env_file:`. It is also
 not copied into the image (see the `COPY` lines in `Dockerfile`), so the container's
-environment comes entirely from compose.
+environment comes entirely from compose. That absence is load-bearing: it is why
+`get_settings()`'s `load_dotenv(override=True)` cannot clobber the overrides compose sets.
+
+`scheduler` runs the same image as `webui` with `command: python -m nlp_pillars.scheduler`.
+Any *new* service reusing this image must set `healthcheck: disable: true` as it does — the
+Dockerfile's `HEALTHCHECK` curls `localhost:8000/health`, which exists only under uvicorn,
+so a non-webui service inherits a probe that can never pass and sits permanently
+"unhealthy" while working fine.
+
+### Running a second stack alongside an existing one
+
+Container names, host ports and volume names are all fixed, so a plain `up -d` in a second
+worktree evicts the first. Use `-p <project>` plus an uncommitted override that renames
+`container_name`, every volume `name:`, and the ports. Ports need the `!override` YAML tag —
+Compose *appends* list entries by default, so a plain `ports:` in an override republishes
+the original host port too and collides anyway.
 
 ## The database is self-hosted
 
