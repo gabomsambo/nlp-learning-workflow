@@ -1,14 +1,28 @@
 """
-Script Download API Router
+Script Download API Router — DEAD CODE, deliberately not registered.
 
-Handles downloading podcast scripts as text files with proper encoding,
-headers, and error handling.
+Do NOT add this to `webui/app.py` as-is. Two independent reasons, both verified
+live against the running stack:
 
-Usage:
-    from webui.routers.api import script_download
-    app.include_router(script_download.router)
+1. **Importing this module aborts application startup.** The `download_script`
+   signature annotates `background_tasks: Optional[BackgroundTasks]`, which
+   FastAPI rejects at decoration time:
+   `FastAPIError: Invalid args for response field! ... typing.Optional[
+   fastapi.background.BackgroundTasks] is a valid Pydantic field type`.
+   The failure happens on `import`, so it takes down the whole web UI, not just
+   these two routes.
+2. **It has no data source.** `get_script_from_db()` below is an unimplemented
+   placeholder that unconditionally returns `None` (`TODO: Replace with actual
+   database implementation`), so both endpoints could only ever answer 404.
 
-Then access via: GET /api/scripts/download/{script_id}
+It is also superseded: podcast script download already works via
+`GET /api/podcast/{script_id}/download` in `webui/routers/api/podcast.py`, which
+is registered and is what the Download button in `webui/templates/podcast.html`
+links to.
+
+Kept rather than deleted because `format_script_for_download()` is a complete,
+working formatter that a real implementation could reuse. To revive this module,
+fix (1) and (2) first, then register it.
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
