@@ -1,12 +1,87 @@
 # Scheduling Guide
 
-This document explains how to set up automated daily runs of the NLP Learning Workflow using GitHub Actions or system cron jobs.
+This document explains how to set up automated daily runs of the NLP Learning Workflow.
+
+**The daily run now fires from the app's own scheduler, not from GitHub Actions.** See
+[The built-in scheduler](#the-built-in-scheduler-current-method) below. The GitHub Actions
+section that follows it is kept because the workflow file is kept, but its schedule trigger
+is commented out and it cannot work against the current self-hosted database.
+
+## The built-in scheduler (current method)
+
+`nlp_pillars/scheduler.py` runs as the `scheduler` service in `docker-compose.yml` — the
+same image as `webui`, started with `python -m nlp_pillars.scheduler`. It is its own
+service on purpose: a `webui` crash or restart must not silently stop the daily run.
+
+It runs two things on one APScheduler instance:
+
+1. **The daily learning run**, at `SCHEDULE_TIME` in `SCHEDULE_TIMEZONE`, for **every
+   pillar in the database** (`create_pillars.py` seeds eight). Pillars run sequentially and
+   independently — one failing does not stop the rest, matching the Action's
+   `fail-fast: false`.
+2. **The FSRS optimization and maintenance jobs** in `nlp_pillars/services/background_jobs.py`.
+   These were written long ago but `start_background_jobs()` had no callers, so they had
+   never actually run anywhere. They do now.
+
+### Settings
+
+All read from `.env` (see `Settings` in `nlp_pillars/config.py`):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SCHEDULE_ENABLED` | `false` | Master off switch. When false the service logs why and exits 0. |
+| `SCHEDULE_TIME` | `08:00` | 24-hour `HH:MM`. |
+| `SCHEDULE_TIMEZONE` | `UTC` | IANA name, e.g. `America/New_York`. DST is handled by the zone. |
+| `PAPERS_PER_DAY` | `1` | Papers per pillar per run — the whole run's API-spend knob. The per-pillar `papers_per_day` column in the database is not consulted. |
+
+An unparseable `SCHEDULE_TIME` or unknown `SCHEDULE_TIMEZONE` makes the service exit 1
+rather than fall back to a default — a silently wrong run time is worse than a container
+that refuses to start.
+
+The service uses `restart: on-failure`, not `unless-stopped`, so the deliberate exit-0 when
+disabled is not restarted into a loop. Disabled looks like `Exited (0)` in
+`docker compose ps`; that is the expected off state, not a failure.
+
+```bash
+docker compose up -d scheduler         # start it
+docker compose logs -f scheduler       # watch it; it logs each job's next run time at startup
+docker compose restart scheduler       # re-read .env after changing SCHEDULE_*
+```
+
+### Missed runs are skipped, not caught up
+
+The jobstore is APScheduler's default in-memory one, so **a run missed while the stack was
+down does not happen later**. On start, the cron trigger computes its next fire time from
+now. Stack down at 08:00 and back up at 11:00 means there is no run that day; the next one
+is 08:00 the following day.
+
+This is the accepted cost of scheduling locally instead of on a hosted runner: the
+scheduler only runs while the machine is on and the stack is up. There is deliberately no
+wake-on-schedule, system service, or catch-up mechanism. To run a missed day by hand:
+
+```bash
+docker compose exec scheduler python -c \
+  "import logging; logging.basicConfig(level=logging.INFO); \
+   from nlp_pillars.scheduler import run_all_pillars; run_all_pillars()"
+```
 
 ## GitHub Actions Workflow
 
 ### Overview
 
-The automated scheduling system runs the NLP learning pipeline daily at **08:00 America/New_York** for all five learning pillars (P1-P5) in parallel.
+> **The schedule trigger on this workflow is commented out and the workflow no longer runs
+> daily.** The database is Postgres + PostgREST bound to `127.0.0.1` on the owner's machine
+> (`docker-compose.yml`), which GitHub's runners cannot reach, so every scheduled run would
+> fail. The file, its steps and its `secrets.*` references are kept intact and it can still
+> be triggered by hand from the Actions tab. Uncommenting the `schedule:` block re-enables
+> it — that is the only change needed — but it is only useful once the database is reachable
+> from GitHub's runners again.
+>
+> Note also that the matrix below still lists `P1`–`P5`. Those pillar IDs no longer exist:
+> `create_pillars.py` seeds eight pillars with slug IDs and `cli.py` validates against the
+> database, so the matrix would need updating too before this workflow could do useful work.
+
+The workflow was designed to run the NLP learning pipeline daily at **08:00 America/New_York** for all five learning pillars (P1-P5) in parallel.
 
 **Workflow Location:** `.github/workflows/daily.yml`
 

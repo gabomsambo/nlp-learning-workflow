@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     embedding_model: str = Field("text-embedding-3-small", env="EMBEDDING_MODEL")
     log_level: str = Field("INFO", env="LOG_LEVEL")
 
+    # Daily-run scheduler. Consumed by nlp_pillars/scheduler.py, which runs as the
+    # `scheduler` service in docker-compose.yml. These three keys have been in .env
+    # since before the scheduler existed; until it did, `extra = "ignore"` below
+    # silently dropped them.
+    schedule_enabled: bool = Field(False, env="SCHEDULE_ENABLED")
+    schedule_time: str = Field("08:00", env="SCHEDULE_TIME")  # "HH:MM", 24-hour
+    schedule_timezone: str = Field("UTC", env="SCHEDULE_TIMEZONE")  # IANA name
+    # Papers per pillar per scheduled run. Default 1 matches what the (now
+    # schedule-disabled) GitHub Action passed as `--papers 1`. The per-pillar
+    # `papers_per_day` column in the database is deliberately not consulted, so
+    # one knob controls the whole run's API spend.
+    papers_per_day: int = Field(1, env="PAPERS_PER_DAY", ge=1)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

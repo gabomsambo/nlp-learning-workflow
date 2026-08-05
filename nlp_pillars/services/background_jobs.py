@@ -8,7 +8,7 @@ This service provides:
 
 import logging
 from datetime import timezone
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -90,6 +90,40 @@ class BackgroundJobsService:
 
         except Exception as e:
             logger.error(f"Failed to setup FSRS optimization jobs: {e}")
+
+    def add_daily_pillar_run_job(self, func: Callable[[], Any], hour: int, minute: int,
+                                 tzinfo: Any, job_id: str = 'daily_pillar_run',
+                                 name: str = 'Daily Pillar Learning Run') -> None:
+        """Register the daily learning run on this service's scheduler.
+
+        Kept generic (the caller supplies `func`) so this module does not import
+        the pipeline: `nlp_pillars.scheduler` owns the work, this owns the timing.
+        Call before or after `start()` — APScheduler accepts both.
+
+        The trigger carries its own `timezone`, so the daily run honours
+        SCHEDULE_TIMEZONE while the FSRS jobs above stay on the UTC times they
+        were always written for.
+
+        Args:
+        ----
+            func: Zero-argument callable to run
+            hour: Hour of day, 0-23, in `tzinfo`
+            minute: Minute of hour, 0-59, in `tzinfo`
+            tzinfo: tzinfo instance the cron fields are interpreted in
+            job_id: APScheduler job id
+            name: Human-readable job name
+
+        """
+        self.scheduler.add_job(
+            func=func,
+            trigger=CronTrigger(hour=hour, minute=minute, timezone=tzinfo),
+            id=job_id,
+            name=name,
+            replace_existing=True,
+            # A run that overruns 24h must not stack a second one on top of it.
+            max_instances=1,
+        )
+        logger.info(f"Daily pillar run scheduled at {hour:02d}:{minute:02d} {tzinfo}")
 
     def _setup_maintenance_jobs(self) -> None:
         """Set up general maintenance jobs."""
