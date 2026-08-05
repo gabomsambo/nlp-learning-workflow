@@ -16,7 +16,7 @@ async def list_lessons(request: Request, pillar: Optional[str] = None) -> HTMLRe
     lessons = await client.list_lessons(pillar=pillar, limit=100)
     pillars = get_pillars(limit=100)
     return request.app.state.templates.TemplateResponse(
-        "lessons.html", {"request": request, "lessons": lessons, "pillar": pillar, "pillars": pillars}
+        request, "lessons.html", {"lessons": lessons, "pillar": pillar, "pillars": pillars}
     )
 
 

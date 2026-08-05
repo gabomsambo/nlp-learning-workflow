@@ -93,7 +93,12 @@ class PostgrestClient:
         """
 
         async def count_table(table: str) -> int:
-            _, resp = await self._get(table, params={"select": "id", "limit": 1})
+            # Degrade to 0 when the database is unreachable, mirroring how
+            # get_recent_activity() tolerates per-table failures.
+            try:
+                _, resp = await self._get(table, params={"select": "id", "limit": 1})
+            except Exception:
+                return 0
             return self._parse_count_from_content_range(resp)
 
         papers = await count_table("papers")

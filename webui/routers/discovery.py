@@ -16,6 +16,7 @@ async def discovery_home(request: Request) -> HTMLResponse:
     """Render the discovery page."""
     pillars = get_pillars(limit=100)
     return request.app.state.templates.TemplateResponse(
+        request,
         "discovery.html",
-        {"request": request, "title": "Paper Discovery", "pillars": pillars}
+        {"title": "Paper Discovery", "pillars": pillars}
     )
