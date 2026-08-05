@@ -72,8 +72,7 @@ marked `INFERRED:` inline. `scripts` is a pure stub: its only mention in the cod
 commented-out example in a docstring (`webui/routers/api/script_download.py`), so that grep
 for table names reports 11 while only 10 have live call sites.
 
-Two pre-existing application bugs, both independent of the database backend and both left
-alone deliberately:
+Three pre-existing application bugs, all left alone deliberately:
 
 - `TableQuery.eq()` in `nlp_pillars/db.py` renders Python `None` as the literal string
   `"None"`, so a `pillar_id IS NULL` filter becomes `pillar_id=eq.None` and matches nothing.
@@ -81,6 +80,11 @@ alone deliberately:
   matched) as success, so it never falls through to INSERT. The table is fine — a direct
   insert of the converter's payload round-trips all 18 weights — but the upsert can only
   ever update a row that already exists.
+- `vectors.search_similar()` calls `client.search()`, removed in qdrant-client 1.19 (the
+  pinned version), so **every** query fails with `'QdrantClient' object has no attribute
+  'search'` — swallowed by its `except`, which returns `[]`. Writes are unaffected:
+  `upsert_text()` works and `client.query_points(...)` over the same collection returns
+  hits. Verified live 2026-08-05 against the cloud cluster.
 
 `nlp_pillars` and `webui` are two **sibling top-level packages** under `/app` (see the
 `COPY` lines in `Dockerfile`), so no relative import can ever reach from one into the
@@ -126,6 +130,28 @@ consequences that cost real debugging time:
   script at a different database means setting `os.environ` *after* the first
   `get_settings()` call. Setting it before, or passing it on the command line, is silently
   ignored.
+
+## Chunking is measured in tokens, and its fallback is not a safety net
+
+`pdf_loader.chunk_text()` and `vectors.upsert_text()` take `chunk_size` / `chunk_overlap`
+in **tokens**, counted with tiktoken `cl100k_base` — the encoding `text-embedding-3-small`
+uses, so the budget is the size the embedding model actually sees. They were documented as
+characters until the semchunk call was repaired; ~4 characters per token if you are
+converting an old value. `_chunk_text_naive()` is still character-denominated (it cannot
+count tokens) and `chunk_text` converts before calling it.
+
+`semchunk.chunk()` takes a **required positional `token_counter`**, and has since 0.1.0 —
+there is no older release whose signature accepts a call without one, so the `chunk(text,
+chunk_size=...)` this code used never worked against any published version. It raised
+`TypeError`, the `except` swallowed it, and every chunk written to Qdrant for months was a
+fixed-offset slice: measured on a 5-page paper, 4 of 6 naive boundaries fell inside a word
+versus 0 of 8 semantic ones.
+
+So `chunk_text` now **raises** `RuntimeError` on `TypeError` from semchunk (a call-signature
+bug, not bad data) and only falls back — at ERROR with a traceback — on other runtime
+failures. Do not re-widen that to a blanket `except`: both callers already contain the
+raise (`ingest_agent` turns it into `IngestError`, `upload_service` logs it and finishes the
+upload without vectors), so nothing reaches the user as a crash.
 
 ## Agent LLM conventions
 

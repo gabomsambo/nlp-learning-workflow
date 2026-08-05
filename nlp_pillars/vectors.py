@@ -176,19 +176,20 @@ def upsert_text(
     pillar_id: str,
     paper_id: str,
     full_text: str,
-    chunk_size: int = 1000,
-    overlap: int = 100
+    chunk_size: int = 250,
+    overlap: int = 25
 ) -> int:
     """
     Chunk text, embed chunks, and upsert to vector store with pillar isolation.
-    
+
     Args:
         pillar_id: Target pillar for namespace isolation
         paper_id: Paper identifier
         full_text: Text content to process
-        chunk_size: Size of each chunk in characters
-        overlap: Overlap between chunks in characters
-        
+        chunk_size: Maximum TOKENS per chunk, counted with the same encoding
+            EMBEDDING_MODEL uses (~250 tokens is ~1000 characters of prose).
+        overlap: TOKENS of overlap between consecutive chunks
+
     Returns:
         Number of chunks successfully upserted
     """

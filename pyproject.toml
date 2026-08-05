@@ -23,7 +23,12 @@ groq = "^0.5.0"
 supabase = "^2.0.0"
 qdrant-client = "^1.8.0"
 pypdf = "^4.0.0"
-semchunk = "^0.1.0"
+# 4.x, not the ^0.1.0 this used to declare: chunk_text() passes `overlap=`,
+# which only exists from semchunk 3.x, and requirements.txt pins 4.1.1.
+semchunk = "^4.1.1"
+# Chunk sizes are counted with tiktoken's cl100k_base so they match what the
+# embedding model sees (nlp_pillars/tools/pdf_loader.py::_get_token_counter).
+tiktoken = "^0.13.0"
 layoutparser = "^0.3.4"
 torch = "^2.0.0"
 torchvision = "^0.15.0"

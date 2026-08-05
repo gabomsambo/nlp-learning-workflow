@@ -4,6 +4,7 @@ All network calls are mocked for fast, reliable testing.
 """
 
 import pytest
+import logging
 import tempfile
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import hashlib
 
 from nlp_pillars.schemas import PaperRef, ParsedPaper
 from nlp_pillars.agents.ingest_agent import IngestAgent, IngestError, ingest_paper_from_url
+from nlp_pillars.tools import pdf_loader
 from nlp_pillars.tools.pdf_loader import (
     download_pdf, extract_text, chunk_text, 
     PDFDownloadError, PDFParseError,
@@ -224,44 +226,118 @@ class TestPDFLoader:
     
     def test_chunk_text_basic(self):
         """Test basic text chunking functionality."""
-        text = "This is a test. " * 100  # 1600 characters
-        
-        chunks = chunk_text(text, chunk_size=500, chunk_overlap=100)
-        
+        text = "This is a test. " * 100  # ~500 tokens
+
+        chunks = chunk_text(text, chunk_size=100, chunk_overlap=20)
+
         # Should create multiple chunks
         assert len(chunks) > 1
-        
+
         # No empty chunks
         assert all(chunk.strip() for chunk in chunks)
-        
+
         # Check overlaps exist
         if len(chunks) > 1:
             # Last part of first chunk should appear in second chunk
             overlap_check = chunks[0][-50:]  # Last 50 chars of first chunk
             assert any(overlap_check in chunk for chunk in chunks[1:])
-    
+
     def test_chunk_text_short_text(self):
         """Test chunking with text shorter than chunk size."""
         short_text = "This is a short text."
         chunks = chunk_text(short_text, chunk_size=1000)
-        
+
         assert len(chunks) == 1
         assert chunks[0] == short_text
-    
+
     def test_chunk_text_empty_input(self):
         """Test chunking with empty or whitespace-only input."""
         assert chunk_text("") == []
         assert chunk_text("   \n\n   ") == []
-    
+
     def test_chunk_text_large_overlap(self):
         """Test chunking with large overlap values."""
         text = "A" * 1000
         chunks = chunk_text(text, chunk_size=100, chunk_overlap=90)
-        
+
         # Should still make progress and create multiple chunks
-        assert len(chunks) > 5  # Should create many small chunks
-        assert all(len(chunk) <= 100 for chunk in chunks)
-    
+        assert len(chunks) > 1
+        # chunk_size is a TOKEN budget, so check tokens, not characters
+        count_tokens = pdf_loader._get_token_counter()
+        assert all(count_tokens(chunk) <= 100 for chunk in chunks)
+
+    def test_chunk_text_uses_semchunk_not_the_naive_fallback(self, caplog):
+        """
+        Semantic chunking must actually run.
+
+        Regression guard: chunk_text() used to call semchunk without the
+        required `token_counter`, catch the resulting TypeError and quietly
+        return naive chunks. Nothing crashed, so it went unnoticed. Assert on
+        the logs that the semantic path is the one that executed.
+        """
+        text = ("Transformers changed the field. "
+                "Attention replaced recurrence entirely. ") * 200
+
+        with caplog.at_level(logging.DEBUG, logger="nlp_pillars.tools.pdf_loader"):
+            chunks = chunk_text(text, chunk_size=100, chunk_overlap=10)
+
+        assert len(chunks) > 1
+        messages = " ".join(record.getMessage() for record in caplog.records)
+        assert "Falling back to naive chunking" not in messages
+        assert "Semantic chunking:" in messages
+
+    def test_chunk_text_respects_sentence_boundaries(self):
+        """
+        Semantic chunks should break at sentence boundaries; naive ones do not.
+
+        This is the actual quality difference the semchunk call buys, and the
+        reason a silent fallback matters for retrieval.
+        """
+        sentences = [
+            f"Sentence number {i} explains one idea about neural language models."
+            for i in range(120)
+        ]
+        text = " ".join(sentences)
+
+        semantic = chunk_text(text, chunk_size=60, chunk_overlap=0)
+        naive = pdf_loader._chunk_text_naive(text, chunk_size=240, chunk_overlap=0)
+
+        assert len(semantic) > 1
+        # Every semantic chunk ends on a completed sentence.
+        assert all(chunk.endswith(".") for chunk in semantic)
+        # The naive splitter cuts wherever the character offset lands.
+        assert not all(chunk.endswith(".") for chunk in naive)
+
+    def test_chunk_text_raises_on_semchunk_signature_mismatch(self, monkeypatch):
+        """A wrong-signature call is a bug in this code and must not be swallowed."""
+        import semchunk
+
+        def wrong_signature(*args, **kwargs):
+            raise TypeError("chunk() missing 1 required positional argument: 'token_counter'")
+
+        monkeypatch.setattr(semchunk, "chunk", wrong_signature)
+
+        with pytest.raises(RuntimeError, match="incompatible signature"):
+            chunk_text("Some text. " * 500, chunk_size=50)
+
+    def test_chunk_text_falls_back_on_runtime_error(self, monkeypatch, caplog):
+        """Genuine runtime failures still degrade to naive chunking, but loudly."""
+        import semchunk
+
+        def exploding_chunker(*args, **kwargs):
+            raise ValueError("tokenizer exploded")
+
+        monkeypatch.setattr(semchunk, "chunk", exploding_chunker)
+
+        text = "Some text. " * 500
+        with caplog.at_level(logging.ERROR, logger="nlp_pillars.tools.pdf_loader"):
+            chunks = chunk_text(text, chunk_size=50, chunk_overlap=5)
+
+        assert len(chunks) > 1
+        messages = " ".join(record.getMessage() for record in caplog.records)
+        assert "Falling back to naive chunking" in messages
+        assert any(record.levelname == "ERROR" for record in caplog.records)
+
     @patch('nlp_pillars.tools.pdf_loader.pypdf')
     def test_extract_text_pypdf_success(self, mock_pypdf, temp_cache_dir):
         """Test successful text extraction with pypdf."""
