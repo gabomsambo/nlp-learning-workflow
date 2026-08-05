@@ -43,8 +43,10 @@ services:
     env_file:
       - .env
     environment:
-      # Override for Docker networking
-      QDRANT_URL: "http://qdrant:6333"
+      # Override for Docker networking.
+      # NOTE: QDRANT_URL is intentionally NOT overridden here — it comes from
+      # .env so the app talks to the managed Qdrant Cloud cluster. The local
+      # `qdrant` service below stays available as an offline option.
       SEARXNG_URL: "http://searxng:8080"
       # Supabase URL and KEY come from .env file
     depends_on:
