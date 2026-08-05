@@ -42,76 +42,128 @@ class Settings(BaseSettings):
         extra = "ignore"  # Ignore extra fields in .env file
 
 
-# Default pillar configurations (fallback for fresh installs)
-# Keys are now slugs matching database IDs
+# Default pillar configurations, used by get_pillar_config() below only when the
+# database lookup fails. Keys are slugs matching database IDs.
+#
+# These MUST stay in step with the pillars `create_pillars.py` seeds — the eight
+# below are the authoritative set. When this dict disagreed with the database it
+# produced wrong pillar names and focus areas under database failure rather than
+# a clean error, which is harder to notice than an outage.
 PILLAR_CONFIGS = {
-    "linguistic-cognitive-foundations": {
-        "name": "Linguistic & Cognitive Foundations",
-        "goal": "Master core linguistic theory and cognitive alignment between humans and AI",
-        "abbreviation": "LingCog",
+    "formal-linguistics-nlp": {
+        "name": "Formal Linguistics for NLP",
+        "goal": "Master the linguistic theories that underpin modern NLP systems, from syntax to semantics to pragmatics",
+        "abbreviation": "FormLin",
         "focus_areas": [
-            "Morphology and Syntax",
-            "Semantics and Pragmatics",
-            "Psycholinguistics",
-            "Cognitive alignment with LLMs",
-            "Formal language theory"
+            "Generative syntax and constituency parsing",
+            "Formal semantics and compositional meaning",
+            "Pragmatics and discourse analysis",
+            "Morphological theory and word formation",
+            "Phonology for speech processing",
+            "Type-theoretic approaches to meaning"
         ]
     },
-    "models-architectures": {
-        "name": "Models & Architectures",
-        "goal": "Understand cutting-edge model architectures and emerging paradigms",
-        "abbreviation": "ModArch",
+    "neural-architectures-language": {
+        "name": "Neural Architectures for Language",
+        "goal": "Understand the mathematical and architectural foundations of neural networks used in NLP",
+        "abbreviation": "NeurArc",
         "focus_areas": [
-            "Transformer variants",
-            "Long-context models",
-            "Multimodal architectures",
-            "Neurosymbolic AI",
-            "Emergent communication",
-            "State space models"
+            "Transformer architecture deep dive",
+            "Attention mechanisms and variants",
+            "Recurrent and convolutional approaches",
+            "Pretraining objectives (MLM, CLM, T5-style)",
+            "Efficient transformers and long-context models",
+            "State space models (Mamba, RWKV)"
         ]
     },
-    "data-training-methodologies": {
-        "name": "Data, Training & Methodologies",
-        "goal": "Master data curation, training techniques, and multilingual challenges",
-        "abbreviation": "DataTrn",
+    "llm-theory-practice": {
+        "name": "LLM Theory & Practice",
+        "goal": "Develop deep expertise in how large language models work, their capabilities, and limitations",
+        "abbreviation": "LLMThe",
         "focus_areas": [
-            "Data curation and annotation",
-            "Low-resource languages",
-            "RLHF and DPO",
-            "Instruction tuning",
-            "Synthetic data generation",
-            "Linguistic typology"
+            "Scaling laws and emergent abilities",
+            "In-context learning mechanisms",
+            "RLHF and preference optimization (DPO, PPO)",
+            "Prompt engineering and chain-of-thought",
+            "Instruction tuning and alignment",
+            "Hallucination and factuality"
         ]
     },
-    "evaluation-interpretability": {
-        "name": "Evaluation & Interpretability",
-        "goal": "Develop expertise in model evaluation, analysis, and interpretability",
-        "abbreviation": "EvalInt",
+    "computational-semantics": {
+        "name": "Computational Semantics & Meaning",
+        "goal": "Bridge formal semantics with distributional and neural approaches to meaning representation",
+        "abbreviation": "CompSem",
         "focus_areas": [
-            "Metrics and benchmarks",
-            "Robustness testing",
-            "Explainable AI",
-            "Probing techniques",
-            "Error analysis",
-            "Out-of-distribution generalization"
+            "Distributional semantics and word embeddings",
+            "Compositional distributional models",
+            "Knowledge graphs and symbolic reasoning",
+            "Semantic role labeling and AMR parsing",
+            "Textual entailment and inference",
+            "Grounding language in perception"
         ]
     },
-    "ethics-applications": {
-        "name": "Ethics & Applications",
-        "goal": "Understand ethical implications and real-world applications",
-        "abbreviation": "EthApp",
+    "model-interpretability": {
+        "name": "Model Interpretability & Probing",
+        "goal": "Learn to analyze what neural models learn and develop tools for understanding model behavior",
+        "abbreviation": "ModeInt",
         "focus_areas": [
-            "Bias detection and mitigation",
-            "Healthcare applications",
-            "Legal and policy frameworks",
-            "Educational technology",
-            "Cultural preservation",
-            "Linguistic justice"
+            "Probing classifiers and linguistic analysis",
+            "Attention visualization and interpretation",
+            "Mechanistic interpretability",
+            "Behavioral testing and challenge sets",
+            "Bias detection and measurement",
+            "Robustness and adversarial analysis"
+        ]
+    },
+    "ai-agents-tool-use": {
+        "name": "AI Agents & Autonomous Systems",
+        "goal": "Master the emerging field of LLM-powered agents that can reason, plan, and use tools",
+        "abbreviation": "AIAge",
+        "focus_areas": [
+            "ReAct and chain-of-thought reasoning",
+            "Tool use and function calling",
+            "Multi-agent systems and collaboration",
+            "Memory and retrieval augmented generation",
+            "Planning and task decomposition",
+            "Agent evaluation and benchmarks"
+        ]
+    },
+    "ml-systems-production": {
+        "name": "ML Systems & Production AI",
+        "goal": "Understand how to build, deploy, and scale machine learning systems in production",
+        "abbreviation": "MLSys",
+        "focus_areas": [
+            "Distributed training (DeepSpeed, FSDP)",
+            "Model serving and inference optimization",
+            "Quantization and model compression",
+            "MLOps and experiment tracking",
+            "GPU programming and CUDA basics",
+            "Cloud ML platforms (AWS, GCP, Azure)"
+        ]
+    },
+    "ai-safety-alignment": {
+        "name": "AI Safety & Responsible AI",
+        "goal": "Understand the challenges of building safe, aligned, and beneficial AI systems",
+        "abbreviation": "AISaf",
+        "focus_areas": [
+            "Constitutional AI and RLHF",
+            "Jailbreaking and red teaming",
+            "Truthfulness and calibration",
+            "Value alignment approaches",
+            "Governance and AI policy",
+            "Societal impact and ethics"
         ]
     }
 }
 
-# Legacy ID mapping for backward compatibility
+# Legacy ID mapping for backward compatibility.
+#
+# STALE, and deliberately left in place rather than removed or re-pointed: these
+# P1-P5 IDs predate the slug migration and their targets are not among the eight
+# pillars above, so get_pillar_config("P1") now raises "Pillar not found" instead
+# of silently returning a retired pillar. Re-pointing them at five of the current
+# eight would be an invention, not a migration.
+# The same mapping is duplicated in pillar_utils.LEGACY_PILLAR_MAPPING.
 LEGACY_TO_SLUG = {
     "P1": "linguistic-cognitive-foundations",
     "P2": "models-architectures",
