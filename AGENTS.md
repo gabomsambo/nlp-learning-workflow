@@ -69,9 +69,19 @@ alone deliberately:
   insert of the converter's payload round-trips all 18 weights — but the upsert can only
   ever update a row that already exists.
 
-`webui/routers/api/quiz.py` uses four-dot relative imports (`from ....nlp_pillars.db`),
-which raises "attempted relative import beyond top-level package" at request time and 500s
-`/api/quiz/*`. Also unrelated to the database.
+`nlp_pillars` and `webui` are two **sibling top-level packages** under `/app` (see the
+`COPY` lines in `Dockerfile`), so no relative import can ever reach from one into the
+other — `webui` code must import `nlp_pillars` **absolutely**. Getting this wrong is not
+loud: both quiz routers wrap their handler bodies in a bare `except Exception`, so the
+resulting ImportError surfaced as a JSON 500 on `/api/quiz/*` and, in
+`webui/routers/quiz.py`, as a silent fall-through to the non-FSRS `PostgrestClient`
+fallback that made the page look healthy while ignoring FSRS scheduling entirely. Fixed
+in `fm/nlp-quiz-api-broken`; keep new `webui` → `nlp_pillars` imports absolute.
+
+`/app` is on `sys.path` only because it is the `WORKDIR` uvicorn starts in. A one-off
+script run from elsewhere in the container needs `PYTHONPATH=/app`
+(`docker compose exec -e PYTHONPATH=/app webui python /tmp/x.py`); `create_pillars.py` is
+not in the image at all and must be `docker compose cp`'d in.
 
 `requirements.txt` is entirely unpinned (`>=` everywhere), so a rebuild can silently move
 the whole stack. Check resolved versions with `docker compose exec webui pip list` before

@@ -369,7 +369,9 @@ class QuizReviewRequest(BaseIOSchema):
 class QuizReviewResponse(BaseIOSchema):
     """Response after reviewing a quiz card."""
     success: bool = Field(..., description="Whether review was processed successfully")
-    card: QuizCard = Field(..., description="Updated card with new FSRS parameters")
+    # Optional because review_quiz_card_fsrs() builds this response with
+    # card=None on its failure branches (card not found, update failed).
+    card: Optional[QuizCard] = Field(default=None, description="Updated card with new FSRS parameters")
     next_review_date: datetime = Field(..., description="When card should be reviewed next")
     message: str = Field(default="", description="Status message")
 

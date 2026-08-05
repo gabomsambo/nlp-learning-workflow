@@ -29,8 +29,8 @@ async def review_card(review_request: ReviewRequest) -> JSONResponse:
     """Submit a quiz card review using FSRS algorithm."""
     try:
         # Import here to avoid circular imports
-        from ....nlp_pillars.db import review_quiz_card_fsrs
-        from ....nlp_pillars.schemas import QuizReviewRequest, FSRSRating
+        from nlp_pillars.db import review_quiz_card_fsrs
+        from nlp_pillars.schemas import QuizReviewRequest, FSRSRating
         
         # Convert rating to FSRS rating
         rating_map = {
@@ -67,7 +67,11 @@ async def review_card(review_request: ReviewRequest) -> JSONResponse:
                 "success": False,
                 "message": result.message
             }, status_code=400)
-            
+
+    except HTTPException:
+        # Deliberate 4xx (e.g. the invalid-rating check above) must not be
+        # swallowed by the catch-all below and re-reported as a 500.
+        raise
     except Exception as e:
         return JSONResponse({
             "success": False,
@@ -83,7 +87,7 @@ async def get_cards_due_for_review(
 ) -> JSONResponse:
     """Get quiz cards due for review."""
     try:
-        from ....nlp_pillars.db import get_cards_for_review
+        from nlp_pillars.db import get_cards_for_review
 
         # Get cards due for review - pillar is now a string ID
         cards = get_cards_for_review(
@@ -124,7 +128,7 @@ async def get_cards_due_for_review(
 async def optimize_fsrs_parameters(request: OptimizationRequest) -> JSONResponse:
     """Trigger FSRS parameter optimization for a user."""
     try:
-        from ....nlp_pillars.services.background_jobs import get_background_jobs_service
+        from nlp_pillars.services.background_jobs import get_background_jobs_service
         
         # Get background jobs service
         jobs_service = get_background_jobs_service()
@@ -148,7 +152,7 @@ async def optimize_fsrs_parameters(request: OptimizationRequest) -> JSONResponse
 async def get_fsrs_stats(user_id: str = "default_user") -> JSONResponse:
     """Get FSRS optimization statistics."""
     try:
-        from ....nlp_pillars.services.fsrs_optimizer import get_fsrs_optimizer
+        from nlp_pillars.services.fsrs_optimizer import get_fsrs_optimizer
         
         optimizer = get_fsrs_optimizer()
         stats = optimizer.get_optimization_stats()
@@ -169,7 +173,7 @@ async def get_fsrs_stats(user_id: str = "default_user") -> JSONResponse:
 async def get_job_status() -> JSONResponse:
     """Get status of background optimization jobs."""
     try:
-        from ....nlp_pillars.services.background_jobs import get_background_jobs_service
+        from nlp_pillars.services.background_jobs import get_background_jobs_service
         
         jobs_service = get_background_jobs_service()
         status = jobs_service.get_job_status()
