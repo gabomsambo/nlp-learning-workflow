@@ -1,12 +1,13 @@
 """Tests for upload service metadata enrichment and vector storage."""
 
 import re
-from unittest.mock import MagicMock, Mock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
 from nlp_pillars.schemas import PaperRef
-from nlp_pillars.services.upload_service import UploadService
+from nlp_pillars.services.upload_service import UploadError, UploadService
 
 
 @pytest.fixture
@@ -215,3 +216,86 @@ class TestPaperIdGeneration:
         paper_id = upload_service._generate_paper_id_from_url(url)
         assert paper_id.startswith("url:")
         assert len(paper_id) > 5
+
+
+class TestUploadedPdfRetention:
+    """Uploaded PDFs must outlive the request that created them.
+
+    ``_create_paper_ref_from_file`` stores ``url_pdf = file://<abs path>``, and
+    podcast generation dereferences that path to extract the paper body. The
+    upload handler used to delete the file in a ``finally:`` block, so every
+    file-uploaded paper permanently pointed at a path that no longer existed
+    and full-text extraction silently degraded to abstract-only.
+    """
+
+    @pytest.fixture
+    def service(self, tmp_path):
+        return UploadService(upload_dir=str(tmp_path / "uploads"))
+
+    @pytest.fixture
+    def upload_file(self):
+        file = MagicMock()
+        file.filename = "some_paper.pdf"
+
+        async def _read():
+            return b"%PDF-1.4 fake pdf bytes"
+
+        file.read = _read
+        return file
+
+    @pytest.fixture
+    def request_obj(self):
+        from nlp_pillars.schemas import UploadFileRequest
+
+        return UploadFileRequest(
+            title="A Retained Paper",
+            authors=["Alice"],
+            year=2024,
+        )
+
+    @pytest.mark.asyncio
+    async def test_uploaded_pdf_is_retained_and_url_pdf_resolves(
+        self, service, upload_file, request_obj
+    ):
+        """After a successful upload the stored url_pdf still points at a file."""
+        with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
+             patch('nlp_pillars.services.upload_service.get_pillar_by_id', return_value=MagicMock()), \
+             patch('nlp_pillars.services.upload_service.add_paper', return_value=True), \
+             patch.object(UploadService, '_run_full_pipeline', new_callable=AsyncMock) as pipeline:
+            pipeline.return_value = []
+
+            response = await service.upload_from_file("nlp-fundamentals", upload_file, request_obj)
+
+        assert response.paper.url_pdf.startswith("file://")
+        retained = Path(response.paper.url_pdf[len("file://"):])
+        assert retained.exists(), "uploaded PDF was deleted; url_pdf is now dangling"
+        assert retained.read_bytes() == b"%PDF-1.4 fake pdf bytes"
+
+    @pytest.mark.asyncio
+    async def test_upload_that_never_reached_the_database_is_cleaned_up(
+        self, service, upload_file, request_obj
+    ):
+        """A file nothing can refer to is still discarded."""
+        with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
+             patch('nlp_pillars.services.upload_service.get_pillar_by_id', return_value=MagicMock()), \
+             patch('nlp_pillars.services.upload_service.add_paper', return_value=False):
+            with pytest.raises(UploadError):
+                await service.upload_from_file("nlp-fundamentals", upload_file, request_obj)
+
+        assert list(service.upload_dir.glob("*.pdf")) == []
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failure_after_insert_still_retains_the_pdf(
+        self, service, upload_file, request_obj
+    ):
+        """Once the papers row exists the file is referenced, so keep it."""
+        with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
+             patch('nlp_pillars.services.upload_service.get_pillar_by_id', return_value=MagicMock()), \
+             patch('nlp_pillars.services.upload_service.add_paper', return_value=True), \
+             patch.object(UploadService, '_run_full_pipeline', new_callable=AsyncMock) as pipeline:
+            pipeline.side_effect = RuntimeError("summarizer exploded")
+
+            with pytest.raises(UploadError):
+                await service.upload_from_file("nlp-fundamentals", upload_file, request_obj)
+
+        assert len(list(service.upload_dir.glob("*.pdf"))) == 1
