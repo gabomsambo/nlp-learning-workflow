@@ -266,10 +266,12 @@ class TestUpsertText:
         set_client(mock_qdrant_client)
         set_openai_client(mock_openai_client)
         
-        # Test text that will create multiple chunks
-        test_text = "This is a long test text. " * 100  # Create text > 1000 chars
-        
-        result = upsert_text("models-architectures", "test.456", test_text, chunk_size=500, overlap=50)
+        # Test text that will create multiple chunks. chunk_size/overlap are in
+        # TOKENS (see upsert_text), so size the text in tokens too: this is
+        # ~700 tokens against a 100-token budget.
+        test_text = "This is a long test text. " * 100
+
+        result = upsert_text("models-architectures", "test.456", test_text, chunk_size=100, overlap=10)
 
         # Should have upserted chunks
         assert result > 0
@@ -324,10 +326,11 @@ class TestUpsertText:
             return [0.1, 0.2, 0.3, 0.4]
         
         with patch('nlp_pillars.vectors._embed', side_effect=mock_embed):
-            # Create shorter text that generates exactly 2 chunks
-            test_text = "A" * 600 + "B" * 600  # Two distinct chunks
-            
-            result = upsert_text("linguistic-cognitive-foundations", "test.123", test_text, chunk_size=500, overlap=50)
+            # Text long enough in TOKENS (chunk_size is a token budget) to
+            # generate several chunks, so the second embed call can fail.
+            test_text = "Alpha beta gamma delta epsilon. " * 60
+
+            result = upsert_text("linguistic-cognitive-foundations", "test.123", test_text, chunk_size=50, overlap=5)
 
             # Should have upserted chunks except the second one that failed
             # Check that we got some successful embeds but not all

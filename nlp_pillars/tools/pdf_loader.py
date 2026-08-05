@@ -10,8 +10,9 @@ import logging
 import os
 import re
 import time
+from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -669,64 +670,140 @@ def _normalize_whitespace(text: str) -> str:
     return text.strip()
 
 
-def chunk_text(full_text: str, chunk_size: int = 3000, chunk_overlap: int = 200) -> List[str]:
+# Chunk sizes are denominated in TOKENS, counted with the encoding the embedding
+# model actually uses. Chunks produced here are embedded with
+# text-embedding-3-small (see nlp_pillars/vectors.py::_embed), which tokenizes
+# with cl100k_base, so a cl100k_base count is the size the downstream model sees.
+EMBEDDING_ENCODING = "cl100k_base"
+
+# Only used to translate a token budget into a character budget for the naive
+# fallback, which cannot count tokens. ~4 characters per token is the usual
+# ratio for English prose; it is an approximation and only ever applies when
+# semantic chunking is unavailable.
+_CHARS_PER_TOKEN = 4
+
+
+@lru_cache(maxsize=1)
+def _get_token_counter() -> Callable[[str], int]:
     """
-    Split text into semantically meaningful chunks using semchunk library.
-    
-    This function preserves semantic boundaries (paragraphs, sentences) while
-    maintaining chunks close to the target size for optimal retrieval performance.
-    
+    Return the token counter semchunk sizes chunks with.
+
+    Prefers tiktoken's ``cl100k_base`` so chunk sizes match what the embedding
+    model counts. If tiktoken cannot load its encoding (it fetches the BPE file
+    on first use), falls back to a character-based approximation rather than
+    failing the whole chunking path — semantic boundaries still hold, only the
+    size budget becomes approximate.
+    """
+    try:
+        import tiktoken
+
+        encoding = tiktoken.get_encoding(EMBEDDING_ENCODING)
+    except Exception as e:
+        logger.error(
+            f"tiktoken encoding '{EMBEDDING_ENCODING}' unavailable ({e}). Sizing chunks "
+            f"with a ~{_CHARS_PER_TOKEN}-chars-per-token approximation instead; "
+            f"chunk sizes will be approximate."
+        )
+        return lambda text: max(1, len(text) // _CHARS_PER_TOKEN)
+
+    # disallowed_special=() so a literal "<|endoftext|>" in a paper is counted as
+    # ordinary text instead of raising.
+    return lambda text: len(encoding.encode(text, disallowed_special=()))
+
+
+def chunk_text(full_text: str, chunk_size: int = 750, chunk_overlap: int = 50) -> List[str]:
+    """
+    Split text into semantically meaningful chunks using the semchunk library.
+
+    semchunk splits on the strongest semantic boundary that fits the budget
+    (sections, then paragraphs, then sentences, then clauses), so chunks end at
+    natural breaks instead of mid-sentence the way a sliding window does.
+
     Args:
         full_text: Text to chunk
-        chunk_size: Target size of each chunk in characters
-        chunk_overlap: Number of characters to overlap between chunks (for backward compatibility)
-        
+        chunk_size: Maximum TOKENS per chunk, counted with EMBEDDING_ENCODING.
+            Note this is tokens, not characters: ~750 tokens is ~3000 characters
+            of English prose.
+        chunk_overlap: TOKENS of overlap between consecutive chunks (0 disables).
+            Applied by semchunk itself, on token boundaries.
+
     Returns:
         List of text chunks (no empty chunks)
+
+    Raises:
+        RuntimeError: if semchunk is called incorrectly (a wrong-signature bug in
+            this code, or an incompatible semchunk). Runtime failures fall back
+            to naive chunking instead; see the comments below.
     """
     if not full_text or not full_text.strip():
         return []
 
     text = full_text.strip()
 
-    # If text is shorter than chunk_size, return as single chunk
-    if len(text) <= chunk_size:
+    try:
+        from semchunk import chunk as semantic_chunk
+    except ImportError:
+        # Logged at ERROR, not WARNING: semchunk is a pinned hard dependency, so
+        # a missing import means a broken install, and degrading quietly to
+        # naive chunking is exactly how this path stayed broken for months.
+        logger.error("semchunk library not available. Falling back to naive chunking.")
+        return _chunk_text_naive(
+            full_text, chunk_size * _CHARS_PER_TOKEN, chunk_overlap * _CHARS_PER_TOKEN
+        )
+
+    token_counter = _get_token_counter()
+
+    # If the whole text already fits the budget, return it as a single chunk.
+    if token_counter(text) <= chunk_size:
         return [text]
 
     try:
-        # Import semchunk (fail gracefully if not available)
-        try:
-            from semchunk import chunk
-        except ImportError:
-            logger.warning("semchunk library not available. Falling back to naive chunking.")
-            return _chunk_text_naive(full_text, chunk_size, chunk_overlap)
-
-        # Use semchunk for semantic chunking
-        # semchunk automatically handles semantic boundaries
-        chunks = chunk(text, chunk_size=chunk_size)
-
-        # Filter out empty chunks
-        chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
-
-        # If chunk_overlap > 0, add overlap between chunks for backward compatibility
-        if chunk_overlap > 0 and len(chunks) > 1:
-            chunks = _add_overlap_to_chunks(chunks, chunk_overlap)
-
-        logger.info(f"Semantic chunking: {len(text)} chars into {len(chunks)} chunks (target_size={chunk_size})")
-
-        return chunks
-
+        chunks = semantic_chunk(
+            text,
+            chunk_size,
+            token_counter,
+            overlap=chunk_overlap if chunk_overlap > 0 else None,
+        )
+    except TypeError as e:
+        # A TypeError here is a call-signature mismatch — this code disagreeing
+        # with the installed semchunk — not bad input. That is precisely the bug
+        # this path had (semchunk 4.x made `token_counter` required and every
+        # call silently fell back), and swallowing it hid the regression for
+        # months. Fail loudly so tests and the first upload surface it.
+        raise RuntimeError(
+            f"semchunk called with an incompatible signature: {e}. This is a bug in "
+            f"chunk_text or an incompatible semchunk version, not a data problem."
+        ) from e
     except Exception as e:
-        logger.warning(f"Semantic chunking failed: {e}. Falling back to naive chunking.")
-        return _chunk_text_naive(full_text, chunk_size, chunk_overlap)
+        # Genuine runtime failures (odd input, tokenizer trouble) still degrade
+        # to naive chunking rather than failing an upload, but loudly and with a
+        # traceback.
+        logger.error(
+            f"Semantic chunking failed: {e}. Falling back to naive chunking.", exc_info=True
+        )
+        return _chunk_text_naive(
+            full_text, chunk_size * _CHARS_PER_TOKEN, chunk_overlap * _CHARS_PER_TOKEN
+        )
+
+    # Filter out empty chunks
+    chunks = [c.strip() for c in chunks if c.strip()]
+
+    logger.info(
+        f"Semantic chunking: {len(text)} chars into {len(chunks)} chunks "
+        f"(max_tokens={chunk_size}, overlap_tokens={chunk_overlap})"
+    )
+
+    return chunks
 
 
 def _chunk_text_naive(full_text: str, chunk_size: int = 3000, chunk_overlap: int = 200) -> List[str]:
     """
     Fallback naive text chunking using sliding window approach.
-    
+
     This is the original implementation used when semchunk is not available
-    or fails for any reason.
+    or fails for any reason. Unlike chunk_text(), its sizes are in CHARACTERS —
+    chunk_text() converts its token budget with _CHARS_PER_TOKEN before calling
+    here. It cuts on a fixed offset, so chunks routinely end mid-sentence.
     """
     if not full_text or not full_text.strip():
         return []
@@ -771,10 +848,13 @@ def _chunk_text_naive(full_text: str, chunk_size: int = 3000, chunk_overlap: int
 
 def _add_overlap_to_chunks(chunks: List[str], overlap: int) -> List[str]:
     """
-    Add overlap between semantic chunks for backward compatibility.
-    
-    Takes the end of each chunk and the beginning of the next chunk
-    to create overlapping content.
+    Add character-level overlap between chunks by prefixing each chunk with the
+    tail of its predecessor.
+
+    No longer used by chunk_text(): semchunk applies overlap itself, on token
+    boundaries, which keeps the overlap in the same units as the chunk size and
+    does not duplicate a partial word into the next chunk. Kept as a helper for
+    callers that want character-denominated overlap over an arbitrary chunk list.
     """
     if len(chunks) <= 1 or overlap <= 0:
         return chunks

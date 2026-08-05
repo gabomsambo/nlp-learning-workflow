@@ -4,8 +4,9 @@
 # used to be `>=` throughout, which meant a rebuild silently moved the whole
 # stack. That already broke this project three separate times: Starlette 1.x
 # dropped the legacy `TemplateResponse(name, context)` signature and 500'd
-# every HTML page, semchunk 4.1.1 changed its signature so `pdf_loader`
-# silently fell back to naive chunking, and atomic-agents started requiring
+# every HTML page, `pdf_loader` called semchunk with an argument list no
+# released semchunk ever accepted and silently fell back to naive chunking
+# (fixed since — see below), and atomic-agents started requiring
 # Python >= 3.12 which broke the documented `uv venv --python 3.11` recipe.
 #
 # These are the versions the code is KNOWN GOOD against, captured from a real
@@ -52,7 +53,9 @@ sqlalchemy==2.0.51
 pypdf==6.14.2
 pdfplumber==0.11.10
 pymupdf==1.28.0  # As fallback
-semchunk==4.1.1  # For semantic text chunking
+semchunk==4.1.1  # Semantic chunking. `chunk()` takes a required positional
+                 # `token_counter` and has since 0.1.0, so there is no older
+                 # version whose signature matches a call without one.
 
 # Layout-aware PDF processing
 layoutparser==0.3.4  # For layout detection
@@ -81,7 +84,8 @@ fsrs==6.3.1  # Free Spaced Repetition Scheduler (correct package name)
 # Data Processing
 numpy==2.5.1
 pandas==3.0.5
-tiktoken==0.13.0  # For token counting
+tiktoken==0.13.0  # Token counting: cl100k_base sizes the chunks above the way
+                  # text-embedding-3-small counts them.
 
 # Utilities
 python-dotenv==1.2.2
