@@ -126,7 +126,29 @@ class SearXNGTool:
             List of PaperRef objects matching the search criteria
 
         """
-        # Use synchronous HTTP client to avoid async issues
+        # Prefer the JSON API: it targets the arxiv engine and yields real paper
+        # metadata (arXiv IDs, venue), where the HTML scrape below returns
+        # whatever the general web category surfaced — tutorials and blog posts.
+        # JSON requires `formats: [html, json]` in searxng_config/settings.yml;
+        # without it SearXNG answers 403 and we fall back to HTML.
+        try:
+            self._enforce_rate_limit()
+
+            search_url = self._build_search_url(query)
+            logger.info(f"Searching SearXNG (JSON): {search_url}")
+
+            with httpx.Client(timeout=30.0, headers={
+                "User-Agent": "NLP-Learning-Workflow/1.0",
+                "Accept": "application/json",
+            }) as sync_client:
+                response = sync_client.get(search_url)
+                response.raise_for_status()
+                return self._parse_searxng_results(response.json(), query.max_results)
+
+        except Exception as e:
+            logger.warning(f"SearXNG JSON search failed ({e}); falling back to HTML")
+
+        # Fallback: form POST against the HTML UI, scraped with regex.
         try:
             self._enforce_rate_limit()
 
@@ -134,7 +156,7 @@ class SearXNGTool:
             search_params = self._build_search_params(query)
             search_url = f"{self.base_url.rstrip('/')}/search"
 
-            logger.info(f"Searching SearXNG: {search_url} with params: {search_params}")
+            logger.info(f"Searching SearXNG (HTML): {search_url} with params: {search_params}")
 
             # Use synchronous HTTP client with POST request
             with httpx.Client(timeout=30.0, headers={
@@ -145,7 +167,6 @@ class SearXNGTool:
                 response = sync_client.post(search_url, data=search_params)
                 response.raise_for_status()
 
-                # Parse HTML results since JSON API seems restricted
                 return self._parse_html_results(response.text, query.max_results)
 
         except Exception as e:

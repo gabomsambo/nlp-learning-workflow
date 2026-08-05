@@ -25,7 +25,7 @@ def mock_pipeline_result_success():
     """Mock successful pipeline result."""
     lesson = Lesson(
         paper_id="test.123",
-        pillar_id="linguistic-cognitive-foundations",
+        pillar_id="formal-linguistics-nlp",
         title="Test Lesson Title",
         content="Test lesson content with detailed explanation of the paper.",
         tl_dr="Test lesson summary",
@@ -39,7 +39,7 @@ def mock_pipeline_result_success():
     quiz_cards = [
         QuizCard(
             paper_id="test.123",
-            pillar_id="linguistic-cognitive-foundations",
+            pillar_id="formal-linguistics-nlp",
             question="Test question?",
             answer="Test answer",
             difficulty=DifficultyLevel.EASY,
@@ -48,7 +48,7 @@ def mock_pipeline_result_success():
     ]
 
     return PipelineResult(
-        pillar_id="linguistic-cognitive-foundations",
+        pillar_id="formal-linguistics-nlp",
         papers_processed=["test.123"],
         lessons_created=[lesson],
         quizzes_generated=quiz_cards,
@@ -63,7 +63,7 @@ def mock_pipeline_result_success():
 def mock_pipeline_result_failure():
     """Mock failed pipeline result."""
     return PipelineResult(
-        pillar_id="models-architectures",
+        pillar_id="neural-architectures-language",
         papers_processed=[],
         lessons_created=[],
         quizzes_generated=[],
@@ -80,7 +80,7 @@ def mock_recent_notes():
     return [
         PaperNote(
             paper_id="paper.123",
-            pillar_id="linguistic-cognitive-foundations",
+            pillar_id="formal-linguistics-nlp",
             problem="First test problem",
             method="Test method 1",
             findings=["Finding 1"],
@@ -91,7 +91,7 @@ def mock_recent_notes():
         ),
         PaperNote(
             paper_id="paper.456",
-            pillar_id="linguistic-cognitive-foundations",
+            pillar_id="formal-linguistics-nlp",
             problem="Second test problem",
             method="Test method 2",
             findings=["Finding 2"],
@@ -102,7 +102,7 @@ def mock_recent_notes():
         ),
         PaperNote(
             paper_id="paper.789",
-            pillar_id="linguistic-cognitive-foundations",
+            pillar_id="formal-linguistics-nlp",
             problem="Third test problem",
             method="Test method 3",
             findings=["Finding 3"],
@@ -136,15 +136,15 @@ class TestCLIHelp:
         assert result.exit_code == 0
         assert "Available Learning Pillars" in result.stdout
         # Check for slug-format pillar IDs (now dynamic from database)
-        assert "linguistic" in result.stdout.lower()
-        assert "models" in result.stdout.lower()
-        assert "data" in result.stdout.lower() or "training" in result.stdout.lower()
-        assert "evaluation" in result.stdout.lower()
-        assert "ethics" in result.stdout.lower()
+        assert "linguistics" in result.stdout.lower()
+        assert "architectures" in result.stdout.lower()
+        assert "llm" in result.stdout.lower()
+        assert "interpretability" in result.stdout.lower()
+        assert "safety" in result.stdout.lower()
         # Check for key parts of the pillar names (may be wrapped/formatted)
-        assert "Linguistic" in result.stdout
-        assert "Cognitive" in result.stdout
-        assert "Models" in result.stdout
+        assert "Formal" in result.stdout
+        assert "Linguistics" in result.stdout
+        assert "Neural" in result.stdout
         assert "Architectures" in result.stdout
         assert "Loaded config from: /test/.env" in result.stdout
 
@@ -165,7 +165,7 @@ class TestRunCommand:
         mock_orchestrator_class.return_value = mock_orchestrator
         
         # Run command
-        result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations", "--papers", "2"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "formal-linguistics-nlp", "--papers", "2"])
         
         # Verify result
         assert result.exit_code == 0
@@ -177,7 +177,7 @@ class TestRunCommand:
         
         # Verify orchestrator was called correctly
         mock_orchestrator_class.assert_called_once_with(enable_quiz=True)
-        mock_orchestrator.run_daily.assert_called_once_with("linguistic-cognitive-foundations", papers_limit=2)
+        mock_orchestrator.run_daily.assert_called_once_with("formal-linguistics-nlp", papers_limit=2)
     
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
@@ -192,7 +192,7 @@ class TestRunCommand:
         mock_orchestrator_class.return_value = mock_orchestrator
         
         # Run command
-        result = cli_runner.invoke(app, ["run", "--pillar", "models-architectures"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "neural-architectures-language"])
         
         # Verify result
         assert result.exit_code == 1
@@ -202,7 +202,7 @@ class TestRunCommand:
         assert "No .env file found" in result.stdout
         
         # Verify orchestrator was called
-        mock_orchestrator.run_daily.assert_called_once_with("models-architectures", papers_limit=1)
+        mock_orchestrator.run_daily.assert_called_once_with("neural-architectures-language", papers_limit=1)
     
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
@@ -217,7 +217,7 @@ class TestRunCommand:
         mock_orchestrator_class.return_value = mock_orchestrator
         
         # Run command
-        result = cli_runner.invoke(app, ["run", "--pillar", "data-training-methodologies", "--papers", "1"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "llm-theory-practice", "--papers", "1"])
         
         # Verify result
         assert result.exit_code == 1
@@ -238,10 +238,10 @@ class TestRunCommand:
             mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
             mock_orchestrator_class.return_value = mock_orchestrator
             
-            result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations"])
+            result = cli_runner.invoke(app, ["run", "--pillar", "formal-linguistics-nlp"])
 
             # Should use default papers=1
-            mock_orchestrator.run_daily.assert_called_once_with("linguistic-cognitive-foundations", papers_limit=1)
+            mock_orchestrator.run_daily.assert_called_once_with("formal-linguistics-nlp", papers_limit=1)
 
 
 class TestStatusCommand:
@@ -253,11 +253,14 @@ class TestStatusCommand:
     def test_status_command_success(self, mock_env_path, mock_db, mock_get_pillars, cli_runner, mock_recent_notes):
         """Test successful status command execution."""
         mock_get_pillars.return_value = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
         # Mock environment path
         mock_env_path.return_value = Path("/test/.env")
@@ -274,18 +277,18 @@ class TestStatusCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["status", "--pillar", "linguistic-cognitive-foundations"])
+        result = cli_runner.invoke(app, ["status", "--pillar", "formal-linguistics-nlp"])
         
         # Verify result
         assert result.exit_code == 0
-        assert "Status for linguistic-cognitive-foundations" in result.stdout
+        assert "Status for formal-linguistics-nlp" in result.stdout
         assert "Recent Notes" in result.stdout
         assert "paper.123" in result.stdout
         assert "paper.456" in result.stdout
         assert "paper.789" in result.stdout
         
         # Verify database calls
-        mock_db.get_recent_notes.assert_called_once_with("linguistic-cognitive-foundations", limit=3)
+        mock_db.get_recent_notes.assert_called_once_with("formal-linguistics-nlp", limit=3)
     
     @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.db')
@@ -293,11 +296,14 @@ class TestStatusCommand:
     def test_status_command_empty_lessons(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test status command with no recent lessons."""
         mock_get_pillars.return_value = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
         # Mock environment path
         mock_env_path.return_value = None
@@ -314,7 +320,7 @@ class TestStatusCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["status", "--pillar", "models-architectures"])
+        result = cli_runner.invoke(app, ["status", "--pillar", "neural-architectures-language"])
         
         # Verify result
         assert result.exit_code == 0
@@ -326,11 +332,14 @@ class TestStatusCommand:
     def test_status_command_db_error(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test status command with database error."""
         mock_get_pillars.return_value = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
         # Mock environment path
         mock_env_path.return_value = None
@@ -339,7 +348,7 @@ class TestStatusCommand:
         mock_db.get_recent_notes.side_effect = Exception("Database connection failed")
         
         # Run command
-        result = cli_runner.invoke(app, ["status", "--pillar", "data-training-methodologies"])
+        result = cli_runner.invoke(app, ["status", "--pillar", "llm-theory-practice"])
         
         # Verify result
         assert result.exit_code == 1
@@ -362,11 +371,14 @@ class TestReviewCommand:
     def test_review_command_success(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test successful review command execution."""
         mock_get_pillars.return_value = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
         # Mock environment path
         mock_env_path.return_value = Path("/test/.env")
@@ -379,11 +391,11 @@ class TestReviewCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["review", "--pillar", "linguistic-cognitive-foundations"])
+        result = cli_runner.invoke(app, ["review", "--pillar", "formal-linguistics-nlp"])
         
         # Verify result
         assert result.exit_code == 0
-        assert "Review for linguistic-cognitive-foundations" in result.stdout
+        assert "Review for formal-linguistics-nlp" in result.stdout
         assert "Due today: 3" in result.stdout
     
     @patch('nlp_pillars.cli.get_valid_pillars')
@@ -392,11 +404,14 @@ class TestReviewCommand:
     def test_review_command_no_due_cards(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test review command with no due quiz cards."""
         mock_get_pillars.return_value = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
         # Mock environment path
         mock_env_path.return_value = None
@@ -409,7 +424,7 @@ class TestReviewCommand:
         mock_db.get_client.return_value.table.return_value = mock_table
         
         # Run command
-        result = cli_runner.invoke(app, ["review", "--pillar", "evaluation-interpretability"])
+        result = cli_runner.invoke(app, ["review", "--pillar", "model-interpretability"])
         
         # Verify result
         assert result.exit_code == 0
@@ -421,11 +436,14 @@ class TestReviewCommand:
     def test_review_command_db_error(self, mock_env_path, mock_db, mock_get_pillars, cli_runner):
         """Test review command with database error."""
         mock_get_pillars.return_value = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
         # Mock environment path
         mock_env_path.return_value = None
@@ -434,7 +452,7 @@ class TestReviewCommand:
         mock_db.get_client.side_effect = Exception("Database connection failed")
         
         # Run command
-        result = cli_runner.invoke(app, ["review", "--pillar", "ethics-applications"])
+        result = cli_runner.invoke(app, ["review", "--pillar", "ai-safety-alignment"])
         
         # Verify result
         assert result.exit_code == 1
@@ -478,11 +496,14 @@ class TestPillarValidation:
     def test_all_valid_pillars(self, cli_runner):
         """Test that all valid pillars are accepted."""
         valid_pillars = [
-            "linguistic-cognitive-foundations",
-            "models-architectures",
-            "data-training-methodologies",
-            "evaluation-interpretability",
-            "ethics-applications"
+            "formal-linguistics-nlp",
+            "neural-architectures-language",
+            "llm-theory-practice",
+            "computational-semantics",
+            "model-interpretability",
+            "ai-agents-tool-use",
+            "ml-systems-production",
+            "ai-safety-alignment"
         ]
 
         for pillar in valid_pillars:
@@ -521,7 +542,7 @@ class TestEdgeCases:
     
     def test_run_command_invalid_papers_count(self, cli_runner):
         """Test run command with invalid papers count."""
-        result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations", "--papers", "0"])
+        result = cli_runner.invoke(app, ["run", "--pillar", "formal-linguistics-nlp", "--papers", "0"])
         
         assert result.exit_code == 2  # Typer validation error
     
@@ -533,7 +554,7 @@ class TestEdgeCases:
             mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
             mock_orchestrator_class.return_value = mock_orchestrator
             
-            result = cli_runner.invoke(app, ["run", "--pillar", "linguistic-cognitive-foundations"])
+            result = cli_runner.invoke(app, ["run", "--pillar", "formal-linguistics-nlp"])
             
             # Verify logging was configured
             mock_logging_config.assert_called_once()
