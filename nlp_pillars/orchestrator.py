@@ -25,6 +25,7 @@ from .tools.arxiv_tool import ArXivTool
 from .tools.semantic_scholar_tool import SemanticScholarTool
 from .tools.vector_search_tool import VectorSearchTool
 from .config import get_settings, get_pillar_config
+from .paper_ids import resolvable_pdf_url
 from . import db
 from . import vectors
 
@@ -640,17 +641,18 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(f"Semantic Scholar fetch failed for {paper_id}: {e}")
 
-        # Create reference with constructed PDF URL for arXiv papers
-        pdf_url = None
-
-        # Check if it looks like an arXiv ID (e.g., "2405.10385" or "2301.00001")
-        if paper_id and '.' in paper_id:
-            parts = paper_id.replace('v', '.').split('.')
-            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-                # It's an arXiv ID - construct the PDF URL
-                arxiv_id = paper_id.split('v')[0]  # Remove version if present
-                pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-                logger.info(f"Constructed arXiv PDF URL for {paper_id}: {pdf_url}")
+        # Create reference with constructed PDF URL for arXiv papers. Uses the
+        # shared matcher rather than an ad-hoc "has a dot and digits" test,
+        # which accepted DOIs like 10.1038/nature12345 and built arXiv URLs for
+        # them.
+        pdf_url = resolvable_pdf_url(paper_id, None)
+        if pdf_url:
+            logger.info(f"Constructed arXiv PDF URL for {paper_id}: {pdf_url}")
+        else:
+            logger.warning(
+                f"No PDF URL could be resolved for paper {paper_id!r}; "
+                f"ingest will reject it"
+            )
 
         return PaperRef(
             id=paper_id,

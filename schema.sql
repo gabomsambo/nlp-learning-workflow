@@ -63,7 +63,11 @@ CREATE TABLE paper_queue (
     paper_id TEXT NOT NULL,
     title TEXT NOT NULL,
     priority INTEGER DEFAULT 5,  -- Higher number = higher priority
-    source TEXT,  -- Source of the paper (arxiv, searxng, etc.)
+    source TEXT,  -- What the identifier is: 'arxiv' or 'url'
+    -- PDF URL the candidate was discovered with. NULL only for arXiv-id rows,
+    -- where pop_from_paper_queue reconstructs it from paper_id. Added by
+    -- docs/migrations/008_paper_queue_url_pdf.sql.
+    url_pdf TEXT,
     processed BOOLEAN DEFAULT FALSE,
     added_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );

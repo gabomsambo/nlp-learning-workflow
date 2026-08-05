@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
+from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
     ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
@@ -17,6 +18,17 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_missing_url_pdf_column(error: Any) -> bool:
+    """True if a PostgREST error means paper_queue.url_pdf does not exist.
+
+    PostgREST reports an unknown column as PGRST204 with a message naming it.
+    Databases created before docs/migrations/008_paper_queue_url_pdf.sql hit
+    this; the caller degrades to arXiv-only queueing rather than failing.
+    """
+    text = str(error).lower()
+    return "url_pdf" in text and ("pgrst204" in text or "column" in text)
 
 
 class PostgRESTClient:
@@ -1134,17 +1146,49 @@ def add_to_paper_queue(pillar_id: str, papers: List[PaperRef], priority: int = 5
             logger.debug(f"Paper {paper.id} already exists or is queued for pillar {pillar_id}, skipping")
             continue
 
+        # The queue is the last place a candidate can be rejected cheaply.
+        # Past this point the only feedback is an ingest failure, which reads as
+        # "the pillar failed today" rather than "this candidate was never
+        # downloadable". So refuse anything that cannot produce a PDF URL.
+        pdf_url = resolvable_pdf_url(paper.id, paper.url_pdf)
+        if not pdf_url:
+            logger.warning(
+                f"Not queueing paper {paper.id!r} ({paper.title[:60]!r}) for pillar "
+                f"{pillar_id}: it is neither an arXiv id nor accompanied by a PDF "
+                f"URL, so ingest could never download it"
+            )
+            continue
+
         try:
             queue_data = {
                 'paper_id': paper.id,
                 'pillar_id': pillar_id,
                 'title': paper.title,
-                'source': 'arxiv',  # Default source, could be enhanced to track actual source
+                # Record what the id actually is instead of asserting 'arxiv'
+                # for everything — pop_from_paper_queue trusts this field, and
+                # a wrong 'arxiv' is what turned unresolvable ids into
+                # fabricated https://arxiv.org/pdf/<id>.pdf URLs.
+                'source': 'arxiv' if is_arxiv_id(paper.id) else 'url',
+                # Carry the resolved URL so a non-arXiv paper survives the round
+                # trip. Requires docs/migrations/008_paper_queue_url_pdf.sql on
+                # databases created before that migration; see the retry below.
+                'url_pdf': pdf_url,
                 'priority': priority,
                 'processed': False
             }
 
             response = client.table('paper_queue').insert(queue_data)
+
+            if response['error'] and _is_missing_url_pdf_column(response['error']):
+                logger.error(
+                    "paper_queue has no url_pdf column — run "
+                    "docs/migrations/008_paper_queue_url_pdf.sql. Falling back to "
+                    "queueing without it; non-arXiv candidates will be dropped."
+                )
+                if not is_arxiv_id(paper.id):
+                    continue
+                queue_data.pop('url_pdf')
+                response = client.table('paper_queue').insert(queue_data)
 
             if response['error']:
                 if 'duplicate' in str(response['error']).lower():
@@ -1194,7 +1238,12 @@ def pop_from_paper_queue(pillar_id: str, limit: int = 1) -> List[PaperRef]:
         papers = []
         for row in response['data']:
             # Create PaperRef with full metadata from ArXiv if available
-            paper = _fetch_full_paper_metadata(row['paper_id'], row['title'], row.get('source', 'arxiv'))
+            paper = _fetch_full_paper_metadata(
+                row['paper_id'],
+                row['title'],
+                row.get('source', 'arxiv'),
+                url_pdf=row.get('url_pdf'),
+            )
             papers.append(paper)
 
             # Mark as processed
@@ -1242,19 +1291,28 @@ def get_queue_size(pillar_id: str) -> int:
         return 0
 
 
-def _fetch_full_paper_metadata(paper_id: str, title: str, source: str) -> PaperRef:
+def _fetch_full_paper_metadata(
+    paper_id: str,
+    title: str,
+    source: str,
+    url_pdf: Optional[str] = None,
+) -> PaperRef:
     """
     Fetch full paper metadata from ArXiv for a given paper ID.
-    
+
     Args:
         paper_id: Paper ID (arXiv ID)
         title: Paper title from queue
-        source: Source of the paper ('arxiv', 'searxng', etc.)
-        
+        source: Source of the paper ('arxiv', 'url', ...)
+        url_pdf: PDF URL stored on the queue row, if any
+
     Returns:
         PaperRef with full metadata if available, or basic metadata as fallback
     """
-    if source == 'arxiv' and paper_id:
+    # `is_arxiv_id` and not just `source == 'arxiv'`: rows written before the
+    # source field was made honest claim 'arxiv' for everything, and querying
+    # the arXiv API for a non-arXiv id is a guaranteed miss.
+    if source == 'arxiv' and is_arxiv_id(paper_id):
         try:
             # Import here to avoid circular dependencies
             from .tools.arxiv_tool import ArXivTool
@@ -1283,8 +1341,17 @@ def _fetch_full_paper_metadata(paper_id: str, title: str, source: str) -> PaperR
         except Exception as e:
             logger.warning(f"Failed to fetch metadata for paper {paper_id}: {e}")
 
-    # Fallback to basic paper data
-    pdf_url = f"https://arxiv.org/pdf/{paper_id}.pdf" if source == 'arxiv' else None
+    # Fallback to basic paper data. The stored URL wins; an arXiv URL is only
+    # constructed when the id really is an arXiv id. This line used to read
+    # `if source == 'arxiv'` — and since every row claimed 'arxiv', it turned
+    # ids like `searxng_078015` into https://arxiv.org/pdf/searxng_078015.pdf,
+    # which 404s at ingest.
+    pdf_url = resolvable_pdf_url(paper_id, url_pdf)
+    if not pdf_url:
+        logger.warning(
+            f"Queue row for paper {paper_id!r} (source={source!r}) has no "
+            f"resolvable PDF URL; ingest will reject it"
+        )
 
     return PaperRef(
         id=paper_id,
