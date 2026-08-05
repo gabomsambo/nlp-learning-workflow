@@ -15,7 +15,7 @@ async def quiz_home(request: Request, pillar: Optional[str] = None, difficulty: 
     """Display quiz cards for review using FSRS algorithm."""
     try:
         # Import here to avoid circular imports
-        from ...nlp_pillars.db import get_cards_for_review
+        from nlp_pillars.db import get_cards_for_review
 
         # Get cards due for review using FSRS
         # pillar is now a string ID directly
