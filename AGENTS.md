@@ -64,6 +64,26 @@ uses — do not re-add a `QDRANT_URL` override to the `webui` service in `docker
 `Orchestrator` is enough to create it. The cloud cluster is a small free tier — do not
 bulk-load it.
 
+## There are eight pillars, and three places must agree
+
+`create_pillars.py` is authoritative (captain's decision, 2026-08-05). The same list is
+mirrored in `nlp_pillars/config.py::PILLAR_CONFIGS` — the fallback `get_pillar_config()`
+uses when the database lookup fails — and in `README.md`. Change all three together, or a
+database outage starts serving pillars that do not exist.
+
+The `P1`-`P5` legacy IDs (`config.LEGACY_TO_SLUG`, `pillar_utils.LEGACY_PILLAR_MAPPING`)
+predate the slug migration and now point at retired pillars. They are left in place
+deliberately; `get_pillar_config("P1")` raises rather than returning something wrong.
+
+## SearXNG serves JSON only because `settings.yml` says so
+
+`searxng_config/settings.yml` sets `search.formats: [html, json]`. SearXNG defaults to
+HTML-only and answers `?format=json` with **403**, which silently costs the app its
+SearXNG discovery source: `Orchestrator._search_candidates` swallows the failure and
+carries on with arXiv alone. `SearXNGTool.search()` prefers JSON (arXiv engine, real
+paper IDs) and falls back to scraping the HTML UI, which returns general-web results —
+tutorials and blog posts, not papers. If discovery quality drops, check that key first.
+
 ## Sharp edges
 
 `schema.sql` now covers all 11 tables, but it was **reconstructed from application code**,
@@ -81,6 +101,12 @@ alone deliberately:
   matched) as success, so it never falls through to INSERT. The table is fine — a direct
   insert of the converter's payload round-trips all 18 weights — but the upsert can only
   ever update a row that already exists.
+
+`webui/routers/api/script_download.py` is dead code and must **not** be registered in
+`webui/app.py`: importing it aborts application startup (FastAPI rejects its
+`Optional[BackgroundTasks]` annotation at decoration time), and its `get_script_from_db()`
+is an unimplemented stub returning `None`. Working script download already exists at
+`GET /api/podcast/{script_id}/download`. Its module docstring carries the detail.
 
 `nlp_pillars` and `webui` are two **sibling top-level packages** under `/app` (see the
 `COPY` lines in `Dockerfile`), so no relative import can ever reach from one into the
