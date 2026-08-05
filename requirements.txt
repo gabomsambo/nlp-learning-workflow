@@ -53,6 +53,11 @@ sqlalchemy==2.0.51
 pypdf==6.14.2
 pdfplumber==0.11.10
 pymupdf==1.28.0  # As fallback
+pymupdf4llm==1.28.0  # Markdown-aware extraction. pdf_loader imports it and
+                     # tries it ahead of pypdf, but never declared it, so every
+                     # extraction silently fell through to pypdf. Its version
+                     # track follows pymupdf's and it requires pymupdf==1.28.0
+                     # exactly, which is what is already pinned above.
 semchunk==4.1.1  # Semantic chunking. `chunk()` takes a required positional
                  # `token_counter` and has since 0.1.0, so there is no older
                  # version whose signature matches a call without one.

@@ -221,6 +221,25 @@ consequences that cost real debugging time:
   `get_settings()` call. Setting it before, or passing it on the command line, is silently
   ignored.
 
+## PDF extraction: the first two extractors in the chain do not do what the code implies
+
+`pdf_loader.extract_text()` tries four extractors in order. The one that actually runs is
+the **third**, `pymupdf4llm`:
+
+- `layout-parser` is listed first and **always fails** — `layoutparser` 0.3.4 exposes
+  `Detectron2LayoutModel` only when `detectron2` is installed, and it is not (it is not on
+  PyPI). Every extraction logs `module layoutparser has no attribute Detectron2LayoutModel`
+  at ERROR before falling through. That is expected, not a new break. It still costs a full
+  PDF→image render of every page first, so extraction is slower than it looks.
+- `pymupdf4llm` was imported but never declared as a dependency until `fm/nlp-pymupdf4llm`,
+  so for the project's whole history extraction silently landed on `pypdf`.
+
+`pymupdf4llm` 1.28 enables a layout/OCR mode by default, and `pdf_loader` turns it **off**
+at import. Leaving it on drops prose from real papers (all of section 3.1 of arXiv:1706.03762;
+~13% of word instances in arXiv:2106.09685) — the comment at the import has the measurements.
+Do not "restore" it for its nicer tables; there is no knob to keep the layout pass without
+the OCR pass.
+
 ## Chunking is measured in tokens, and its fallback is not a safety net
 
 `pdf_loader.chunk_text()` and `vectors.upsert_text()` take `chunk_size` / `chunk_overlap`
