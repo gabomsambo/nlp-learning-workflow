@@ -153,6 +153,23 @@ carries on with arXiv alone. `SearXNGTool.search()` prefers JSON (arXiv engine, 
 paper IDs) and falls back to scraping the HTML UI, which returns general-web results —
 tutorials and blog posts, not papers. If discovery quality drops, check that key first.
 
+The second thing to check is whether SearXNG has benched the engine. A burst of queries
+trips arXiv's rate limit, and SearXNG then suspends that engine for **an hour**
+(`suspended_time=3600`). It does not error: `/search?format=json` still returns HTTP 200
+with `"results": []` and the reason tucked into `"unresponsive_engines":
+[["arxiv", "Suspended: too many requests"]]`. Every query looks like it simply matched
+nothing. Read `unresponsive_engines` before concluding a query is bad, and space out
+manual probing — a dozen curls in a row is enough to trigger it.
+
+Query *shape* matters more than it looks, because both back ends do keyword matching.
+Measured against the live arXiv API on 2026-08-16, same intent expressed two ways:
+`state space models Mamba RWKV` returned 5/5 on-topic papers, while
+`Exploration of state space models for natural language processing, focusing on
+architectures like Mamba and RWKV` returned 0/5 — top hit "A New Strategy for the
+Exploration of Venus", matched on the word *Exploration*. This is why
+`discovery_agent`'s prompt spends three output instructions forcing 2-8 word keyword
+queries; an LLM left to itself writes the second form every time.
+
 ## A paper identifier must resolve to a PDF, or it is not an identifier
 
 `nlp_pillars/paper_ids.py` is the single place that answers "is this a real paper id, and

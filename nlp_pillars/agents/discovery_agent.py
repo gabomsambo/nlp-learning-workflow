@@ -199,11 +199,28 @@ class DiscoveryAgent:
                 "Read the pillar goal and its focus areas.",
                 "Pick distinct angles: core method, a recent development, an "
                 "application or evaluation. Do not paraphrase one idea three times.",
-                "Phrase each query the way papers on that topic describe "
-                "themselves, not as a question.",
+                "Reduce each angle to the words a paper on it would actually "
+                "contain — model names, method names, task names.",
             ],
             output_instructions=[
                 f"Return at least {MIN_QUERIES} queries.",
+                # These go verbatim to arXiv and SearXNG, which do keyword
+                # matching. Left unconstrained the model writes descriptive
+                # sentences, and the filler words dominate the match. Measured
+                # against the live arXiv API, 2026-08-16, same intent both ways:
+                #   'state space models Mamba RWKV'
+                #       -> 5/5 on topic (Vision-RWKV, Restore-RWKV, ...)
+                #   'Exploration of state space models for natural language
+                #    processing, focusing on architectures like Mamba and RWKV'
+                #       -> 0/5 on topic, led by "A New Strategy for the
+                #          Exploration of Venus" — it matched "Exploration"
+                # Do not relax these three instructions without re-running that
+                # comparison.
+                "A query is 2-8 words of keywords, like a search box entry.",
+                "No sentences, no leading verbs such as 'Exploration of' or "
+                "'A study of', no filler words, no trailing period.",
+                "Good: 'state space models long sequence modeling'. "
+                "Bad: 'An investigation into state space models for sequences'.",
                 "Every query must stay within the pillar's remit.",
                 "Set pillar_id on every query to the pillar id you were given.",
                 "Explain the spread of angles in `rationale`.",
