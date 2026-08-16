@@ -282,7 +282,11 @@ class TestSearXNGTool:
         assert "http://localhost:8080/search" in url
         assert "transformer+attention+mechanisms" in url or "transformer%20attention%20mechanisms" in url
         assert "format=json" in url
-        assert "categories=science" in url
+        # engines=arxiv, not categories=science. The tool pins a single engine
+        # deliberately (see _build_search_url): the arXiv engine is what returns
+        # results carrying real paper identifiers, and a broad category search
+        # returns general-web hits that paper_ids.py then rejects.
+        assert "engines=arxiv" in url
     
     def test_convert_result_to_paper_ref(self):
         """Test conversion of SearXNG result to PaperRef."""
@@ -492,9 +496,9 @@ class TestDiscoveryAgent:
         # Mock successful discovery
         mock_discovery_output = DiscoveryOutput(
             queries=[
-                SearchQuery(pillar_id="linguistic-cognitive-foundations", query="test1", filters={}, max_results=5),
-                SearchQuery(pillar_id="linguistic-cognitive-foundations", query="test2", filters={}, max_results=5),
-                SearchQuery(pillar_id="linguistic-cognitive-foundations", query="test3", filters={}, max_results=5)
+                SearchQuery(pillar_id="formal-linguistics-nlp", query="test1", filters={}, max_results=5),
+                SearchQuery(pillar_id="formal-linguistics-nlp", query="test2", filters={}, max_results=5),
+                SearchQuery(pillar_id="formal-linguistics-nlp", query="test3", filters={}, max_results=5)
             ],
             rationale="Test rationale"
         )
@@ -506,22 +510,25 @@ class TestDiscoveryAgent:
             agent = DiscoveryAgent()
             agent.agent = mock_atomic_agent
             
-            result = agent.discover_for_pillar_id("linguistic-cognitive-foundations")
-        
+            result = agent.discover_for_pillar_id("formal-linguistics-nlp")
+
         assert isinstance(result, DiscoveryOutput)
         assert len(result.queries) == 3
-        assert all(query.pillar_id == "linguistic-cognitive-foundations" for query in result.queries)
+        assert all(query.pillar_id == "formal-linguistics-nlp" for query in result.queries)
     
     def test_get_priority_topics_for_pillar(self):
         """Test getting priority topics for a pillar."""
         with patch.object(DiscoveryAgent, '__init__', lambda x, model=None: None):
             agent = DiscoveryAgent()
             
-            topics = agent.get_priority_topics_for_pillar("models-architectures")
-            
+            topics = agent.get_priority_topics_for_pillar("neural-architectures-language")
+
             assert isinstance(topics, list)
             assert len(topics) > 0
-            assert "Transformer variants" in topics  # From PILLAR_CONFIGS
+            assert "Transformer architecture deep dive" in topics  # From PILLAR_CONFIGS
+
+            # A retired or unknown slug yields nothing rather than raising.
+            assert agent.get_priority_topics_for_pillar("models-architectures") == []
 
 
 class TestIntegration:

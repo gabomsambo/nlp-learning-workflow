@@ -85,6 +85,12 @@ jobs:
         env:
           OPENAI_API_KEY: test-key-not-real
           ANTHROPIC_API_KEY: test-key-not-real
+          # Pinned because the suite asserts on it: test_discovery_and_search's
+          # test_init checks `agent.model == "gpt-4o-mini"`. That is the value in
+          # the project's .env, not config.py's default, which is "gpt-4o" — so
+          # without this line the test passes on a developer machine and fails
+          # here for a reason that has nothing to do with the code under test.
+          DEFAULT_MODEL: gpt-4o-mini
           SUPABASE_URL: http://localhost:3000
           SUPABASE_KEY: test-token-not-real
           POSTGREST_URL: http://localhost:3000
