@@ -57,6 +57,10 @@ def sample_lesson():
     return Lesson(
         paper_id="test.12345",
         pillar_id="models-architectures",
+        # Required on Lesson; without them this fixture raises and every test that
+        # requests it reports as an ERROR rather than a failure.
+        title="A Novel Approach",
+        content="Full lesson body for the database round-trip tests.",
         tl_dr="Novel approach achieves significant improvements in accuracy and speed.",
         takeaways=[
             "Advanced techniques can improve accuracy significantly",

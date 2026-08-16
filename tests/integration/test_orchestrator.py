@@ -94,6 +94,10 @@ def sample_lesson():
     return Lesson(
         paper_id="paper.123",
         pillar_id="models-architectures",
+        # Required on Lesson since the schema gained them; omitting either raises at
+        # construction, which is what turned five tests in this file into ERRORs.
+        title="Attention Is All You Need",
+        content="Transformers replace recurrence with self-attention throughout.",
         tl_dr="Transformers revolutionized NLP by using attention mechanisms instead of recurrence",
         takeaways=[
             "Self-attention captures long-range dependencies effectively",

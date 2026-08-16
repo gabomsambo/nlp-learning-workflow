@@ -59,6 +59,12 @@ def fake_data():
     fake_lesson = Lesson(
         paper_id="fake.001",
         pillar_id="models-architectures",
+        # title and content are required on Lesson. They were added to the schema
+        # after these fixtures were written, and every fixture that omitted them
+        # raised at construction time — which is why this module reported as an
+        # ERROR rather than a failure.
+        title="Smoke Test Lesson",
+        content="Body text for the smoke-test lesson.",
         tl_dr="TL;DR: Smoke test OK.",
         takeaways=[
             "Takeaway 1: Neural architectures can be optimized efficiently",
