@@ -1,0 +1,119 @@
+name: Tests
+
+# This repository had no CI running its test suite until 2026-08-16. Thirteen
+# PRs merged green-looking while `tests/test_discovery_and_search.py`,
+# `tests/integration/test_orchestrator.py` and `tests/e2e/test_smoke.py` could
+# not even be collected — 73 pillar slugs in them had lost their quotes during
+# the slug migration, which parses fine and only fails at runtime. Nothing ran
+# them, so nothing said so.
+#
+# Two jobs, deliberately separate:
+#   guard  — cheap, stdlib-only, and MUST stay green. It re-checks the exact
+#            defect above so it cannot come back silently.
+#   tests  — the pytest suite. See the honesty note on that job before you
+#            "fix" it by weakening it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+# A force-push or rapid follow-up commit should cancel the previous run rather
+# than queue behind it; the lock install below is slow enough to matter.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Bare pillar slugs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No `pip install` on purpose: scripts/check_bare_slugs.py is stdlib-only
+      # (tokenize + pathlib), so this job finishes in seconds and still reports
+      # even when the dependency install in `tests` is broken or slow.
+      - name: Check for unquoted pillar slugs
+        run: python scripts/check_bare_slugs.py
+
+  tests:
+    name: pytest (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12 is the floor, not a preference: atomic-agents requires >= 3.12.
+          # Matches the interpreter the Dockerfile pins.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+
+      # requirements.lock.txt, not requirements.txt, and both, exactly as the
+      # Dockerfile does it. The lock is the authoritative transitive set and the
+      # breakages that motivated pinning were all transitive (Starlette arrives
+      # via fastapi and is not in requirements.txt at all). Passing both to one
+      # pip invocation makes pip fail loudly if the two files ever drift.
+      #
+      # The lock is linux/amd64 — it carries nvidia-* and triton — which is
+      # exactly what ubuntu-latest is. Do NOT reuse this step on an arm64 runner
+      # or an Apple-Silicon host; there, install requirements.txt instead and
+      # accept that the resolution is not the locked one.
+      #
+      # This pulls torch and is slow (several GB). The pip cache above makes
+      # subsequent runs much cheaper; the first run on a new lock will not be.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock.txt -r requirements.txt
+
+      # The suite is fully mocked and must not reach the network or a database.
+      # These are placeholders so module-level config reads find *something*:
+      # a missing key should surface as a test failure, never as a collection
+      # error, and never as a real API call billed to the project.
+      - name: Run tests
+        env:
+          OPENAI_API_KEY: test-key-not-real
+          ANTHROPIC_API_KEY: test-key-not-real
+          SUPABASE_URL: http://localhost:3000
+          SUPABASE_KEY: test-token-not-real
+          POSTGREST_URL: http://localhost:3000
+          QDRANT_URL: http://localhost:6333
+          QDRANT_API_KEY: ""
+          SEARXNG_URL: http://localhost:8080
+        # --continue-on-collection-errors so one unimportable module reports
+        # alongside everything else instead of masking the whole run, which is
+        # the failure mode that let the slug bug hide.
+        run: |
+          pytest tests/ -v --tb=short --continue-on-collection-errors
+
+      # KNOWN-RED, and left that way on purpose.
+      #
+      # Baseline at the commit that added this workflow (2026-08-16), after the
+      # slug fix: 248 passed, 32 failed, 10 errors.
+      #
+      # Those 42 are pre-existing drift between the tests and the code they
+      # cover, NOT flakes and NOT caused by this workflow. Four clusters account
+      # for nearly all of them:
+      #   ~12  tests patch `nlp_pillars.agents.discovery_agent.OpenAI`, a name
+      #        that module no longer binds
+      #   ~10  Lesson gained required `title` / `content`; fixtures never updated
+      #   ~11  tests/test_db.py mocks return bare Mock where the code subscripts
+      #        a response, plus several "DID NOT RAISE ValueError"
+      #    ~4  tests/test_vectors.py expects SHA1-hex point ids where
+      #        qdrant-client 1.19 normalises to UUID form
+      #
+      # Do not paper over this with `continue-on-error`, `|| true`, `-k` filters
+      # or `--ignore`. A suppressed suite is what this file exists to prevent.
+      # Fix the clusters and the job goes green on its own; until then a PR is
+      # judged on whether it moves those numbers the right way.

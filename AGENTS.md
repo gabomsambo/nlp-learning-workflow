@@ -7,9 +7,20 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Running the stack
 
 `docker compose up -d --build` brings up six containers: `webui` (FastAPI on :8000),
-`db` (Postgres on :5432), `postgrest` (:3000), `searxng` (:8080), a local `qdrant`
-(:6333) and `scheduler` (no ports). The build is slow and the image is large —
+`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080), a local
+`qdrant` (:6333) and `scheduler` (no ports). The build is slow and the image is large —
 `requirements.txt` pulls torch and layoutparser.
+
+The database is published on host 5434, not the usual 5432, because a developer machine
+tends to have Postgres already. Only the *host* side moved: inside the compose network
+postgrest still dials `db:5432`, and the container-side port must stay 5432. Reach it with
+`psql -h 127.0.0.1 -p 5434`. When a port conflict is suspected, do not trust `lsof -iTCP`
+— run as your own user it silently omits listeners owned by another user and will report a
+busy port free. `netstat -an | grep <port>` or a throwaway `socket.bind()` tells the truth.
+
+You do not need the image to run the app locally. `uvicorn webui.app:app` from a host
+virtualenv works against the compose services, starts instantly, and skips the multi-GB
+build; see the dependency section for why that is the *only* sane option on Apple Silicon.
 
 `.env` is gitignored and is not in the repo; compose reads it via `env_file:`. It is also
 not copied into the image (see the `COPY` lines in `Dockerfile`), so the container's
@@ -69,10 +80,26 @@ only the file-upload path depends on this.
 
 ## Which Qdrant the app talks to
 
-`webui` uses `QDRANT_URL` from `.env`, which points at a managed Qdrant Cloud cluster.
-The local `qdrant` service is kept only as an offline option and is **not** what the app
-uses — do not re-add a `QDRANT_URL` override to the `webui` service in `docker-compose.yml`.
-`depends_on: qdrant` on `webui` is therefore cosmetic and is left in place deliberately.
+The **local** `qdrant` service, as of 2026-08-16. This reverses the previous entry here,
+which said the app used a managed Qdrant Cloud cluster and told you not to override
+`QDRANT_URL`: that free-tier cluster was suspended and no longer exists. `docker-compose.yml`
+now sets `QDRANT_URL: http://qdrant:6333` on **both** `webui` and `scheduler` (they share a
+collection — never point one at a different Qdrant than the other) and blanks
+`QDRANT_API_KEY`. `depends_on: qdrant` is load-bearing again rather than cosmetic.
+
+A suspended cloud cluster does not fail like a dead host. Its DNS still resolves and the
+regional ingress still terminates TLS, so you get a plain-text `404 page not found` on
+**every** path — `/`, `/healthz`, `/collections` alike — where a live Qdrant answers `/`
+with a JSON banner. Read that 404 as "no cluster behind this UUID", not as a wrong URL.
+
+The `nlp_qdrant_data` volume survived all of this and still holds vectors from earlier
+runs. They are largely **orphaned**: the papers they describe were rows in the reaped
+Supabase database, and `GET /api/pillars/{id}/search` drops any vector hit whose
+`paper_id` is missing from the `papers` table (`if not paper: continue` in
+`webui/routers/api/pillars.py`). So the points are real, count toward the collection
+total, and are invisible in the UI until those papers are re-ingested. A low
+`points_count` after a fresh ingest is not evidence the write failed — scroll the
+collection and group by `paper_id` before concluding anything.
 
 `nlp_pillars/vectors.py::ensure_collections()` creates the single `nlp_pillars` collection
 (1536-dim, cosine) **and** the `pillar_id` keyword payload index. It runs from
@@ -208,6 +235,18 @@ Python 3.12 is the floor everywhere (`pyproject.toml`, `Dockerfile`, README): `a
 requires >= 3.12, so a host virtualenv must be `uv venv --python 3.12`. The `Dockerfile` pins
 the interpreter patch release too — a floating `3.12-slim` would undo half the point.
 
+**The lock is linux/amd64 and cannot be installed on a Mac.** Its own header says so, and it
+carries sixteen `nvidia-*` packages plus `triton`. On an Apple-Silicon host install
+`requirements.txt` instead — `uv pip install -r requirements.txt` into a 3.12 venv — and
+accept that the resolution is the direct pins, not the locked transitive set. CI runs on
+`ubuntu-latest`, which *is* amd64, so `.github/workflows/tests.yml` installs the lock and
+keeps the guarantee where it can be kept.
+
+Building the *image* on Apple Silicon is worse than it looks. Those CUDA packages do publish
+`aarch64` wheels, so the build does not fail — it quietly downloads gigabytes
+(`nvidia_cublas` alone is 542 MB) of libraries that cannot be used without an NVIDIA GPU.
+Run the app from a host venv instead unless you specifically need to test the image.
+
 ## Configuration is loaded in an order that surprises people
 
 `config.py::get_settings()` runs `load_dotenv(find_dotenv(), override=True)`. Two
@@ -289,6 +328,44 @@ Claude calls that each carry the full paper text; measured end to end on a 5-pag
 `quiz_agent` trusts the model's `question_type` but still overwrites `difficulty` from
 `QuizGeneratorInput.difficulty_mix` — that mix is a declared caller input and seeds FSRS
 initial scheduling, so it is enforced, not advisory.
+
+## The test suite runs in CI now, and it is knowingly red
+
+`.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
+that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
+
+Baseline the day it was added: **248 passed, 32 failed, 10 errors**. The 42 are pre-existing
+drift between the tests and the code they cover, not flakes. Four clusters:
+tests patching `nlp_pillars.agents.discovery_agent.OpenAI` (a name that module no longer
+binds); fixtures predating `Lesson` gaining required `title` / `content`; `tests/test_db.py`
+handing back bare `Mock` where the code subscripts a response; and `tests/test_vectors.py`
+asserting SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form.
+
+Judge a PR on whether it moves those numbers the right way. Do **not** make the job green
+with `continue-on-error`, `|| true`, `--ignore` or `-k` — a suppressed suite is the exact
+condition this workflow was added to end.
+
+The `guard` job is separate, stdlib-only, and **must stay green**. It runs
+`scripts/check_bare_slugs.py`, which fails the build on a pillar slug written without
+quotes:
+
+    pillar_id=models-architectures      # subtraction of two undefined names
+    pillar_id="models-architectures"    # what was meant
+
+This is not hypothetical tidiness. The slug migration dropped the quotes in **73** places
+across `tests/test_discovery_and_search.py`, `tests/integration/test_orchestrator.py` and
+`tests/e2e/test_smoke.py`, and every one of them survived thirteen merged PRs. The bad form
+parses, compiles, imports, and passes ruff; it dies only at runtime, with `NameError: name
+'models' is not defined` raised from whichever line *uses* the fixture rather than the line
+that defines it. Nothing ran those three files, so nothing said so. Detection uses
+`tokenize`, not a regex, so slugs inside strings and comments are never flagged.
+
+The quotes were added and the slugs left pointing at the retired pre-migration ids
+(`models-architectures` and friends, from `config.LEGACY_TO_SLUG`). That is deliberate and
+matches the seven test files that were already correct — all of them use quoted legacy
+slugs throughout. Re-pointing them at five of the current eight pillars would be an
+invention rather than a migration, which is the same reasoning `config.py` gives for
+leaving `LEGACY_TO_SLUG` alone. Retiring those ids from the tests is a separate job.
 
 ## Maintaining this file
 
