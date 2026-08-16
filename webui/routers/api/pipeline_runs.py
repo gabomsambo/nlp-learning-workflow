@@ -9,6 +9,7 @@ synchronous ``nlp_pillars.db`` client instead.
 import logging
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from webui.services.postgrest_client import PostgrestClient
@@ -53,10 +54,26 @@ async def get_run(run_id: str) -> Dict[str, Any]:
         HTTPException: 404 if the run does not exist. The browser treats that as
             "forget the stored run id" rather than retrying forever, so it matters
             that a missing run is a 404 and not an empty body.
+        HTTPException: 503 if the database could not be reached. This must NOT be a
+            404 for exactly the same reason: 404 tells the browser the run is gone and
+            it discards the id, so answering a transient outage with 404 permanently
+            detaches the UI from a run that is still executing. 503 routes into the
+            poller's retry-with-backoff path instead, which is the honest behaviour —
+            we do not know the run's state, so we say so and try again.
 
     """
     client = PostgrestClient()
-    run = await client.get_pipeline_run(run_id)
+    try:
+        run = await client.get_pipeline_run(run_id)
+    except httpx.HTTPError as e:
+        logger.warning(f"Could not read pipeline run {run_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Could not reach the database to read this run. The run itself is "
+                "unaffected; retrying."
+            ),
+        ) from e
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

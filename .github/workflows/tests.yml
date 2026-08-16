@@ -45,6 +45,29 @@ jobs:
       - name: Check for unquoted pillar slugs
         run: python scripts/check_bare_slugs.py
 
+  js:
+    name: run-progress.js helpers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No setup-node and no npm install, for the same reason `guard` skips pip:
+      # ubuntu-latest already ships Node, node:test has been stdlib since Node 20,
+      # and run-progress.js has no dependencies. This finishes in seconds and still
+      # reports when the pytest job is slow or broken.
+      #
+      # A glob rather than `node --test tests/js/`: the directory form resolves the
+      # path as a module on some setups (and chokes on a repo path containing a
+      # space), which fails as MODULE_NOT_FOUND rather than as a test failure.
+      #
+      # This covers the PURE helpers only — formatting and state classification.
+      # The polling loop and DOM teardown need a browser; testing those would mean
+      # jsdom (npm) or Playwright (a browser download), both rejected as
+      # disproportionate for a project with no build step. Do not let this job's
+      # green tick be read as "the frontend is tested".
+      - name: Run JS unit tests
+        run: node --test tests/js/*.test.js
+
   tests:
     name: pytest (Python 3.12)
     runs-on: ubuntu-latest

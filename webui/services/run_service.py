@@ -150,10 +150,10 @@ def execute_run(
 
         db.finish_pipeline_run(
             run_id,
-            RunStatus.SUCCEEDED.value if result.success else RunStatus.FAILED.value,
+            _terminal_status(result),
             papers_processed=len(result.papers_processed),
             papers_failed=len(result.errors),
-            error=_first_error(result),
+            error=_summarise_errors(result),
         )
         logger.info(
             f"Run {run_id} finished: {len(result.papers_processed)} processed, "
@@ -239,9 +239,51 @@ def _to_paper_refs(papers: List[Any]) -> List[PaperRef]:
     return [p if isinstance(p, PaperRef) else PaperRef(**p) for p in papers]
 
 
-def _first_error(result) -> Optional[str]:
-    """Surface one error message on the run row; the rest stay in the logs."""
+def _terminal_status(result) -> str:
+    """Map a PipelineResult onto a run status a user can act on.
+
+    ``PipelineResult.success`` is ``len(papers_processed) > 0``, so a run that found
+    nothing new — the ordinary outcome once a pillar has caught up — arrives here as
+    ``success=False`` with an empty ``errors`` list. That used to be recorded as
+    ``failed``, and since there was no error to report the browser rendered a bare red
+    "Failed" above eleven green completed stages. Nothing had gone wrong; there was
+    simply nothing to do, and the run said so on every stage.
+
+    ``success`` itself is deliberately left alone: the CLI, the scheduler and fourteen
+    existing tests read it, and "did this run produce anything" is the right meaning
+    for all of them. Only the user-facing run status needed to learn the difference.
+    """
+    if result.success or not result.errors:
+        return RunStatus.SUCCEEDED.value
+    return RunStatus.FAILED.value
+
+
+#: Room for several messages inside the 2000-char cap finish_pipeline_run applies.
+_MAX_ERROR_CHARS = 1800
+
+
+def _summarise_errors(result) -> Optional[str]:
+    """Put every paper's failure on the run row, not just the first.
+
+    Stage rows cannot carry this: they are per-run, not per-paper, so when paper 2
+    re-enters a stage that paper 1 failed in it overwrites the failure back to
+    completed. The run-level error string is the only place a multi-paper run can
+    report more than one casualty, and reporting only ``errors[0]`` meant a run with
+    three failures looked like it had one.
+    """
     if not result.errors:
         return None
-    first = result.errors[0]
-    return first.get("message") if isinstance(first, dict) else str(first)
+
+    messages = [
+        e.get("message") if isinstance(e, dict) else str(e) for e in result.errors
+    ]
+    messages = [m for m in messages if m]
+    if not messages:
+        return None
+    if len(messages) == 1:
+        return messages[0]
+
+    joined = f"{len(messages)} papers failed: " + " | ".join(messages)
+    if len(joined) > _MAX_ERROR_CHARS:
+        joined = joined[:_MAX_ERROR_CHARS].rstrip() + " …(truncated, see logs)"
+    return joined

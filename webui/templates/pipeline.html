@@ -23,11 +23,32 @@
       <input type="number" name="papers" min="1" max="10" value="1" />
     </label>
   </div>
-  <button type="submit" id="run-btn">Run Pipeline</button>
-  <span id="status"></span>
+  <div class="grid">
+    <button type="submit" id="run-btn">Run Pipeline</button>
+    <button type="button" id="cancel-btn" class="secondary outline" hidden disabled>
+      Cancel run
+    </button>
+  </div>
 </form>
 
-<div id="progress" style="margin-top:1rem"></div>
+{#
+  The live region is rendered EMPTY on purpose. Assistive technology announces
+  changes to a live region, not content already present when the page loads, so
+  seeding it server-side would make the first real update silent.
+  https://www.w3.org/WAI/WCAG22/Techniques/aria/ARIA22
+#}
+<p id="status" role="status" aria-live="polite" aria-atomic="true"></p>
+
+<progress id="run-bar" hidden aria-label="Pipeline progress"></progress>
+
+{# Not a live region: re-announcing eleven rows every second is unusable. The one
+   sentence in #status is what gets announced. #}
+<div id="progress" aria-live="off" style="margin-top:1rem"></div>
+
+<details id="history" style="margin-top:2rem">
+  <summary>Recent runs</summary>
+  <div id="history-body"><small>Loading…</small></div>
+</details>
 
 <script src="/static/run-progress.js"></script>
 <script>
@@ -35,23 +56,55 @@ const form = document.getElementById('run-form');
 const statusEl = document.getElementById('status');
 const progressEl = document.getElementById('progress');
 const runBtn = document.getElementById('run-btn');
-const els = { status: statusEl, stages: progressEl };
+const cancelBtn = document.getElementById('cancel-btn');
+const barEl = document.getElementById('run-bar');
+const els = { status: statusEl, stages: progressEl, progress: barEl, cancel: cancelBtn };
 
 function setBusy(busy) {
   runBtn.disabled = busy;
   runBtn.textContent = busy ? 'Running…' : 'Run Pipeline';
 }
 
-function onFinished() {
+// Fires for a finished run AND for a run that turned out not to exist (run === null).
+// Both must re-enable the button — a 404 used to skip this entirely and leave the
+// page stuck on "Running…" with no way forward but a reload.
+function onFinished(run) {
   setBusy(false);
+  if (run) loadHistory();
 }
+
+// Called on every poll, so the dropdown can follow the run we are actually showing.
+// reattach() only returns an id — when it came from ?run= or localStorage the pillar
+// is not known until the first response arrives.
+function syncPillar(run) {
+  if (!run || !run.pillar_id) return;
+  const select = form.querySelector('select[name=pillar]');
+  if (select && select.value !== run.pillar_id) select.value = run.pillar_id;
+}
+
+cancelBtn.addEventListener('click', async () => {
+  const runId = cancelBtn.dataset.runId;
+  if (!runId) return;
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'Cancelling…';
+  try {
+    const result = await RunProgress.cancel(runId);
+    statusEl.textContent = result.message;
+    statusEl.style.color = 'darkorange';
+  } catch (err) {
+    statusEl.textContent = 'Could not cancel: ' + err.message;
+    statusEl.style.color = 'crimson';
+    cancelBtn.disabled = false;
+  }
+  cancelBtn.textContent = 'Cancel run';
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   setBusy(true);
   statusEl.textContent = 'Starting…';
   statusEl.style.color = '';
-  progressEl.innerHTML = '';
+  progressEl.replaceChildren();
 
   const data = new FormData(form);
   const pillar = data.get('pillar');
@@ -64,18 +117,24 @@ form.addEventListener('submit', async (e) => {
     const json = await res.json();
 
     if (res.status === 409) {
-      // A run is already active for this pillar — attach to it rather than telling
-      // the user "no" and leaving them with nothing to look at.
+      // A run is already active for this pillar. Ask the SERVER which run that is
+      // rather than calling reattach(), which prefers ?run=/localStorage and would
+      // happily attach to a stale leftover instead of the run causing the conflict.
       statusEl.textContent = json.error || 'A run is already in progress.';
       statusEl.style.color = 'darkorange';
-      await RunProgress.reattach(els, onFinished);
+      const active = await RunProgress.findActive(pillar) || await RunProgress.findActive();
+      if (active) {
+        RunProgress.attach(active.id, els, onFinished, syncPillar);
+      } else {
+        setBusy(false);
+      }
       return;
     }
     if (!res.ok || !json.run_id) {
       throw new Error(json.error || `HTTP ${res.status}`);
     }
 
-    RunProgress.attach(json.run_id, els, onFinished);
+    RunProgress.attach(json.run_id, els, onFinished, syncPillar);
   } catch (err) {
     setBusy(false);
     statusEl.textContent = 'Error: ' + err.message;
@@ -83,20 +142,64 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
+/* ------------------------------------------------------------------- history */
+
+function runLine(run) {
+  const li = document.createElement('li');
+  const when = run.created_at ? new Date(run.created_at).toLocaleString() : '';
+  const dot = document.createElement('strong');
+  dot.textContent = run.status;
+  dot.style.color = RunProgress.statusColor(run);
+  li.append(dot, ` · ${run.pillar_id} · ${run.kind} · ${when}`);
+  if (run.papers_processed || run.papers_failed) {
+    const counts = document.createElement('small');
+    counts.style.opacity = '.7';
+    counts.textContent = ` — ${run.papers_processed} processed, ${run.papers_failed} failed`;
+    li.appendChild(counts);
+  }
+  if (run.error) {
+    const err = document.createElement('div');
+    err.style.opacity = '.7';
+    // textContent, not innerHTML: run.error contains raw exception text.
+    err.textContent = run.error;
+    const small = document.createElement('small');
+    small.appendChild(err);
+    li.appendChild(small);
+  }
+  return li;
+}
+
+async function loadHistory() {
+  const body = document.getElementById('history-body');
+  try {
+    const res = await fetch('/api/pipeline-runs?limit=15');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const runs = await res.json();
+    if (!runs.length) {
+      body.replaceChildren(Object.assign(document.createElement('small'),
+        { textContent: 'No runs recorded yet.' }));
+      return;
+    }
+    const ul = document.createElement('ul');
+    runs.forEach(r => ul.appendChild(runLine(r)));
+    body.replaceChildren(ul);
+  } catch (err) {
+    body.replaceChildren(Object.assign(document.createElement('small'),
+      { textContent: 'Could not load run history: ' + err.message }));
+  }
+}
+
+document.getElementById('history').addEventListener('toggle', function () {
+  if (this.open) loadHistory();
+});
+
 // A reload mid-run must not lose the run: pick it up from ?run=, then localStorage,
 // then by asking the server what is in flight. The server lookup is not filtered by
 // pillar — a run for a different pillar is still yours, and hiding it because the
 // dropdown moved on is how a run appears to vanish.
 window.addEventListener('DOMContentLoaded', async () => {
-  const found = await RunProgress.reattach(els, onFinished);
-  if (!found) return;
-  setBusy(true);
-  // When the server told us which pillar is running, point the form at it so the
-  // page is not describing one pillar while showing another's progress.
-  if (found.pillar_id) {
-    const select = form.querySelector('select[name=pillar]');
-    if (select) select.value = found.pillar_id;
-  }
+  const found = await RunProgress.reattach(els, onFinished, syncPillar);
+  if (found) setBusy(true);
 });
 </script>
 {% endblock %}

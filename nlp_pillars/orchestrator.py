@@ -8,7 +8,7 @@ through the complete learning workflow with strict pillar isolation.
 import logging
 import threading
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from .schemas import (
     PillarConfig, PipelineResult,
@@ -145,10 +145,18 @@ class Orchestrator:
             # Step 1: Discovery - Generate search queries
             logger.info(f"Step 1: Discovery for pillar {pillar_id}")
             self._stage(StageName.DISCOVERY, StageStatus.RUNNING.value)
-            discovery_queries = self._run_discovery(pillar_id)
+            discovery_queries, used_fallback = self._run_discovery(pillar_id)
             logger.info(f"Generated {len(discovery_queries)} search queries for pillar {pillar_id}")
+            # Say so when the LLM call failed. The run still works — that is the whole
+            # point of the fallback — but "3 queries" alone hides the fact that these
+            # are the pillar's own focus areas rather than anything discovery chose.
+            discovery_detail = f"{len(discovery_queries)} queries"
+            if used_fallback:
+                discovery_detail += (
+                    " (discovery agent unavailable, used pillar focus areas)"
+                )
             self._stage(StageName.DISCOVERY, StageStatus.COMPLETED.value,
-                        f"{len(discovery_queries)} queries")
+                        discovery_detail)
 
             # Step 2: Search - Find candidate papers
             logger.info(f"Step 2: Searching for candidates for pillar {pillar_id}")
@@ -239,6 +247,15 @@ class Orchestrator:
 
             return result
 
+        except RunCancelledError:
+            # MUST stay above the broad clause below. RunCancelledError subclasses
+            # Exception, so without this the cancel raised by _stage() is caught,
+            # converted into PipelineResult(success=False), and run_service records the
+            # run as 'failed' — the user asks to stop and is told it crashed.
+            # process_selected_papers has no wrapper at all and was always correct;
+            # this is what made the two run kinds disagree.
+            raise
+
         except Exception as e:
             total_time = time.time() - start_time
             error_msg = f"Pipeline failed for pillar {pillar_id}: {str(e)}"
@@ -310,8 +327,16 @@ class Orchestrator:
                 f"on_stage callback failed for {stage.value}/failed", exc_info=True
             )
 
-    def _run_discovery(self, pillar_id: str) -> List[str]:
-        """Run discovery agent to generate search queries."""
+    def _run_discovery(self, pillar_id: str) -> Tuple[List[str], bool]:
+        """Run discovery agent to generate search queries.
+
+        Returns:
+            (queries, used_fallback). ``used_fallback`` is True when the LLM call
+            failed and the pillar's own focus areas were substituted. The caller puts
+            that in the stage detail: the fallback keeps the run alive, but a user
+            looking at "3 queries" deserves to know the agent never answered.
+
+        """
         try:
             # Get pillar configuration
             pillar_config = self._get_pillar_config(pillar_id)
@@ -333,11 +358,11 @@ class Orchestrator:
             queries = [query.query for query in discovery_output.queries]
 
             logger.info(f"Discovery generated {len(queries)} queries for pillar {pillar_id}")
-            return queries
+            return queries, False
 
         except Exception as e:
             logger.warning(f"Discovery failed for pillar {pillar_id}: {e}")
-            return self._fallback_queries(self._get_pillar_config(pillar_id))
+            return self._fallback_queries(self._get_pillar_config(pillar_id)), True
 
     def _fallback_queries(
         self,
@@ -502,8 +527,23 @@ class Orchestrator:
         chunks_upserted = vectors.upsert_text(
             pillar_id, paper.id, parsed_paper.full_text
         )
-        self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
-                    f"{chunks_upserted} chunks")
+        # upsert_text() wraps its whole body in `except Exception: return 0`, so an
+        # unreachable Qdrant, a bad API key and a chunker contract break all arrive
+        # here as a plain 0 — indistinguishable from "this paper had no text".
+        # Reporting that as a completed stage is how a dead vector store stayed
+        # invisible. Infer the difference from the text we actually handed it, and
+        # mark the stage failed. Non-fatal on purpose: the lesson and quiz are already
+        # written, so the paper still counts as processed (see AGENTS.md on why
+        # upsert_text must not be made to raise).
+        if chunks_upserted == 0 and parsed_paper.full_text.strip():
+            self._stage(
+                StageName.VECTORS, StageStatus.FAILED.value,
+                "no chunks written — vector store unavailable or chunking failed; "
+                "this paper will not appear in semantic search",
+            )
+        else:
+            self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
+                        f"{chunks_upserted} chunks")
 
         logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
         return lesson, quiz_cards
