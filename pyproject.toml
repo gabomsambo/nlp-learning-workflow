@@ -87,6 +87,18 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --cov=nlp_pillars --cov-report=term-missing"
 asyncio_mode = "auto"
+# Put the repo root on sys.path so `import nlp_pillars` resolves.
+#
+# Nothing else does this: there is no conftest.py, the project is not
+# pip-installed into the test environment, and `tests/` has no __init__.py, so
+# pytest's rootdir insertion adds `tests/` rather than the repo root.
+#
+# Until this line existed the suite only ran as `python -m pytest`, which puts
+# the working directory on sys.path as a side effect of `-m`. Plain `pytest`
+# collapsed with `ModuleNotFoundError: No module named 'nlp_pillars'` on every
+# module — an undocumented constraint that cost the first CI run on this repo.
+# Requires pytest >= 7.
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["nlp_pillars"]
