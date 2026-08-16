@@ -455,7 +455,19 @@ class TestOrchestratorErrorHandling:
         # Verify results
         assert result.success is False
         assert len(result.papers_processed) == 0
-        assert len(result.errors) == 0  # Errors are logged but pipeline continues gracefully
+
+        # This used to assert `len(result.errors) == 0`, with the comment "errors are
+        # logged but pipeline continues gracefully". Continuing gracefully is still
+        # true and still tested above — the run does not crash, it just processes
+        # nothing. But reporting *zero errors* for a dead database was the bug: an
+        # empty errors list is how the web layer recognises "nothing to do", so a run
+        # that failed this way was recorded as succeeded and shown to the user as
+        # "Done — no new papers to process" in green.
+        assert len(result.errors) == 1
+        error = result.errors[0]
+        assert error["step"] == "pop_queue"
+        assert error["paper_id"] == "pipeline"  # plumbing, not a paper
+        assert "Database connection failed" in error["message"]
 
 
 class TestOrchestratorUtilities:
