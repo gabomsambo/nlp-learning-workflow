@@ -29,7 +29,25 @@ services:
     ports:
       # Loopback only. The auth model (see db/init/01-roles.sh) assumes this
       # port is not reachable from the network.
-      - "127.0.0.1:5432:5432"
+      #
+      # 5434 on the host, not 5432. This machine already has TWO postgres
+      # servers on the usual ports: an unrelated Docker project
+      # (NaveeraTech/naveera-api) publishes postgres:16 on 5432, and a native
+      # host Postgres listens on 5433. Two listeners cannot share a host port, so
+      # `up -d` fails outright with "address already in use" rather than
+      # degrading.
+      #
+      # Diagnosing this needs a real bind test, not `lsof`: plain `lsof -iTCP`
+      # run as your own user does NOT show the 5433 server (it belongs to another
+      # user) and reports the port free. `netstat -an | grep 5433` and a
+      # throwaway `socket.bind()` both show it correctly.
+      #
+      # Nothing inside this stack is affected: postgrest reaches the database as
+      # `db:5432` over the compose network and never touches the published port.
+      # Host-side tools do, so connect with `psql -h 127.0.0.1 -p 5434`. The
+      # container-side 5432 must stay as it is — that is the port Postgres
+      # actually listens on.
+      - "127.0.0.1:5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nlp} -d ${POSTGRES_DB:-nlp}"]
       interval: 5s
@@ -121,9 +139,31 @@ services:
       # Overrides for Docker networking. Values set here beat anything in the
       # env_file above, which matters for POSTGREST_URL in particular.
       #
-      # NOTE: QDRANT_URL is intentionally NOT overridden here — it comes from
-      # .env so the app talks to the managed Qdrant Cloud cluster. The local
-      # `qdrant` service below stays available as an offline option.
+      # QDRANT_URL IS overridden, as of 2026-08-16. This reverses the earlier
+      # note here, and the reason is external: the managed Qdrant Cloud cluster
+      # whose URL is in .env was suspended on the free tier and no longer exists.
+      # The regional ingress still resolves and still terminates TLS, so the
+      # failure does NOT look like a dead host —
+      # every path, `/` and `/healthz` included, returns a plain-text
+      # `404 page not found` instead of Qdrant's JSON. Do not read that 404 as
+      # "wrong endpoint"; it means no cluster is routed behind that UUID.
+      #
+      # So the local `qdrant` service — kept all along as the offline option —
+      # is now the one the app uses. It starts empty: vectors written to the
+      # cloud cluster are not here, and re-ingesting papers is what repopulates
+      # it. ensure_collections() creates the collection and the pillar_id
+      # payload index on first use, so nothing needs seeding by hand.
+      #
+      # QDRANT_API_KEY is blanked deliberately. .env still holds the cloud key,
+      # and local Qdrant runs with no API key configured — it ignores the header
+      # today, but leaving a live credential pointed at a different server is
+      # how it ends up sent somewhere it should not be.
+      #
+      # To go back to a hosted cluster: delete these two lines and restore
+      # QDRANT_URL / QDRANT_API_KEY in .env. Nothing else here depends on which
+      # Qdrant answers.
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_API_KEY: ""
       #
       # The three database variables below ARE overridden, and all three are
       # needed. Nothing is deleted from .env — these only shadow it for this
@@ -158,8 +198,8 @@ services:
       - uploads_data:/app/data
     depends_on:
       # Map form (not the list form used before) so postgrest can carry a
-      # condition. `qdrant` is kept deliberately even though the app talks to
-      # Qdrant Cloud — see the QDRANT_URL note above.
+      # condition. `qdrant` was cosmetic while the app talked to Qdrant Cloud;
+      # since the QDRANT_URL override above it is load-bearing again.
       qdrant:
         condition: service_started
       postgrest:
@@ -188,9 +228,18 @@ services:
       # Same three database overrides as webui, and for the same reasons — see
       # the long comment on that service. The scheduler drives the pipeline
       # through nlp_pillars/db.py, which reads SUPABASE_URL only.
+      #
+      # The Qdrant override is here too, and is not optional: a daily run ingests
+      # papers, and ingest writes vectors. Without it the scheduler would keep
+      # dialling the suspended cloud cluster and every run would lose its
+      # embeddings while the webui quietly used the local one. Whenever one of
+      # these two services changes which Qdrant it talks to, the other must
+      # change with it — they share a collection.
       SEARXNG_URL: "http://searxng:8080"
       POSTGREST_URL: "http://postgrest:3000"
       SUPABASE_URL: "http://postgrest:3000"
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_API_KEY: ""
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
     volumes:
       # A scheduled run can ingest PDFs, so it needs the same retained uploads
@@ -200,6 +249,10 @@ services:
       postgrest:
         condition: service_started
       searxng:
+        condition: service_started
+      # Added with the QDRANT_URL override above: an ingest during a scheduled
+      # run writes vectors, so local Qdrant has to be up for it too.
+      qdrant:
         condition: service_started
     # The Dockerfile's HEALTHCHECK curls http://localhost:8000/health, which only
     # exists in the webui container. Inherited here it can never pass, so this

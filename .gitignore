@@ -50,6 +50,11 @@ ENV/
 .env
 .env.local
 .env.*.local
+# Timestamped copies made before repointing .env at the local stack.
+# These are FULL copies including live API keys, so they must never be
+# staged — the bare `.env` rule above does not cover them.
+.env.backup-*
+.env.bak
 
 # Logs
 logs/

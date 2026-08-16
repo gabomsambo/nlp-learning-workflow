@@ -7,9 +7,20 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Running the stack
 
 `docker compose up -d --build` brings up six containers: `webui` (FastAPI on :8000),
-`db` (Postgres on :5432), `postgrest` (:3000), `searxng` (:8080), a local `qdrant`
-(:6333) and `scheduler` (no ports). The build is slow and the image is large —
+`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080), a local
+`qdrant` (:6333) and `scheduler` (no ports). The build is slow and the image is large —
 `requirements.txt` pulls torch and layoutparser.
+
+The database is published on host 5434, not the usual 5432, because a developer machine
+tends to have Postgres already. Only the *host* side moved: inside the compose network
+postgrest still dials `db:5432`, and the container-side port must stay 5432. Reach it with
+`psql -h 127.0.0.1 -p 5434`. When a port conflict is suspected, do not trust `lsof -iTCP`
+— run as your own user it silently omits listeners owned by another user and will report a
+busy port free. `netstat -an | grep <port>` or a throwaway `socket.bind()` tells the truth.
+
+You do not need the image to run the app locally. `uvicorn webui.app:app` from a host
+virtualenv works against the compose services, starts instantly, and skips the multi-GB
+build; see the dependency section for why that is the *only* sane option on Apple Silicon.
 
 `.env` is gitignored and is not in the repo; compose reads it via `env_file:`. It is also
 not copied into the image (see the `COPY` lines in `Dockerfile`), so the container's
@@ -69,10 +80,26 @@ only the file-upload path depends on this.
 
 ## Which Qdrant the app talks to
 
-`webui` uses `QDRANT_URL` from `.env`, which points at a managed Qdrant Cloud cluster.
-The local `qdrant` service is kept only as an offline option and is **not** what the app
-uses — do not re-add a `QDRANT_URL` override to the `webui` service in `docker-compose.yml`.
-`depends_on: qdrant` on `webui` is therefore cosmetic and is left in place deliberately.
+The **local** `qdrant` service, as of 2026-08-16. This reverses the previous entry here,
+which said the app used a managed Qdrant Cloud cluster and told you not to override
+`QDRANT_URL`: that free-tier cluster was suspended and no longer exists. `docker-compose.yml`
+now sets `QDRANT_URL: http://qdrant:6333` on **both** `webui` and `scheduler` (they share a
+collection — never point one at a different Qdrant than the other) and blanks
+`QDRANT_API_KEY`. `depends_on: qdrant` is load-bearing again rather than cosmetic.
+
+A suspended cloud cluster does not fail like a dead host. Its DNS still resolves and the
+regional ingress still terminates TLS, so you get a plain-text `404 page not found` on
+**every** path — `/`, `/healthz`, `/collections` alike — where a live Qdrant answers `/`
+with a JSON banner. Read that 404 as "no cluster behind this UUID", not as a wrong URL.
+
+The `nlp_qdrant_data` volume survived all of this and still holds vectors from earlier
+runs. They are largely **orphaned**: the papers they describe were rows in the reaped
+Supabase database, and `GET /api/pillars/{id}/search` drops any vector hit whose
+`paper_id` is missing from the `papers` table (`if not paper: continue` in
+`webui/routers/api/pillars.py`). So the points are real, count toward the collection
+total, and are invisible in the UI until those papers are re-ingested. A low
+`points_count` after a fresh ingest is not evidence the write failed — scroll the
+collection and group by `paper_id` before concluding anything.
 
 `nlp_pillars/vectors.py::ensure_collections()` creates the single `nlp_pillars` collection
 (1536-dim, cosine) **and** the `pillar_id` keyword payload index. It runs from
@@ -125,6 +152,23 @@ SearXNG discovery source: `Orchestrator._search_candidates` swallows the failure
 carries on with arXiv alone. `SearXNGTool.search()` prefers JSON (arXiv engine, real
 paper IDs) and falls back to scraping the HTML UI, which returns general-web results —
 tutorials and blog posts, not papers. If discovery quality drops, check that key first.
+
+The second thing to check is whether SearXNG has benched the engine. A burst of queries
+trips arXiv's rate limit, and SearXNG then suspends that engine for **an hour**
+(`suspended_time=3600`). It does not error: `/search?format=json` still returns HTTP 200
+with `"results": []` and the reason tucked into `"unresponsive_engines":
+[["arxiv", "Suspended: too many requests"]]`. Every query looks like it simply matched
+nothing. Read `unresponsive_engines` before concluding a query is bad, and space out
+manual probing — a dozen curls in a row is enough to trigger it.
+
+Query *shape* matters more than it looks, because both back ends do keyword matching.
+Measured against the live arXiv API on 2026-08-16, same intent expressed two ways:
+`state space models Mamba RWKV` returned 5/5 on-topic papers, while
+`Exploration of state space models for natural language processing, focusing on
+architectures like Mamba and RWKV` returned 0/5 — top hit "A New Strategy for the
+Exploration of Venus", matched on the word *Exploration*. This is why
+`discovery_agent`'s prompt spends three output instructions forcing 2-8 word keyword
+queries; an LLM left to itself writes the second form every time.
 
 ## A paper identifier must resolve to a PDF, or it is not an identifier
 
@@ -208,6 +252,18 @@ Python 3.12 is the floor everywhere (`pyproject.toml`, `Dockerfile`, README): `a
 requires >= 3.12, so a host virtualenv must be `uv venv --python 3.12`. The `Dockerfile` pins
 the interpreter patch release too — a floating `3.12-slim` would undo half the point.
 
+**The lock is linux/amd64 and cannot be installed on a Mac.** Its own header says so, and it
+carries sixteen `nvidia-*` packages plus `triton`. On an Apple-Silicon host install
+`requirements.txt` instead — `uv pip install -r requirements.txt` into a 3.12 venv — and
+accept that the resolution is the direct pins, not the locked transitive set. CI runs on
+`ubuntu-latest`, which *is* amd64, so `.github/workflows/tests.yml` installs the lock and
+keeps the guarantee where it can be kept.
+
+Building the *image* on Apple Silicon is worse than it looks. Those CUDA packages do publish
+`aarch64` wheels, so the build does not fail — it quietly downloads gigabytes
+(`nvidia_cublas` alone is 542 MB) of libraries that cannot be used without an NVIDIA GPU.
+Run the app from a host venv instead unless you specifically need to test the image.
+
 ## Configuration is loaded in an order that surprises people
 
 `config.py::get_settings()` runs `load_dotenv(find_dotenv(), override=True)`. Two
@@ -286,9 +342,89 @@ running the PDF ingest inline froze the event loop for every other request. Meas
 Claude calls that each carry the full paper text; measured end to end on a 5-page paper at
 37.8K input + 9.6K output tokens ≈ **$0.26**.
 
+`discovery_agent` became a real LLM agent on 2026-08-16; before that it was a stub that
+pasted stopword-stripped pillar goals into three fixed templates and never called a model.
+It is the cheapest agent in the project by a wide margin. Measured over three
+representative calls on gpt-4o-mini (cold start, daily run with five recent paper ids, and
+user-steered with two priority topics), usage barely moves: **451-526 input tokens and
+129-133 output**, averaging 492 in / 132 out. The prompt is a fixed system message plus a
+pillar's focus areas — it does not scale with paper text, which is why it is so stable.
+
+At $0.15/$0.60 per million input/output tokens that is **~$0.00015 per call**, about 6,500
+calls to the dollar. Eight pillars discovering once a day is **$0.0012/day, ~$0.45/year** —
+less than two podcasts. Re-derive from the token counts rather than trusting the dollar
+figure; those rates were current when this was written and the token counts are the part
+that will not drift.
+
+Both callers guard the call and fall back to `Orchestrator._fallback_queries`, so no
+discovery failure — missing key, rate limit, network — can stop a daily run or 500 the
+discovery API. That fallback returns the pillar's own focus areas, reordered by
+`DiscoveryAgent._blend_topics` so user topics come first. It deliberately does *not*
+interpolate the pillar slug the way the old fallback did: "recent advances
+neural-architectures-language" is not a phrase in any paper.
+
 `quiz_agent` trusts the model's `question_type` but still overwrites `difficulty` from
 `QuizGeneratorInput.difficulty_mix` — that mix is a declared caller input and seeds FSRS
 initial scheduling, so it is enforced, not advisory.
+
+## The test suite runs in CI now, and it is knowingly red
+
+`.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
+that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
+
+Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**. The 38 are
+pre-existing drift between the tests and the code they cover, not flakes. Four clusters:
+15 in `tests/test_db.py`, whose mocks hand back a bare `Mock` where the code subscripts a
+response; the 10 errors, every one of them a fixture predating `Lesson` gaining required
+`title` / `content` (5 in `integration/test_orchestrator`, 3 in `e2e/test_smoke`, 2 in
+`test_db`, so one repair per file clears all ten); 5 in `tests/test_cli.py`, which are not
+mocked at all and really do dial PostgREST; and 4 in `tests/test_vectors.py`, asserting
+SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form.
+
+Judge a PR on whether it moves those numbers the right way. Do **not** make the job green
+with `continue-on-error`, `|| true`, `--ignore` or `-k` — a suppressed suite is the exact
+condition this workflow was added to end.
+
+**A local run flatters the suite by four tests, and CI is the honest one.** Locally you get
+256/24/10, for two reasons that are both the environment lying rather than the runner
+misbehaving. The five `test_cli.py` tests pass whenever the compose stack happens to be up,
+because they reach a real database instead of a mock — with the stack down they fail locally
+too, with `[Errno 111] Connection refused` from `db.py::get_pillars`. And
+`test_vectors.py::test_get_vector_size_failure_fallback` fails locally because
+`get_settings()`'s `load_dotenv(override=True)` means the real `OPENAI_API_KEY` in `.env`
+beats any placeholder you export, so the embedding call it needs to *fail* quietly succeeds
+against the live API — and bills you. A runner has neither a `.env` nor a stack behind it.
+
+Two consequences worth internalising: a local suite run is not hermetic and can spend real
+money, and "it passes on my machine" is not evidence here.
+
+The suite also only imports because `pyproject.toml` sets `pythonpath = ["."]`. There is no
+`conftest.py`, the project is not pip-installed into the test environment, and `tests/` has
+no `__init__.py`. Before that line, plain `pytest` failed every module with
+`ModuleNotFoundError: No module named 'nlp_pillars'` and only `python -m pytest` worked,
+because `-m` adds the working directory to `sys.path` as a side effect.
+
+The `guard` job is separate, stdlib-only, and **must stay green**. It runs
+`scripts/check_bare_slugs.py`, which fails the build on a pillar slug written without
+quotes:
+
+    pillar_id=models-architectures      # subtraction of two undefined names
+    pillar_id="models-architectures"    # what was meant
+
+This is not hypothetical tidiness. The slug migration dropped the quotes in **73** places
+across `tests/test_discovery_and_search.py`, `tests/integration/test_orchestrator.py` and
+`tests/e2e/test_smoke.py`, and every one of them survived thirteen merged PRs. The bad form
+parses, compiles, imports, and passes ruff; it dies only at runtime, with `NameError: name
+'models' is not defined` raised from whichever line *uses* the fixture rather than the line
+that defines it. Nothing ran those three files, so nothing said so. Detection uses
+`tokenize`, not a regex, so slugs inside strings and comments are never flagged.
+
+The quotes were added and the slugs left pointing at the retired pre-migration ids
+(`models-architectures` and friends, from `config.LEGACY_TO_SLUG`). That is deliberate and
+matches the seven test files that were already correct — all of them use quoted legacy
+slugs throughout. Re-pointing them at five of the current eight pillars would be an
+invention rather than a migration, which is the same reasoning `config.py` gives for
+leaving `LEGACY_TO_SLUG` alone. Retiring those ids from the tests is a separate job.
 
 ## Maintaining this file
 

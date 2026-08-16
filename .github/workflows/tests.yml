@@ -1,0 +1,148 @@
+name: Tests
+
+# This repository had no CI running its test suite until 2026-08-16. Thirteen
+# PRs merged green-looking while `tests/test_discovery_and_search.py`,
+# `tests/integration/test_orchestrator.py` and `tests/e2e/test_smoke.py` could
+# not even be collected — 73 pillar slugs in them had lost their quotes during
+# the slug migration, which parses fine and only fails at runtime. Nothing ran
+# them, so nothing said so.
+#
+# Two jobs, deliberately separate:
+#   guard  — cheap, stdlib-only, and MUST stay green. It re-checks the exact
+#            defect above so it cannot come back silently.
+#   tests  — the pytest suite. See the honesty note on that job before you
+#            "fix" it by weakening it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+# A force-push or rapid follow-up commit should cancel the previous run rather
+# than queue behind it; the lock install below is slow enough to matter.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Bare pillar slugs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No `pip install` on purpose: scripts/check_bare_slugs.py is stdlib-only
+      # (tokenize + pathlib), so this job finishes in seconds and still reports
+      # even when the dependency install in `tests` is broken or slow.
+      - name: Check for unquoted pillar slugs
+        run: python scripts/check_bare_slugs.py
+
+  tests:
+    name: pytest (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12 is the floor, not a preference: atomic-agents requires >= 3.12.
+          # Matches the interpreter the Dockerfile pins.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+
+      # requirements.lock.txt, not requirements.txt, and both, exactly as the
+      # Dockerfile does it. The lock is the authoritative transitive set and the
+      # breakages that motivated pinning were all transitive (Starlette arrives
+      # via fastapi and is not in requirements.txt at all). Passing both to one
+      # pip invocation makes pip fail loudly if the two files ever drift.
+      #
+      # The lock is linux/amd64 — it carries nvidia-* and triton — which is
+      # exactly what ubuntu-latest is. Do NOT reuse this step on an arm64 runner
+      # or an Apple-Silicon host; there, install requirements.txt instead and
+      # accept that the resolution is not the locked one.
+      #
+      # This pulls torch and is slow (several GB). The pip cache above makes
+      # subsequent runs much cheaper; the first run on a new lock will not be.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock.txt -r requirements.txt
+
+      # The suite is fully mocked and must not reach the network or a database.
+      # These are placeholders so module-level config reads find *something*:
+      # a missing key should surface as a test failure, never as a collection
+      # error, and never as a real API call billed to the project.
+      - name: Run tests
+        env:
+          OPENAI_API_KEY: test-key-not-real
+          ANTHROPIC_API_KEY: test-key-not-real
+          # Pinned because the suite asserts on it: test_discovery_and_search's
+          # test_init checks `agent.model == "gpt-4o-mini"`. That is the value in
+          # the project's .env, not config.py's default, which is "gpt-4o" — so
+          # without this line the test passes on a developer machine and fails
+          # here for a reason that has nothing to do with the code under test.
+          DEFAULT_MODEL: gpt-4o-mini
+          SUPABASE_URL: http://localhost:3000
+          SUPABASE_KEY: test-token-not-real
+          POSTGREST_URL: http://localhost:3000
+          QDRANT_URL: http://localhost:6333
+          QDRANT_API_KEY: ""
+          SEARXNG_URL: http://localhost:8080
+        # --continue-on-collection-errors so one unimportable module reports
+        # alongside everything else instead of masking the whole run, which is
+        # the failure mode that let the slug bug hide.
+        run: |
+          pytest tests/ -v --tb=short --continue-on-collection-errors
+
+      # KNOWN-RED, and left that way on purpose.
+      #
+      # Baseline measured HERE, on this runner, 2026-08-16:
+      #   252 passed, 28 failed, 10 errors
+      #
+      # Those 38 are pre-existing drift between the tests and the code they
+      # cover, NOT flakes and NOT caused by this workflow. Four clusters:
+      #   15  tests/test_db.py — mocks return a bare Mock where the code
+      #       subscripts a response ("'Mock' object is not subscriptable"),
+      #       plus several "DID NOT RAISE ValueError". Biggest single win left.
+      #   10  the errors, all of them: Lesson gained required `title` /
+      #       `content` and the fixtures were never updated. 5 in
+      #       integration/test_orchestrator, 3 in e2e/test_smoke, 2 in test_db.
+      #       One fixture repair per file clears all ten.
+      #    5  tests/test_cli.py reaches a REAL database. It is not mocked, so it
+      #       dies here with `[Errno 111] Connection refused` from
+      #       db.py:get_pillars. A genuine test defect that CI found on its
+      #       first working run — see the note below.
+      #    4  tests/test_vectors.py expects SHA1-hex point ids where
+      #       qdrant-client 1.19 normalises to UUID form.
+      # Plus 4 singletons in postgrest_client, ingest_agent,
+      # integration/test_orchestrator and e2e/test_smoke.
+      #
+      # The discovery-agent cluster (~12) that used to head this list is gone:
+      # those tests were written against an LLM implementation that did not
+      # exist, and the agent is now real.
+      #
+      # Do not paper over this with `continue-on-error`, `|| true`, `-k` filters
+      # or `--ignore`. A suppressed suite is what this file exists to prevent.
+      # Fix the clusters and the job goes green on its own; until then a PR is
+      # judged on whether it moves those numbers the right way.
+      #
+      # TRUST THESE NUMBERS OVER A LOCAL RUN. A developer machine gives 256/24/10
+      # — four tests better — and the difference is the local environment being
+      # dishonest, not the runner being wrong:
+      #   - the five test_cli tests PASS locally only when the compose stack
+      #     happens to be up, because they really do dial PostgREST on :3000
+      #   - test_vectors' embedding-fallback test FAILS locally because
+      #     config.py's `load_dotenv(override=True)` means the real
+      #     OPENAI_API_KEY in .env beats the placeholder exported below, so the
+      #     call that was supposed to fail succeeds against the live API
+      # There is no .env on a runner and no stack behind it, which is exactly
+      # why the run here is the honest one.

@@ -27,7 +27,7 @@ from nlp_pillars.tools.searxng_tool import SearXNGTool
 def sample_pillar():
     """Sample pillar configuration for testing."""
     return PillarConfig(
-        id=models-architectures,
+        id="models-architectures",
         name="Models & Architectures",
         goal="Understand cutting-edge model architectures and emerging paradigms",
         focus_areas=["Transformer variants", "Long-context models", "Multimodal architectures"],
@@ -39,7 +39,7 @@ def sample_pillar():
 def sample_search_query():
     """Sample search query for testing."""
     return SearchQuery(
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         query="transformer attention mechanisms",
         filters={"categories": ["cs.CL", "cs.LG"]},
         max_results=5
@@ -282,7 +282,11 @@ class TestSearXNGTool:
         assert "http://localhost:8080/search" in url
         assert "transformer+attention+mechanisms" in url or "transformer%20attention%20mechanisms" in url
         assert "format=json" in url
-        assert "categories=science" in url
+        # engines=arxiv, not categories=science. The tool pins a single engine
+        # deliberately (see _build_search_url): the arXiv engine is what returns
+        # results carrying real paper identifiers, and a broad category search
+        # returns general-web hits that paper_ids.py then rejects.
+        assert "engines=arxiv" in url
     
     def test_convert_result_to_paper_ref(self):
         """Test conversion of SearXNG result to PaperRef."""
@@ -414,19 +418,19 @@ class TestDiscoveryAgent:
         mock_discovery_output = DiscoveryOutput(
             queries=[
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="transformer architecture variants recent advances",
                     filters={"categories": ["cs.CL"], "time_range": "year"},
                     max_results=10
                 ),
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="long context attention mechanisms",
                     filters={"categories": ["cs.LG"]},
                     max_results=8
                 ),
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="multimodal transformer applications",
                     filters={},
                     max_results=12
@@ -448,7 +452,7 @@ class TestDiscoveryAgent:
         # Verify result
         assert isinstance(result, DiscoveryOutput)
         assert len(result.queries) == 3
-        assert all(query.pillar_id == models-architectures for query in result.queries)
+        assert all(query.pillar_id == "models-architectures" for query in result.queries)
         assert result.rationale is not None
         assert len(result.rationale) > 0
         
@@ -466,7 +470,7 @@ class TestDiscoveryAgent:
         mock_discovery_output = DiscoveryOutput(
             queries=[
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="transformer variants",
                     filters={},
                     max_results=10
@@ -492,9 +496,9 @@ class TestDiscoveryAgent:
         # Mock successful discovery
         mock_discovery_output = DiscoveryOutput(
             queries=[
-                SearchQuery(pillar_id=linguistic-cognitive-foundations, query="test1", filters={}, max_results=5),
-                SearchQuery(pillar_id=linguistic-cognitive-foundations, query="test2", filters={}, max_results=5),
-                SearchQuery(pillar_id=linguistic-cognitive-foundations, query="test3", filters={}, max_results=5)
+                SearchQuery(pillar_id="formal-linguistics-nlp", query="test1", filters={}, max_results=5),
+                SearchQuery(pillar_id="formal-linguistics-nlp", query="test2", filters={}, max_results=5),
+                SearchQuery(pillar_id="formal-linguistics-nlp", query="test3", filters={}, max_results=5)
             ],
             rationale="Test rationale"
         )
@@ -506,22 +510,25 @@ class TestDiscoveryAgent:
             agent = DiscoveryAgent()
             agent.agent = mock_atomic_agent
             
-            result = agent.discover_for_pillar_id(linguistic-cognitive-foundations)
-        
+            result = agent.discover_for_pillar_id("formal-linguistics-nlp")
+
         assert isinstance(result, DiscoveryOutput)
         assert len(result.queries) == 3
-        assert all(query.pillar_id == linguistic-cognitive-foundations for query in result.queries)
+        assert all(query.pillar_id == "formal-linguistics-nlp" for query in result.queries)
     
     def test_get_priority_topics_for_pillar(self):
         """Test getting priority topics for a pillar."""
         with patch.object(DiscoveryAgent, '__init__', lambda x, model=None: None):
             agent = DiscoveryAgent()
             
-            topics = agent.get_priority_topics_for_pillar(models-architectures)
-            
+            topics = agent.get_priority_topics_for_pillar("neural-architectures-language")
+
             assert isinstance(topics, list)
             assert len(topics) > 0
-            assert "Transformer variants" in topics  # From PILLAR_CONFIGS
+            assert "Transformer architecture deep dive" in topics  # From PILLAR_CONFIGS
+
+            # A retired or unknown slug yields nothing rather than raising.
+            assert agent.get_priority_topics_for_pillar("models-architectures") == []
 
 
 class TestIntegration:
@@ -536,19 +543,19 @@ class TestIntegration:
         mock_discovery_output = DiscoveryOutput(
             queries=[
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="transformer attention mechanisms",
                     filters={"categories": ["cs.CL"]},
                     max_results=5
                 ),
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="multimodal neural networks",
                     filters={},
                     max_results=8
                 ),
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="state space models",
                     filters={"categories": ["cs.LG"]},
                     max_results=10
@@ -603,19 +610,19 @@ class TestIntegration:
         mock_discovery_output = DiscoveryOutput(
             queries=[
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="neural machine translation",
                     filters={"time_range": "year"},
                     max_results=7
                 ),
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="transformer architectures",
                     filters={},
                     max_results=5
                 ),
                 SearchQuery(
-                    pillar_id=models-architectures,
+                    pillar_id="models-architectures",
                     query="attention mechanisms",
                     filters={"categories": ["cs.LG"]},
                     max_results=8
@@ -671,17 +678,17 @@ class TestSchemaValidation:
         """Test SearchQuery schema validation."""
         # Valid SearchQuery
         valid_query = SearchQuery(
-            pillar_id=linguistic-cognitive-foundations,
+            pillar_id="linguistic-cognitive-foundations",
             query="test query",
             filters={"category": "cs.CL"},
             max_results=10
         )
-        assert valid_query.pillar_id == linguistic-cognitive-foundations
+        assert valid_query.pillar_id == "linguistic-cognitive-foundations"
         assert valid_query.max_results == 10
         
         # Test default values
         minimal_query = SearchQuery(
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             query="minimal query"
         )
         assert minimal_query.max_results == 10  # Default value
@@ -690,9 +697,9 @@ class TestSchemaValidation:
     def test_discovery_output_schema_validation(self):
         """Test DiscoveryOutput schema validation."""
         queries = [
-            SearchQuery(pillar_id=linguistic-cognitive-foundations, query="query1"),
-            SearchQuery(pillar_id=linguistic-cognitive-foundations, query="query2"),
-            SearchQuery(pillar_id=linguistic-cognitive-foundations, query="query3")
+            SearchQuery(pillar_id="linguistic-cognitive-foundations", query="query1"),
+            SearchQuery(pillar_id="linguistic-cognitive-foundations", query="query2"),
+            SearchQuery(pillar_id="linguistic-cognitive-foundations", query="query3")
         ]
         
         valid_output = DiscoveryOutput(

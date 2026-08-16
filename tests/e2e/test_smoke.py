@@ -45,7 +45,7 @@ def fake_data():
     # Fake PaperNote
     fake_paper_note = PaperNote(
         paper_id="fake.001",
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         problem="Smoke test problem: evaluating neural architecture efficiency",
         method="Smoke test method: comparative analysis framework",
         findings=["Finding 1: architecture performs well", "Finding 2: efficiency gains observed"],
@@ -58,7 +58,7 @@ def fake_data():
     # Fake Lesson
     fake_lesson = Lesson(
         paper_id="fake.001",
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         tl_dr="TL;DR: Smoke test OK.",
         takeaways=[
             "Takeaway 1: Neural architectures can be optimized efficiently",
@@ -78,7 +78,7 @@ def fake_data():
     fake_quiz_cards = [
         QuizCard(
             paper_id="fake.001",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="What is the main contribution of this smoke test paper?",
             answer="Advanced neural architecture analysis with efficiency evaluation",
             difficulty=DifficultyLevel.EASY,
@@ -86,7 +86,7 @@ def fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="How do attention mechanisms improve model performance?",
             answer="By allowing selective focus on relevant input features",
             difficulty=DifficultyLevel.MEDIUM,
@@ -94,7 +94,7 @@ def fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="Compare transformer efficiency with traditional architectures",
             answer="Transformers show better parallelization and context modeling",
             difficulty=DifficultyLevel.HARD,
@@ -102,7 +102,7 @@ def fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="What are the key limitations mentioned in this study?",
             answer="Small dataset size and domain-specific constraints",
             difficulty=DifficultyLevel.MEDIUM,
@@ -110,7 +110,7 @@ def fake_data():
         ),
         QuizCard(
             paper_id="fake.001",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="Design an experiment to validate the architecture claims",
             answer="Cross-domain evaluation with larger datasets and baseline comparisons",
             difficulty=DifficultyLevel.HARD,
@@ -121,8 +121,8 @@ def fake_data():
     # Fake DiscoveryOutput
     fake_discovery_output = DiscoveryOutput(
         queries=[
-            SearchQuery(pillar_id=models-architectures, query="neural architecture efficiency"),
-            SearchQuery(pillar_id=models-architectures, query="transformer attention mechanisms")
+            SearchQuery(pillar_id="models-architectures", query="neural architecture efficiency"),
+            SearchQuery(pillar_id="models-architectures", query="transformer attention mechanisms")
         ],
         rationale="Focus on architecture analysis and attention mechanisms for P2"
     )
@@ -195,7 +195,7 @@ def test_orchestrator_end_to_end_smoke(monkeypatch, fake_data):
     try:
         # Create and run orchestrator
         orchestrator = Orchestrator(enable_quiz=True)
-        result = orchestrator.run_daily(models-architectures, papers_limit=1)
+        result = orchestrator.run_daily("models-architectures", papers_limit=1)
         
         # Verify results
         assert result.success is True, "Pipeline should succeed"
@@ -308,7 +308,7 @@ def test_orchestrator_with_quiz_disabled(monkeypatch, fake_data):
     try:
         # Create and run orchestrator with quiz disabled
         orchestrator = Orchestrator(enable_quiz=False)
-        result = orchestrator.run_daily(models-architectures, papers_limit=1)
+        result = orchestrator.run_daily("models-architectures", papers_limit=1)
         
         # Verify results
         assert result.success is True, "Pipeline should succeed"
@@ -366,7 +366,7 @@ def test_orchestrator_error_handling(monkeypatch, fake_data):
     try:
         # Create and run orchestrator
         orchestrator = Orchestrator(enable_quiz=True)
-        result = orchestrator.run_daily(models-architectures, papers_limit=1)
+        result = orchestrator.run_daily("models-architectures", papers_limit=1)
         
         # Verify error handling
         assert result.success is False, "Pipeline should fail when paper processing fails"
