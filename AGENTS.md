@@ -351,20 +351,21 @@ initial scheduling, so it is enforced, not advisory.
 `.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
 that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
 
-Baseline on the runner the day it was added: **244 passed, 36 failed, 10 errors**. The 46
-are pre-existing drift between the tests and the code they cover, not flakes. Five clusters:
-tests patching `nlp_pillars.agents.discovery_agent.OpenAI` (a name that module no longer
-binds); fixtures predating `Lesson` gaining required `title` / `content`; `tests/test_db.py`
-handing back bare `Mock` where the code subscripts a response; `tests/test_vectors.py`
-asserting SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form; and five
-`tests/test_cli.py` tests that are not mocked at all and really do dial PostgREST.
+Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**. The 38 are
+pre-existing drift between the tests and the code they cover, not flakes. Four clusters:
+15 in `tests/test_db.py`, whose mocks hand back a bare `Mock` where the code subscripts a
+response; the 10 errors, every one of them a fixture predating `Lesson` gaining required
+`title` / `content` (5 in `integration/test_orchestrator`, 3 in `e2e/test_smoke`, 2 in
+`test_db`, so one repair per file clears all ten); 5 in `tests/test_cli.py`, which are not
+mocked at all and really do dial PostgREST; and 4 in `tests/test_vectors.py`, asserting
+SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form.
 
 Judge a PR on whether it moves those numbers the right way. Do **not** make the job green
 with `continue-on-error`, `|| true`, `--ignore` or `-k` — a suppressed suite is the exact
 condition this workflow was added to end.
 
 **A local run flatters the suite by four tests, and CI is the honest one.** Locally you get
-248/32/10, for two reasons that are both the environment lying rather than the runner
+256/24/10, for two reasons that are both the environment lying rather than the runner
 misbehaving. The five `test_cli.py` tests pass whenever the compose stack happens to be up,
 because they reach a real database instead of a mock — with the stack down they fail locally
 too, with `[Errno 111] Connection refused` from `db.py::get_pillars`. And

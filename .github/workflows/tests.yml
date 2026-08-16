@@ -106,28 +106,36 @@ jobs:
       # KNOWN-RED, and left that way on purpose.
       #
       # Baseline measured HERE, on this runner, 2026-08-16:
-      #   244 passed, 36 failed, 10 errors
+      #   252 passed, 28 failed, 10 errors
       #
-      # Those 46 are pre-existing drift between the tests and the code they
-      # cover, NOT flakes and NOT caused by this workflow. Five clusters:
-      #   ~12  tests patch `nlp_pillars.agents.discovery_agent.OpenAI`, a name
-      #        that module no longer binds
-      #   ~10  Lesson gained required `title` / `content`; fixtures never updated
-      #   ~11  tests/test_db.py mocks return bare Mock where the code subscripts
-      #        a response, plus several "DID NOT RAISE ValueError"
-      #    ~4  tests/test_vectors.py expects SHA1-hex point ids where
-      #        qdrant-client 1.19 normalises to UUID form
-      #     5  tests/test_cli.py reaches a REAL database. It is not mocked, so
-      #        it dies here with `[Errno 111] Connection refused` from
-      #        db.py:get_pillars. This one is a genuine test defect that CI
-      #        found on its first working run — see the note below.
+      # Those 38 are pre-existing drift between the tests and the code they
+      # cover, NOT flakes and NOT caused by this workflow. Four clusters:
+      #   15  tests/test_db.py — mocks return a bare Mock where the code
+      #       subscripts a response ("'Mock' object is not subscriptable"),
+      #       plus several "DID NOT RAISE ValueError". Biggest single win left.
+      #   10  the errors, all of them: Lesson gained required `title` /
+      #       `content` and the fixtures were never updated. 5 in
+      #       integration/test_orchestrator, 3 in e2e/test_smoke, 2 in test_db.
+      #       One fixture repair per file clears all ten.
+      #    5  tests/test_cli.py reaches a REAL database. It is not mocked, so it
+      #       dies here with `[Errno 111] Connection refused` from
+      #       db.py:get_pillars. A genuine test defect that CI found on its
+      #       first working run — see the note below.
+      #    4  tests/test_vectors.py expects SHA1-hex point ids where
+      #       qdrant-client 1.19 normalises to UUID form.
+      # Plus 4 singletons in postgrest_client, ingest_agent,
+      # integration/test_orchestrator and e2e/test_smoke.
+      #
+      # The discovery-agent cluster (~12) that used to head this list is gone:
+      # those tests were written against an LLM implementation that did not
+      # exist, and the agent is now real.
       #
       # Do not paper over this with `continue-on-error`, `|| true`, `-k` filters
       # or `--ignore`. A suppressed suite is what this file exists to prevent.
       # Fix the clusters and the job goes green on its own; until then a PR is
       # judged on whether it moves those numbers the right way.
       #
-      # TRUST THESE NUMBERS OVER A LOCAL RUN. A developer machine gives 248/32/10
+      # TRUST THESE NUMBERS OVER A LOCAL RUN. A developer machine gives 256/24/10
       # — four tests better — and the difference is the local environment being
       # dishonest, not the runner being wrong:
       #   - the five test_cli tests PASS locally only when the compose stack
