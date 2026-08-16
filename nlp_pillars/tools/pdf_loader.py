@@ -661,14 +661,31 @@ def _clean_pdf_header_noise(text: str) -> str:
             if skip_mode and len(line_clean) <= 2:
                 continue
 
-            # Once we hit substantial content, keep everything
-            if len(line_clean) > 10:
-                skip_mode = False
+            # Anything longer than the leading noise ends skip mode and is kept.
+            #
+            # This used to only clear skip_mode for lines longer than TEN characters,
+            # while the guard above only skipped lines of two or fewer — so every line
+            # between three and ten characters was silently dropped, and a text whose
+            # lines were ALL that short came back completely empty. Measured before the
+            # fix: 'tabs\t\there' and 'Line one\nLine two\n Line three' both returned
+            # ''. That is silent data loss on short papers and short chunks, and it
+            # surfaces far downstream as "0 chunks upserted" (upsert_text wraps its
+            # body in `except Exception: return 0`), which is why it went unnoticed.
+            skip_mode = False
+            cleaned_lines.append(line)
 
-            if not skip_mode:
-                cleaned_lines.append(line)
+    cleaned = '\n'.join(cleaned_lines)
 
-    return '\n'.join(cleaned_lines)
+    # Never hand back nothing for something. Header-noise removal is a best-effort
+    # tidy-up; if it consumed the entire document, the heuristic was wrong and the
+    # original text is strictly better than an empty string.
+    if text.strip() and not cleaned.strip():
+        logger.warning(
+            "PDF header cleaning removed all content; keeping the original text"
+        )
+        return text
+
+    return cleaned
 
 
 def _normalize_whitespace(text: str) -> str:

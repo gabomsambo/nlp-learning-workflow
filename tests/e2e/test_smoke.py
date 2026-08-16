@@ -59,6 +59,12 @@ def fake_data():
     fake_lesson = Lesson(
         paper_id="fake.001",
         pillar_id="models-architectures",
+        # title and content are required on Lesson. They were added to the schema
+        # after these fixtures were written, and every fixture that omitted them
+        # raised at construction time — which is why this module reported as an
+        # ERROR rather than a failure.
+        title="Smoke Test Lesson",
+        content="Body text for the smoke-test lesson.",
         tl_dr="TL;DR: Smoke test OK.",
         takeaways=[
             "Takeaway 1: Neural architectures can be optimized efficiently",
@@ -182,14 +188,26 @@ def test_orchestrator_end_to_end_smoke(monkeypatch, fake_data):
         # Mock the search tools
         self.searxng_tool = Mock()
         self.searxng_tool.search.return_value = [fake_data['paper_ref']]
-        
+
         self.arxiv_tool = Mock()
         self.arxiv_tool.search.return_value = []
-        
+
         # Mock the ingest agent
         self.ingest_agent = Mock()
         self.ingest_agent.ingest.return_value = fake_data['parsed_paper']
-    
+
+        # run_daily now reads these directly (progress callback, cooperative
+        # cancellation, per-paper stage tracking, and the plumbing-error
+        # accumulator). This mock_init replaces __init__ wholesale, so it has
+        # to set them itself or every run raises AttributeError on the first
+        # access (e.g. 'Orchestrator' object has no attribute '_cancel').
+        self._on_stage = lambda name, status, detail=None: None
+        self._cancel = None
+        self._current_paper_stage = None
+        self._infra_errors = []
+        self.semantic_scholar_tool = None
+        self.vector_search_tool = None
+
     monkeypatch.setattr(Orchestrator, '__init__', mock_init)
     
     try:
@@ -301,7 +319,16 @@ def test_orchestrator_with_quiz_disabled(monkeypatch, fake_data):
         self.arxiv_tool.search.return_value = []
         self.ingest_agent = Mock()
         self.ingest_agent.ingest.return_value = fake_data['parsed_paper']
-    
+        # See the analogous comment in test_orchestrator_end_to_end_smoke:
+        # run_daily reads these unconditionally and this mock_init replaces
+        # __init__ entirely, so they must be set here too.
+        self._on_stage = lambda name, status, detail=None: None
+        self._cancel = None
+        self._current_paper_stage = None
+        self._infra_errors = []
+        self.semantic_scholar_tool = None
+        self.vector_search_tool = None
+
     original_init = Orchestrator.__init__
     monkeypatch.setattr(Orchestrator, '__init__', mock_init)
     
@@ -359,7 +386,16 @@ def test_orchestrator_error_handling(monkeypatch, fake_data):
         self.arxiv_tool.search.return_value = []
         self.ingest_agent = Mock()
         self.ingest_agent.ingest.return_value = fake_data['parsed_paper']
-    
+        # See the analogous comment in test_orchestrator_end_to_end_smoke:
+        # run_daily reads these unconditionally and this mock_init replaces
+        # __init__ entirely, so they must be set here too.
+        self._on_stage = lambda name, status, detail=None: None
+        self._cancel = None
+        self._current_paper_stage = None
+        self._infra_errors = []
+        self.semantic_scholar_tool = None
+        self.vector_search_tool = None
+
     original_init = Orchestrator.__init__
     monkeypatch.setattr(Orchestrator, '__init__', mock_init)
     

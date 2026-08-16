@@ -8,7 +8,7 @@ through the complete learning workflow with strict pillar isolation.
 import logging
 import threading
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from .schemas import (
     PillarConfig, PipelineResult,
@@ -100,6 +100,10 @@ class Orchestrator:
         self._on_stage = on_stage or _no_op_stage
         self._cancel = cancel
         self._current_paper_stage: Optional[StageName] = None
+        #: Failures in the shared plumbing (search / enqueue / pop), which each degrade
+        #: to an empty result rather than aborting the run. Kept apart from per-paper
+        #: errors so `papers_failed` stays a count of papers. See _record_infra_error.
+        self._infra_errors: List[dict] = []
 
         # Initialize tools
         self.searxng_tool = SearXNGTool()
@@ -140,15 +144,24 @@ class Orchestrator:
         lessons_created = []
         quizzes_generated = []
         errors = []
+        self._infra_errors = []
 
         try:
             # Step 1: Discovery - Generate search queries
             logger.info(f"Step 1: Discovery for pillar {pillar_id}")
             self._stage(StageName.DISCOVERY, StageStatus.RUNNING.value)
-            discovery_queries = self._run_discovery(pillar_id)
+            discovery_queries, used_fallback = self._run_discovery(pillar_id)
             logger.info(f"Generated {len(discovery_queries)} search queries for pillar {pillar_id}")
+            # Say so when the LLM call failed. The run still works — that is the whole
+            # point of the fallback — but "3 queries" alone hides the fact that these
+            # are the pillar's own focus areas rather than anything discovery chose.
+            discovery_detail = f"{len(discovery_queries)} queries"
+            if used_fallback:
+                discovery_detail += (
+                    " (discovery agent unavailable, used pillar focus areas)"
+                )
             self._stage(StageName.DISCOVERY, StageStatus.COMPLETED.value,
-                        f"{len(discovery_queries)} queries")
+                        discovery_detail)
 
             # Step 2: Search - Find candidate papers
             logger.info(f"Step 2: Searching for candidates for pillar {pillar_id}")
@@ -220,6 +233,11 @@ class Orchestrator:
             total_time = time.time() - start_time
             success = len(papers_processed) > 0  # Success if at least one paper processed
 
+            # A run that processed nothing because the search, the queue or the
+            # database was broken is not the same as one that had nothing to do, and
+            # the caller can only tell them apart if the plumbing failures are here.
+            errors = errors + self._infra_errors
+
             result = PipelineResult(
                 pillar_id=pillar_id,
                 papers_processed=papers_processed,
@@ -238,6 +256,15 @@ class Orchestrator:
             )
 
             return result
+
+        except RunCancelledError:
+            # MUST stay above the broad clause below. RunCancelledError subclasses
+            # Exception, so without this the cancel raised by _stage() is caught,
+            # converted into PipelineResult(success=False), and run_service records the
+            # run as 'failed' — the user asks to stop and is told it crashed.
+            # process_selected_papers has no wrapper at all and was always correct;
+            # this is what made the two run kinds disagree.
+            raise
 
         except Exception as e:
             total_time = time.time() - start_time
@@ -310,8 +337,16 @@ class Orchestrator:
                 f"on_stage callback failed for {stage.value}/failed", exc_info=True
             )
 
-    def _run_discovery(self, pillar_id: str) -> List[str]:
-        """Run discovery agent to generate search queries."""
+    def _run_discovery(self, pillar_id: str) -> Tuple[List[str], bool]:
+        """Run discovery agent to generate search queries.
+
+        Returns:
+            (queries, used_fallback). ``used_fallback`` is True when the LLM call
+            failed and the pillar's own focus areas were substituted. The caller puts
+            that in the stage detail: the fallback keeps the run alive, but a user
+            looking at "3 queries" deserves to know the agent never answered.
+
+        """
         try:
             # Get pillar configuration
             pillar_config = self._get_pillar_config(pillar_id)
@@ -333,11 +368,11 @@ class Orchestrator:
             queries = [query.query for query in discovery_output.queries]
 
             logger.info(f"Discovery generated {len(queries)} queries for pillar {pillar_id}")
-            return queries
+            return queries, False
 
         except Exception as e:
             logger.warning(f"Discovery failed for pillar {pillar_id}: {e}")
-            return self._fallback_queries(self._get_pillar_config(pillar_id))
+            return self._fallback_queries(self._get_pillar_config(pillar_id)), True
 
     def _fallback_queries(
         self,
@@ -373,6 +408,24 @@ class Orchestrator:
         logger.info(f"Using {len(queries)} fallback queries: {queries}")
         return queries
 
+    def _record_infra_error(self, step: str, message: str) -> None:
+        """Remember a failure in the shared plumbing, not in one paper.
+
+        These three helpers — search, enqueue, pop — each catch their own exceptions
+        and degrade to an empty result, which is right: one dead search backend should
+        not abort a run. But the failure then existed only in the log, and a run where
+        EVERY one of them failed came out indistinguishable from a run that had simply
+        caught up: no papers, no errors. run_service._terminal_status() reads an empty
+        errors list as success, so a completely dead stack would report
+        "Done — no new papers to process" in green.
+
+        Recorded separately from per-paper errors so `papers_failed` stays a count of
+        papers. Merged into PipelineResult.errors at the end of the run.
+        """
+        self._infra_errors.append(
+            {"paper_id": "pipeline", "step": step, "message": message}
+        )
+
     def _search_candidates(self, pillar_id: str, queries: List[str]) -> List[PaperRef]:
         """Search for candidate papers using available tools."""
         all_candidates = []
@@ -393,6 +446,7 @@ class Orchestrator:
                 logger.debug(f"SearXNG found {len(searxng_results)} results for query: {query_str}")
             except Exception as e:
                 logger.warning(f"SearXNG search failed for query '{query_str}': {e}")
+                self._record_infra_error("search", f"SearXNG search failed: {e}")
 
             try:
                 # ArXiv search
@@ -401,6 +455,7 @@ class Orchestrator:
                 logger.debug(f"ArXiv found {len(arxiv_results)} results for query: {query_str}")
             except Exception as e:
                 logger.warning(f"ArXiv search failed for query '{query_str}': {e}")
+                self._record_infra_error("search", f"arXiv search failed: {e}")
 
         # Deduplicate candidates
         deduplicated = self._dedupe_papers(all_candidates)
@@ -419,6 +474,7 @@ class Orchestrator:
             return count
         except Exception as e:
             logger.error(f"Failed to enqueue candidates for pillar {pillar_id}: {e}")
+            self._record_infra_error("enqueue", f"Could not queue candidates: {e}")
             return 0
 
     def _pop_queue(self, pillar_id: str, limit: int) -> List[PaperRef]:
@@ -429,6 +485,7 @@ class Orchestrator:
             return papers
         except Exception as e:
             logger.error(f"Failed to pop papers from queue for pillar {pillar_id}: {e}")
+            self._record_infra_error("pop_queue", f"Could not read the queue: {e}")
             return []
 
     def _process_paper(self, pillar_id: str, paper: PaperRef) -> tuple[Lesson, Optional[List[QuizCard]]]:
@@ -502,8 +559,23 @@ class Orchestrator:
         chunks_upserted = vectors.upsert_text(
             pillar_id, paper.id, parsed_paper.full_text
         )
-        self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
-                    f"{chunks_upserted} chunks")
+        # upsert_text() wraps its whole body in `except Exception: return 0`, so an
+        # unreachable Qdrant, a bad API key and a chunker contract break all arrive
+        # here as a plain 0 — indistinguishable from "this paper had no text".
+        # Reporting that as a completed stage is how a dead vector store stayed
+        # invisible. Infer the difference from the text we actually handed it, and
+        # mark the stage failed. Non-fatal on purpose: the lesson and quiz are already
+        # written, so the paper still counts as processed (see AGENTS.md on why
+        # upsert_text must not be made to raise).
+        if chunks_upserted == 0 and parsed_paper.full_text.strip():
+            self._stage(
+                StageName.VECTORS, StageStatus.FAILED.value,
+                "no chunks written — vector store unavailable or chunking failed; "
+                "this paper will not appear in semantic search",
+            )
+        else:
+            self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
+                        f"{chunks_upserted} chunks")
 
         logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
         return lesson, quiz_cards
@@ -644,6 +716,8 @@ class Orchestrator:
         """
         start_time = time.time()
 
+        self._infra_errors = []
+
         # Handle both papers and paper_ids for backward compatibility
         papers_to_process = []
         if papers:
@@ -653,6 +727,13 @@ class Orchestrator:
                 paper = self._get_or_fetch_paper(pillar_id, paper_id)
                 if paper:
                     papers_to_process.append(paper)
+                else:
+                    # Silently dropping it would leave a run that resolved nothing
+                    # looking exactly like one that had nothing to do.
+                    self._record_infra_error(
+                        "pop_queue",
+                        f"Could not resolve paper {paper_id} to a downloadable PDF",
+                    )
 
         logger.info(f"Processing {len(papers_to_process)} selected papers for pillar {pillar_id}")
 
@@ -706,7 +787,7 @@ class Orchestrator:
             lessons_created=lessons_created,
             quizzes_generated=quizzes_generated,
             podcasts_created=[],
-            errors=errors,
+            errors=errors + self._infra_errors,
             total_time_seconds=total_time,
             success=len(papers_processed) > 0
         )

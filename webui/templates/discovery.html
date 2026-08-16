@@ -22,7 +22,7 @@
 </form>
 
 <div id="status-area" style="margin: 1rem 0;">
-  <span id="status"></span>
+  <span id="status" role="status" aria-live="polite"></span>
 </div>
 
 <div id="results-area" style="display: none;">
@@ -51,12 +51,26 @@
   </div>
 </div>
 
-<div id="run-progress" style="margin-top: 1rem;"></div>
+<article id="run-panel" hidden style="margin-top: 1rem;">
+  <header>
+    <strong>Processing run</strong>
+    <button type="button" id="cancel-btn" class="secondary outline" hidden disabled
+            style="float:right;width:auto;padding:.25rem .75rem">Cancel run</button>
+  </header>
 
-<div id="processing-results" style="display: none; margin-top: 1rem;">
-  <h3>Processing Results</h3>
-  <div id="processing-output"></div>
-</div>
+  {#
+    Rendered EMPTY on purpose — a live region announces changes, not content that was
+    already there at load. This element is what was missing: discovery.html used to
+    pass `status: null` into the poller, so every run-level message it produces
+    (Failed + reason, Interrupted, Cancelled, the paper counts) was written nowhere.
+  #}
+  <p id="run-status" role="status" aria-live="polite" aria-atomic="true"></p>
+
+  <progress id="run-bar" hidden aria-label="Processing progress"></progress>
+
+  {# aria-live="off": the summary above is what gets announced, not eleven rows. #}
+  <div id="run-progress" aria-live="off"></div>
+</article>
 
 <div id="session-summary" style="display: none; margin-top: 1rem;">
   <h3>Session Summary</h3>
@@ -83,13 +97,23 @@ const candidatesBody = document.getElementById('candidates-body');
 const selectAllCheckbox = document.getElementById('select-all');
 const processBtn = document.getElementById('process-btn');
 const selectedCount = document.getElementById('selected-count');
-const processingResults = document.getElementById('processing-results');
-const processingOutput = document.getElementById('processing-output');
 const sessionSummary = document.getElementById('session-summary');
 const totalProcessedEl = document.getElementById('total-processed');
 const totalFailedEl = document.getElementById('total-failed');
+const runPanel = document.getElementById('run-panel');
+const runStatusEl = document.getElementById('run-status');
 const runProgressEl = document.getElementById('run-progress');
-const progressEls = { status: null, stages: runProgressEl };
+const runBarEl = document.getElementById('run-bar');
+const cancelBtn = document.getElementById('cancel-btn');
+
+// `status` is a REAL element now. Passing null here is what silently discarded every
+// run-level message on this page, including the reason a run failed.
+const progressEls = {
+  status: runStatusEl,
+  stages: runProgressEl,
+  progress: runBarEl,
+  cancel: cancelBtn,
+};
 
 // Discover papers
 discoverForm.addEventListener('submit', async (e) => {
@@ -98,10 +122,9 @@ discoverForm.addEventListener('submit', async (e) => {
   const pillar = pillarSelect.value;
   const topics = topicsInput.value.split(',').map(t => t.trim()).filter(t => t);
 
-  statusEl.textContent = 'Discovering papers...';
+  statusEl.textContent = 'Discovering papers…';
   statusEl.style.color = '';
   resultsArea.style.display = 'none';
-  processingResults.style.display = 'none';
 
   // Reset state for new discovery
   candidates = [];
@@ -135,49 +158,85 @@ discoverForm.addEventListener('submit', async (e) => {
   }
 });
 
-// Render candidates table
+/**
+ * Build the candidates table.
+ *
+ * createElement + textContent throughout, never innerHTML with a template literal.
+ * Paper titles come from arXiv and SearXNG — i.e. from strangers — and the previous
+ * version interpolated them raw into both a cell and a title="" attribute. Measured:
+ * a title of `<img src=x onerror=…>` executed. Note that routing them through
+ * escapeHtml() would NOT have been enough either: it escapes & < > but leaves quotes
+ * intact, so `title="${escapeHtml(t)}"` still lets `a" onmouseover="…` inject a
+ * handler. setAttribute is what makes the attribute case safe.
+ */
 function renderCandidates() {
   const available = candidates.filter(c => !attemptedIds.has(c.paper.id));
 
   resultsCount.textContent = `(${available.length} available)`;
-  candidatesBody.innerHTML = '';
 
   if (available.length === 0) {
-    candidatesBody.innerHTML = '<tr><td colspan="7">No more candidates available</td></tr>';
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 7;
+    cell.textContent = 'No more candidates available';
+    row.appendChild(cell);
+    candidatesBody.replaceChildren(row);
     processBtn.disabled = true;
     return;
   }
 
-  available.forEach((candidate, idx) => {
+  const frag = document.createDocumentFragment();
+  available.forEach((candidate) => {
+    const paper = candidate.paper;
     const row = document.createElement('tr');
-    const hasPdf = candidate.paper.url_pdf ? '<span style="color: green;">&#10003;</span>' : '<span style="color: red;">&#10007;</span>';
-    const title = candidate.paper.title.length > 50
-      ? candidate.paper.title.substring(0, 47) + '...'
-      : candidate.paper.title;
 
-    row.innerHTML = `
-      <td><input type="checkbox" class="paper-checkbox" data-id="${candidate.paper.id}" /></td>
-      <td title="${candidate.paper.title}">${title}</td>
-      <td>${candidate.paper.year || '?'}</td>
-      <td>${candidate.citation_count}</td>
-      <td>${candidate.source}</td>
-      <td>${hasPdf}</td>
-      <td>${candidate.relevance_score.toFixed(2)}</td>
-    `;
-    candidatesBody.appendChild(row);
+    const checkCell = document.createElement('td');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'paper-checkbox';
+    box.dataset.id = paper.id;          // dataset encodes; never string-interpolated
+    checkCell.appendChild(box);
+
+    const titleCell = document.createElement('td');
+    const title = String(paper.title || '');
+    titleCell.setAttribute('title', title);   // encoded by setAttribute
+    titleCell.textContent = title.length > 50 ? title.slice(0, 47) + '…' : title;
+
+    const pdfCell = document.createElement('td');
+    pdfCell.textContent = paper.url_pdf ? '✓' : '✗';
+    pdfCell.style.color = paper.url_pdf ? 'green' : 'red';
+
+    [
+      checkCell,
+      titleCell,
+      cell(paper.year || '?'),
+      cell(candidate.citation_count),
+      cell(candidate.source),
+      pdfCell,
+      cell(Number(candidate.relevance_score).toFixed(2)),
+    ].forEach(c => row.appendChild(c));
+
+    frag.appendChild(row);
   });
+  candidatesBody.replaceChildren(frag);
 
   updateSelectedCount();
 }
 
+function cell(value) {
+  const td = document.createElement('td');
+  td.textContent = String(value == null ? '' : value);
+  return td;
+}
+
 // Select all checkbox
 selectAllCheckbox.addEventListener('change', () => {
-  const checkboxes = document.querySelectorAll('.paper-checkbox');
-  checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+  document.querySelectorAll('.paper-checkbox').forEach(cb => {
+    cb.checked = selectAllCheckbox.checked;
+  });
   updateSelectedCount();
 });
 
-// Update selected count
 candidatesBody.addEventListener('change', updateSelectedCount);
 
 function updateSelectedCount() {
@@ -186,15 +245,31 @@ function updateSelectedCount() {
   processBtn.disabled = checked === 0;
 }
 
+cancelBtn.addEventListener('click', async () => {
+  const runId = cancelBtn.dataset.runId;
+  if (!runId) return;
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'Cancelling…';
+  try {
+    const result = await RunProgress.cancel(runId);
+    runStatusEl.textContent = result.message;
+    runStatusEl.style.color = 'darkorange';
+  } catch (err) {
+    runStatusEl.textContent = 'Could not cancel: ' + err.message;
+    runStatusEl.style.color = 'crimson';
+    cancelBtn.disabled = false;
+  }
+  cancelBtn.textContent = 'Cancel run';
+});
+
 // Process selected papers
 processBtn.addEventListener('click', async () => {
   const pillar = pillarSelect.value;
-  const checkboxes = document.querySelectorAll('.paper-checkbox:checked');
-  const selectedIds = Array.from(checkboxes).map(cb => cb.dataset.id);
+  const selectedIds = Array.from(document.querySelectorAll('.paper-checkbox:checked'))
+    .map(cb => cb.dataset.id);
 
   if (selectedIds.length === 0) return;
 
-  // Get full paper data for selected papers
   const selectedPapers = candidates
     .filter(c => selectedIds.includes(c.paper.id))
     .map(c => ({
@@ -207,13 +282,11 @@ processBtn.addEventListener('click', async () => {
       citation_count: c.paper.citation_count
     }));
 
-  // Mark as attempted
-  selectedIds.forEach(id => attemptedIds.add(id));
-
   processBtn.disabled = true;
-  processBtn.textContent = 'Processing...';
-  processingResults.style.display = 'block';
-  processingOutput.innerHTML = '<p>Processing papers...</p>';
+  processBtn.textContent = 'Processing…';
+  runPanel.hidden = false;
+  runStatusEl.textContent = 'Starting…';
+  runStatusEl.style.color = '';
 
   try {
     // Returns 202 with a run id straight away. This used to run the whole
@@ -228,9 +301,12 @@ processBtn.addEventListener('click', async () => {
     const data = await res.json();
 
     if (res.status === 409) {
-      processingOutput.innerHTML =
-        `<p style="color: orange;">${data.detail || 'A run is already in progress for this pillar.'}</p>`;
-      await RunProgress.reattach(progressEls, onRunFinished);
+      runStatusEl.textContent = data.detail || 'A run is already in progress for this pillar.';
+      runStatusEl.style.color = 'darkorange';
+      // Ask the server which run that is. reattach() would prefer a stale
+      // localStorage id and could attach to an already-finished run instead.
+      const active = await RunProgress.findActive(pillar) || await RunProgress.findActive();
+      if (active) RunProgress.attach(active.id, progressEls, onRunFinished, syncPillar);
       processBtn.disabled = false;
       processBtn.textContent = 'Process Selected';
       return;
@@ -239,61 +315,71 @@ processBtn.addEventListener('click', async () => {
       throw new Error(data.detail || `HTTP ${res.status}`);
     }
 
-    processingOutput.innerHTML =
-      `<p>${data.message}. Following progress below \u2014 you can leave this page.</p>`;
-
-    // Remember what this run was for, so the summary can be written when it ends.
+    // Only NOW are these papers really attempted. Marking them before the request
+    // meant a 409 or a network error hid them from the table for the rest of the
+    // session even though nothing had been queued.
+    selectedIds.forEach(id => attemptedIds.add(id));
     pendingSelection = { count: selectedIds.length };
-    RunProgress.attach(data.run_id, progressEls, onRunFinished);
-
-    // The candidates that were sent are now attempted; drop them from the table so
-    // the user is not tempted to submit them twice while the run is in flight.
+    RunProgress.attach(data.run_id, progressEls, onRunFinished, syncPillar);
     renderCandidates();
 
   } catch (err) {
-    processingOutput.innerHTML = `<p style="color: red;">Error: ${err.message}</p>`;
-    totalFailed += selectedIds.length;
-    totalFailedEl.textContent = totalFailed;
-    sessionSummary.style.display = 'block';
+    runStatusEl.textContent = `Error: ${err.message}`;
+    runStatusEl.style.color = 'crimson';
     processBtn.disabled = false;
-
-    // Still re-render to remove attempted
+    processBtn.textContent = 'Process Selected';
     renderCandidates();
   }
 
   selectAllCheckbox.checked = false;
 });
 
-// Session totals are only knowable once the run ends, so they are written here
-// rather than from the (now immediate) POST response.
 let pendingSelection = null;
 
+function syncPillar(run) {
+  if (run && run.pillar_id) pillarSelect.value = run.pillar_id;
+}
+
+/**
+ * Fires for a finished run and for a vanished one (run === null).
+ *
+ * Reads the run's OWN status and counts. The previous version inferred failures from
+ * `attempted - papers_processed` and never looked at run.status, run.error or
+ * run.papers_failed — so a run that failed with one dead paper reported "Papers
+ * failed: 0" and showed no reason anywhere on the page.
+ */
 function onRunFinished(run) {
+  processBtn.disabled = false;
+  processBtn.textContent = 'Process Selected';
+  updateSelectedCount();
+
+  if (!run) {
+    // The run id was stale. Say so; do not leave the panel looking live.
+    pendingSelection = null;
+    return;
+  }
+
   const attempted = pendingSelection ? pendingSelection.count : run.papers_processed;
   pendingSelection = null;
 
   totalProcessed += run.papers_processed;
-  totalFailed += Math.max(0, attempted - run.papers_processed);
+  // Trust the run's own count, falling back to the shortfall only when the run did
+  // not report one (e.g. it was interrupted before it could).
+  totalFailed += run.papers_failed || Math.max(0, attempted - run.papers_processed);
 
   sessionSummary.style.display = 'block';
   totalProcessedEl.textContent = totalProcessed;
   totalFailedEl.textContent = totalFailed;
-
-  processBtn.disabled = false;
-  processBtn.textContent = 'Process Selected';
-  updateSelectedCount();
 }
 
 // Reattach to a run still in flight after a reload, so leaving the page mid-process
 // does not lose sight of it.
 window.addEventListener('DOMContentLoaded', async () => {
-  const found = await RunProgress.reattach(progressEls, onRunFinished);
+  const found = await RunProgress.reattach(progressEls, onRunFinished, syncPillar);
   if (!found) return;
-  processingResults.style.display = 'block';
-  processingOutput.innerHTML = '<p>Reattached to a run already in progress.</p>';
+  runPanel.hidden = false;
   processBtn.disabled = true;
-  processBtn.textContent = 'Processing\u2026';
-  if (found.pillar_id) pillarSelect.value = found.pillar_id;
+  processBtn.textContent = 'Processing…';
 });
 </script>
 {% endblock %}

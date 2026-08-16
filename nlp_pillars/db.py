@@ -2126,6 +2126,18 @@ def get_citation_network_papers(paper_ids: List[str], limit: int = 20) -> List[s
 # worker thread.
 # =====================================
 
+
+class PipelineRunCreateError(Exception):
+    """A pipeline run could not be created, for a reason that is not a conflict.
+
+    Deliberately distinct from create_pipeline_run() returning None. None means the
+    partial unique index refused a second active run for the pillar, which is a normal
+    outcome the caller reports as HTTP 409. This means something is actually broken —
+    the table is missing, the grant is wrong, PostgREST is down — and must not be
+    reported to the user as "a run is already in progress".
+    """
+
+
 def _dict_to_pipeline_run_stage(data: Dict[str, Any]) -> PipelineRunStage:
     """Convert a pipeline_run_stages row to a PipelineRunStage."""
     return PipelineRunStage(
@@ -2189,9 +2201,15 @@ def create_pipeline_run(
         stage_names: Ordered stage names; index + 1 becomes the stored ``seq``.
 
     Returns:
-        The created PipelineRun with its seeded stages, or None if a run is already
-        active for this pillar, or None if creation failed for any other reason
-        (logged at ERROR).
+        The created PipelineRun with its seeded stages, or None if — and only if — a
+        run is already active for this pillar.
+
+    Raises:
+        PipelineRunCreateError: creation failed for any other reason (missing table,
+            permission denied, PostgREST unreachable). This used to return None like
+            the conflict case, and the caller turned every None into HTTP 409, so a
+            broken database told the user "a run is already in progress" — a
+            comfortable lie that sent them looking for a run that did not exist.
 
     """
     try:
@@ -2215,11 +2233,16 @@ def create_pipeline_run(
                 )
                 return None
             logger.error(f"Failed to create pipeline run: {error_info}")
-            return None
+            raise PipelineRunCreateError(
+                f"Could not create a pipeline run for {pillar_id}: {error_info}"
+            )
 
         if not response['data']:
             logger.error("Pipeline run insert returned no row")
-            return None
+            raise PipelineRunCreateError(
+                f"Could not create a pipeline run for {pillar_id}: "
+                "the insert returned no row"
+            )
 
         run = _dict_to_pipeline_run(response['data'][0])
 
@@ -2255,9 +2278,15 @@ def create_pipeline_run(
         )
         return run
 
+    except PipelineRunCreateError:
+        # Already logged and already carries its reason — must stay above the broad
+        # clause below, which would otherwise flatten it back into None.
+        raise
     except Exception as e:
         logger.error(f"Failed to create pipeline run for pillar {pillar_id}: {e}")
-        return None
+        raise PipelineRunCreateError(
+            f"Could not create a pipeline run for {pillar_id}: {e}"
+        ) from e
 
 
 def start_pipeline_run(run_id: str) -> bool:

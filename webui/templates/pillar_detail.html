@@ -1304,24 +1304,52 @@ async function loadRecentUploads() {
             return;
         }
         
-        const html = uploads.map(upload => `
-            <div class="upload-status-item">
-                <div class="upload-status-icon">
-                    ${getStatusIcon(upload.status)}
-                </div>
-                <div class="upload-status-content">
-                    <h5>${upload.filename || upload.url || 'Unknown file'}</h5>
-                    <p class="status-${upload.status}">${upload.message}</p>
-                    ${upload.status === 'processing' ? `
-                        <div class="upload-progress">
-                            <div class="upload-progress-bar" style="width: ${upload.progress}%"></div>
-                        </div>
-                    ` : ''}
-                </div>
-            </div>
-        `).join('');
-        
-        container.innerHTML = html;
+        // Built with createElement, not a template literal. `filename` is whatever
+        // the user named the file they uploaded and `message` can carry server text,
+        // and both used to be interpolated straight into innerHTML — a file called
+        // `<img src=x onerror=...>.pdf` executed on this page. Note that wrapping
+        // them in escapeHtml() would not be enough on its own for the attributes
+        // below: it leaves quote characters intact, so only setAttribute/style
+        // assignment makes an attribute safe.
+        const frag = document.createDocumentFragment();
+        uploads.forEach(upload => {
+            const item = document.createElement('div');
+            item.className = 'upload-status-item';
+
+            const icon = document.createElement('div');
+            icon.className = 'upload-status-icon';
+            icon.textContent = getStatusIcon(upload.status);
+
+            const content = document.createElement('div');
+            content.className = 'upload-status-content';
+
+            const name = document.createElement('h5');
+            name.textContent = upload.filename || upload.url || 'Unknown file';
+
+            const message = document.createElement('p');
+            message.className = 'status-' + String(upload.status || '').replace(/[^\w-]/g, '');
+            message.textContent = upload.message || '';
+
+            content.append(name, message);
+
+            if (upload.status === 'processing') {
+                const wrap = document.createElement('div');
+                wrap.className = 'upload-progress';
+                const bar = document.createElement('div');
+                bar.className = 'upload-progress-bar';
+                // Clamped and coerced: a non-numeric progress cannot reach the
+                // stylesheet as arbitrary CSS.
+                const pct = Math.max(0, Math.min(100, Number(upload.progress) || 0));
+                bar.style.width = pct + '%';
+                wrap.appendChild(bar);
+                content.appendChild(wrap);
+            }
+
+            item.append(icon, content);
+            frag.appendChild(item);
+        });
+
+        container.replaceChildren(frag);
     } catch (error) {
         console.error('Failed to load recent uploads:', error);
         container.innerHTML = '<div class="empty-state"><p>Failed to load uploads</p></div>';
@@ -1384,7 +1412,7 @@ async function performSearch(pillarId, query, topK) {
         console.error('Search error:', error);
         resultsContainer.innerHTML = `
             <div class="empty-state">
-                <p>Search failed: ${error.message}</p>
+                <p>Search failed: ${escapeHtml(error.message)}</p>
                 <button onclick="location.reload()" class="btn-secondary">Try again</button>
             </div>
         `;
@@ -1400,7 +1428,7 @@ function displaySearchResults(results, query) {
     if (!results || results.length === 0) {
         resultsContainer.innerHTML = `
             <div class="empty-state">
-                <p>No papers found for "${query}"</p>
+                <p>No papers found for "${escapeHtml(query)}"</p>
                 <small>Try different keywords or broaden your search</small>
             </div>
         `;
@@ -1409,7 +1437,7 @@ function displaySearchResults(results, query) {
     
     const resultsHtml = `
         <div class="search-results-header">
-            <h4>Found ${results.length} result${results.length === 1 ? '' : 's'} for "${query}"</h4>
+            <h4>Found ${results.length} result${results.length === 1 ? '' : 's'} for "${escapeHtml(query)}"</h4>
         </div>
         <div class="search-results-list">
             ${results.map(result => createSearchResultCard(result)).join('')}
@@ -1434,20 +1462,20 @@ function createSearchResultCard(result) {
                     <h4 class="search-result-title">${escapeHtml(result.title)}</h4>
                     <div class="search-result-meta">
                         <span class="search-result-authors">${escapeHtml(authors)}</span>
-                        <span>${year}</span>
+                        <span>${escapeHtml(year)}</span>
                         ${venue !== 'Unknown venue' ? `<span>${escapeHtml(venue)}</span>` : ''}
                     </div>
                 </div>
                 <div class="search-result-score">
-                    <div class="search-result-score-main">${result.score}</div>
+                    <div class="search-result-score-main">${escapeHtml(result.score)}</div>
                     <div>Relevance</div>
-                    <div title="Vector similarity: ${result.cosine_similarity}, Keyword overlap: ${result.keyword_overlap}">
+                    <div title="Vector similarity: ${escapeAttr(result.cosine_similarity)}, Keyword overlap: ${escapeAttr(result.keyword_overlap)}">
                         📊 Details
                     </div>
                 </div>
             </div>
             <div class="search-result-actions">
-                <button class="enqueue-btn" onclick="enqueuePaper('${result.paper_id}')">
+                <button class="enqueue-btn" data-paper-id="${escapeAttr(result.paper_id)}">
                     📥 Enqueue
                 </button>
                 <a href="/papers/details/${encodeURIComponent(result.paper_id)}" class="view-paper-btn">
@@ -1465,9 +1493,31 @@ function enqueuePaper(paperId) {
 }
 
 function escapeHtml(text) {
+    // Safe for BODY text only. This serializes a text node, and the HTML fragment
+    // serialization algorithm escapes quotes only in attribute mode — so `"` and `'`
+    // come back untouched and `title="${escapeHtml(x)}"` is still injectable.
+    // Use escapeAttr() for anything inside an attribute.
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = text == null ? '' : String(text);
     return div.innerHTML;
 }
+
+function escapeAttr(value) {
+    // Quotes included, so the value cannot terminate the attribute it sits in.
+    // Still never safe for on*= handlers or javascript: URLs — the browser decodes
+    // entities before the JS parser runs, so those need a data attribute instead.
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Delegated, so no markup carries an inline handler built from a paper id.
+document.addEventListener('click', (event) => {
+    const btn = event.target.closest('.enqueue-btn');
+    if (btn) enqueuePaper(btn.dataset.paperId);
+});
 </script>
 {% endblock %}

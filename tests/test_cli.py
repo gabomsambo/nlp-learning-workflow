@@ -13,6 +13,25 @@ from nlp_pillars.cli import app
 from nlp_pillars.schemas import PipelineResult, PaperNote, Lesson, QuizCard, DifficultyLevel, QuestionType
 
 
+# `nlp_pillars.cli.get_valid_pillars()` dials the real database (falling back to
+# `PILLAR_CONFIGS` only on an *exception* -- and `db.get_pillars()` itself swallows
+# connection errors and returns `[]` rather than raising, so an unreachable database
+# yields an empty valid-pillar list, not the static fallback). Every test that exercises
+# `_validate_pillar` therefore patches `nlp_pillars.cli.get_valid_pillars` with this
+# fixed list instead of letting it reach a real (or absent) database -- see AGENTS.md's
+# "test suite runs in CI now" section for why that dial made these tests CI-flaky.
+VALID_PILLAR_SLUGS = [
+    "formal-linguistics-nlp",
+    "neural-architectures-language",
+    "llm-theory-practice",
+    "computational-semantics",
+    "model-interpretability",
+    "ai-agents-tool-use",
+    "ml-systems-production",
+    "ai-safety-alignment",
+]
+
+
 # Test fixtures
 @pytest.fixture
 def cli_runner():
@@ -152,13 +171,18 @@ class TestCLIHelp:
 class TestRunCommand:
     """Test the run command functionality."""
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_run_command_success(self, mock_env_path, mock_orchestrator_class, cli_runner, mock_pipeline_result_success):
+    def test_run_command_success(self, mock_env_path, mock_orchestrator_class, mock_get_pillars, cli_runner, mock_pipeline_result_success):
         """Test successful run command execution."""
         # Mock environment path
         mock_env_path.return_value = Path("/test/.env")
-        
+
+        # Mock the pillar lookup so this test does not dial a real database --
+        # see the VALID_PILLAR_SLUGS comment above.
+        mock_get_pillars.return_value = VALID_PILLAR_SLUGS
+
         # Mock orchestrator
         mock_orchestrator = Mock()
         mock_orchestrator.run_daily.return_value = mock_pipeline_result_success
@@ -179,13 +203,18 @@ class TestRunCommand:
         mock_orchestrator_class.assert_called_once_with(enable_quiz=True)
         mock_orchestrator.run_daily.assert_called_once_with("formal-linguistics-nlp", papers_limit=2)
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_run_command_failure(self, mock_env_path, mock_orchestrator_class, cli_runner, mock_pipeline_result_failure):
+    def test_run_command_failure(self, mock_env_path, mock_orchestrator_class, mock_get_pillars, cli_runner, mock_pipeline_result_failure):
         """Test run command with pipeline failure."""
         # Mock environment path
         mock_env_path.return_value = None
-        
+
+        # Mock the pillar lookup so this test does not dial a real database --
+        # see the VALID_PILLAR_SLUGS comment above.
+        mock_get_pillars.return_value = VALID_PILLAR_SLUGS
+
         # Mock orchestrator
         mock_orchestrator = Mock()
         mock_orchestrator.run_daily.return_value = mock_pipeline_result_failure
@@ -204,13 +233,18 @@ class TestRunCommand:
         # Verify orchestrator was called
         mock_orchestrator.run_daily.assert_called_once_with("neural-architectures-language", papers_limit=1)
     
+    @patch('nlp_pillars.cli.get_valid_pillars')
     @patch('nlp_pillars.cli.Orchestrator')
     @patch('nlp_pillars.cli.env_loaded_path')
-    def test_run_command_exception(self, mock_env_path, mock_orchestrator_class, cli_runner):
+    def test_run_command_exception(self, mock_env_path, mock_orchestrator_class, mock_get_pillars, cli_runner):
         """Test run command with orchestrator exception."""
         # Mock environment path
         mock_env_path.return_value = None
-        
+
+        # Mock the pillar lookup so this test does not dial a real database --
+        # see the VALID_PILLAR_SLUGS comment above.
+        mock_get_pillars.return_value = VALID_PILLAR_SLUGS
+
         # Mock orchestrator to raise exception
         mock_orchestrator = Mock()
         mock_orchestrator.run_daily.side_effect = Exception("Database connection failed")
@@ -223,21 +257,28 @@ class TestRunCommand:
         assert result.exit_code == 1
         assert "Pipeline error: Database connection failed" in result.stdout
     
-    def test_run_command_invalid_pillar(self, cli_runner):
+    @patch('nlp_pillars.cli.get_valid_pillars')
+    def test_run_command_invalid_pillar(self, mock_get_pillars, cli_runner):
         """Test run command with invalid pillar."""
+        # Mock the pillar lookup so this test does not dial a real database --
+        # see the VALID_PILLAR_SLUGS comment above. "P9" is invalid against this
+        # list regardless, but a real DB dial is what made this test non-hermetic.
+        mock_get_pillars.return_value = VALID_PILLAR_SLUGS
+
         result = cli_runner.invoke(app, ["run", "--pillar", "P9", "--papers", "1"])
-        
+
         assert result.exit_code == 1
         assert "Invalid pillar 'P9'" in result.stdout
         assert "Valid pillars:" in result.stdout
-    
+
     def test_run_command_default_papers(self, cli_runner):
         """Test run command with default papers value."""
-        with patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
+        with patch('nlp_pillars.cli.get_valid_pillars', return_value=VALID_PILLAR_SLUGS), \
+             patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
             mock_orchestrator = Mock()
             mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
             mock_orchestrator_class.return_value = mock_orchestrator
-            
+
             result = cli_runner.invoke(app, ["run", "--pillar", "formal-linguistics-nlp"])
 
             # Should use default papers=1
@@ -354,10 +395,15 @@ class TestStatusCommand:
         assert result.exit_code == 1
         assert "Error fetching lessons: Database connection failed" in result.stdout
     
-    def test_status_command_invalid_pillar(self, cli_runner):
+    @patch('nlp_pillars.cli.get_valid_pillars')
+    def test_status_command_invalid_pillar(self, mock_get_pillars, cli_runner):
         """Test status command with invalid pillar."""
+        # See the VALID_PILLAR_SLUGS comment above: without this the command
+        # dials the real (possibly absent) database before failing validation.
+        mock_get_pillars.return_value = VALID_PILLAR_SLUGS
+
         result = cli_runner.invoke(app, ["status", "--pillar", "P0"])
-        
+
         assert result.exit_code == 1
         assert "Invalid pillar 'P0'" in result.stdout
 
@@ -458,10 +504,15 @@ class TestReviewCommand:
         assert result.exit_code == 1
         assert "Error fetching due quiz cards: Database connection failed" in result.stdout
     
-    def test_review_command_invalid_pillar(self, cli_runner):
+    @patch('nlp_pillars.cli.get_valid_pillars')
+    def test_review_command_invalid_pillar(self, mock_get_pillars, cli_runner):
         """Test review command with invalid pillar."""
+        # See the VALID_PILLAR_SLUGS comment above: without this the command
+        # dials the real (possibly absent) database before failing validation.
+        mock_get_pillars.return_value = VALID_PILLAR_SLUGS
+
         result = cli_runner.invoke(app, ["review", "--pillar", "PX"])
-        
+
         assert result.exit_code == 1
         assert "Invalid pillar 'PX'" in result.stdout
 
@@ -495,20 +546,12 @@ class TestPillarValidation:
     
     def test_all_valid_pillars(self, cli_runner):
         """Test that all valid pillars are accepted."""
-        valid_pillars = [
-            "formal-linguistics-nlp",
-            "neural-architectures-language",
-            "llm-theory-practice",
-            "computational-semantics",
-            "model-interpretability",
-            "ai-agents-tool-use",
-            "ml-systems-production",
-            "ai-safety-alignment"
-        ]
-
-        for pillar in valid_pillars:
-            # Test with run command (mock orchestrator to avoid actual execution)
-            with patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
+        for pillar in VALID_PILLAR_SLUGS:
+            # Test with run command (mock orchestrator to avoid actual execution).
+            # get_valid_pillars is mocked too -- see the VALID_PILLAR_SLUGS comment
+            # above -- so this never dials a real database.
+            with patch('nlp_pillars.cli.get_valid_pillars', return_value=VALID_PILLAR_SLUGS), \
+                 patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
                 mock_orchestrator = Mock()
                 mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
                 mock_orchestrator_class.return_value = mock_orchestrator
@@ -517,13 +560,15 @@ class TestPillarValidation:
 
                 # Should not fail on pillar validation
                 assert "Invalid pillar" not in result.stdout
-    
+
     def test_invalid_pillars(self, cli_runner):
         """Test that invalid pillars are rejected."""
         invalid_pillars = ["P0", "P6", "P10", "X1", "invalid"]
 
         for pillar in invalid_pillars:
-            result = cli_runner.invoke(app, ["run", "--pillar", pillar])
+            # See the VALID_PILLAR_SLUGS comment above.
+            with patch('nlp_pillars.cli.get_valid_pillars', return_value=VALID_PILLAR_SLUGS):
+                result = cli_runner.invoke(app, ["run", "--pillar", pillar])
 
             assert result.exit_code == 1
             assert f"Invalid pillar '{pillar}'" in result.stdout
@@ -549,11 +594,14 @@ class TestEdgeCases:
     @patch('nlp_pillars.cli.logging.basicConfig')
     def test_logging_setup(self, mock_logging_config, cli_runner):
         """Test that logging is configured correctly."""
-        with patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
+        # get_valid_pillars is mocked too -- see the VALID_PILLAR_SLUGS comment
+        # above -- so this never dials a real database.
+        with patch('nlp_pillars.cli.get_valid_pillars', return_value=VALID_PILLAR_SLUGS), \
+             patch('nlp_pillars.cli.Orchestrator') as mock_orchestrator_class:
             mock_orchestrator = Mock()
             mock_orchestrator.run_daily.return_value = Mock(success=True, papers_processed=[], lessons_created=[], quizzes_generated=[], errors=[], total_time_seconds=1.0)
             mock_orchestrator_class.return_value = mock_orchestrator
-            
+
             result = cli_runner.invoke(app, ["run", "--pillar", "formal-linguistics-nlp"])
             
             # Verify logging was configured

@@ -8,6 +8,7 @@ optimized for the UI use cases (counts, recent activity, simple lists).
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,6 +17,8 @@ import httpx
 from pydantic import BaseModel
 
 from nlp_pillars.pillar_utils import get_all_pillar_ids
+
+logger = logging.getLogger(__name__)
 
 
 class QuickStats(BaseModel):
@@ -313,12 +316,20 @@ class PostgrestClient:
         Uses PostgREST resource embedding so the run and all eleven stages arrive in
         a single request — at one poll per second, a second round trip per poll is
         not free.
+
+        Raises:
+            httpx.HTTPError: the database could not be reached or answered an error.
+                Deliberately NOT swallowed. A missing row is already `data == []` with
+                HTTP 200, so the old blanket `except Exception: return None` could only
+                ever hide a real failure — and the router turns None into 404, which
+                the browser treats as "this run is gone": it wipes the stored run id
+                and stops polling. One transient blip permanently detached the UI from
+                a run that was still executing. Let it propagate; the caller maps it to
+                503 and the poller's existing retry/backoff handles it.
+
         """
-        try:
-            params = {"select": "*,pipeline_run_stages(*)", "id": f"eq.{run_id}"}
-            data, _ = await self._get("pipeline_runs", params=params)
-        except Exception:
-            return None
+        params = {"select": "*,pipeline_run_stages(*)", "id": f"eq.{run_id}"}
+        data, _ = await self._get("pipeline_runs", params=params)
         if not data:
             return None
         return self._shape_run(data[0])
@@ -342,7 +353,13 @@ class PostgrestClient:
             if pillar_id:
                 params["pillar_id"] = f"eq.{pillar_id}"
             data, _ = await self._get("pipeline_runs", params=params)
-        except Exception:
+        except httpx.HTTPError as e:
+            # Unlike get_pipeline_run, "no active run" is the overwhelmingly common
+            # answer here and the browser treats null as "nothing in flight", which is
+            # harmless. Degrading to None on a transport error is therefore safe — but
+            # log it, because silence here is why a dead PostgREST looked like an idle
+            # system.
+            logger.warning(f"Could not read the active pipeline run: {e}")
             return None
         if not data:
             return None
@@ -361,6 +378,9 @@ class PostgrestClient:
             params["pillar_id"] = f"eq.{pillar_id}"
         try:
             data, _ = await self._get("pipeline_runs", params=params)
-        except Exception:
+        except httpx.HTTPError as e:
+            # History is decoration, not state the UI acts on — an empty list is an
+            # acceptable degradation. Logged so it is not silent.
+            logger.warning(f"Could not list pipeline runs: {e}")
             return []
         return data

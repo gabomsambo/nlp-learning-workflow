@@ -17,7 +17,7 @@ from nlp_pillars.tools import pdf_loader
 from nlp_pillars.tools.pdf_loader import (
     download_pdf, extract_text, chunk_text, 
     PDFDownloadError, PDFParseError,
-    _normalize_whitespace, _validate_pdf_content
+    _normalize_whitespace, _validate_pdf_content, _clean_pdf_header_noise
 )
 
 
@@ -79,6 +79,36 @@ class TestPDFLoader:
         expected = "Line one\nLine two\nLine three"
         assert _normalize_whitespace(input_text) == expected
     
+    def test_header_cleaning_never_erases_the_whole_document(self):
+        """Short text must survive header-noise removal.
+
+        Regression. The fallback branch only cleared skip_mode for lines longer than
+        TEN characters while skipping only lines of two or fewer, so every line in
+        between was silently dropped — and a text whose lines were ALL short came back
+        empty. Measured before the fix: both inputs below returned "".
+
+        This is real data loss on short papers and short chunks, and it hid well:
+        upsert_text() wraps its body in `except Exception: return 0`, so the only
+        symptom downstream was "0 chunks upserted".
+        """
+        for text in ("tabs\t\there",
+                     "Line one   \nLine two\t\n   Line three  ",
+                     "short"):
+            assert _clean_pdf_header_noise(text).strip(), (
+                f"header cleaning erased {text!r} entirely"
+            )
+
+    def test_header_cleaning_still_strips_leading_noise(self):
+        """The fix must not turn the cleaner into a no-op.
+
+        Scattered single characters before the real content are what this function
+        exists to remove.
+        """
+        text = "A\nB\n1\nx\nThe rest of a perfectly ordinary paragraph of prose."
+        cleaned = _clean_pdf_header_noise(text)
+        assert "The rest of a perfectly ordinary paragraph" in cleaned
+        assert not cleaned.startswith("A\nB")
+
     def test_validate_pdf_content(self):
         """Test PDF content validation."""
         # Valid PDF content

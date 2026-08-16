@@ -62,6 +62,11 @@ def create_fake_data():
     fake_lesson = Lesson(
         paper_id="fake.001",
         pillar_id="models-architectures",
+        # Required on Lesson. Without them this script died with a pydantic
+        # ValidationError before printing anything, which is why
+        # test_smoke_script_execution failed on the subprocess's output.
+        title="Smoke Test Lesson",
+        content="Body text for the smoke-test lesson.",
         tl_dr="TL;DR: Smoke test OK.",
         takeaways=[
             "Takeaway 1: Neural architectures can be optimized efficiently",
@@ -186,6 +191,17 @@ def run_smoke_test():
                 
                 # Manually set the enable_quiz attribute
                 orchestrator.enable_quiz = True
+
+                # Everything __init__ would normally set that run_daily reads
+                # unconditionally. Replacing __init__ wholesale means these have to be
+                # supplied by hand, and a missing one surfaces as a bare
+                # AttributeError swallowed into "Pipeline failed for pillar ...".
+                orchestrator._on_stage = lambda name, status, detail=None: None
+                orchestrator._cancel = None
+                orchestrator._current_paper_stage = None
+                orchestrator._infra_errors = []
+                orchestrator.semantic_scholar_tool = None
+                orchestrator.vector_search_tool = None
                 
                 # Mock the search tools
                 orchestrator.searxng_tool = Mock()
