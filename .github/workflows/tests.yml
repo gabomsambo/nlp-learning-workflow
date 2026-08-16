@@ -99,12 +99,11 @@ jobs:
 
       # KNOWN-RED, and left that way on purpose.
       #
-      # Baseline at the commit that added this workflow (2026-08-16), after the
-      # slug fix: 248 passed, 32 failed, 10 errors.
+      # Baseline measured HERE, on this runner, 2026-08-16:
+      #   244 passed, 36 failed, 10 errors
       #
-      # Those 42 are pre-existing drift between the tests and the code they
-      # cover, NOT flakes and NOT caused by this workflow. Four clusters account
-      # for nearly all of them:
+      # Those 46 are pre-existing drift between the tests and the code they
+      # cover, NOT flakes and NOT caused by this workflow. Five clusters:
       #   ~12  tests patch `nlp_pillars.agents.discovery_agent.OpenAI`, a name
       #        that module no longer binds
       #   ~10  Lesson gained required `title` / `content`; fixtures never updated
@@ -112,8 +111,24 @@ jobs:
       #        a response, plus several "DID NOT RAISE ValueError"
       #    ~4  tests/test_vectors.py expects SHA1-hex point ids where
       #        qdrant-client 1.19 normalises to UUID form
+      #     5  tests/test_cli.py reaches a REAL database. It is not mocked, so
+      #        it dies here with `[Errno 111] Connection refused` from
+      #        db.py:get_pillars. This one is a genuine test defect that CI
+      #        found on its first working run — see the note below.
       #
       # Do not paper over this with `continue-on-error`, `|| true`, `-k` filters
       # or `--ignore`. A suppressed suite is what this file exists to prevent.
       # Fix the clusters and the job goes green on its own; until then a PR is
       # judged on whether it moves those numbers the right way.
+      #
+      # TRUST THESE NUMBERS OVER A LOCAL RUN. A developer machine gives 248/32/10
+      # — four tests better — and the difference is the local environment being
+      # dishonest, not the runner being wrong:
+      #   - the five test_cli tests PASS locally only when the compose stack
+      #     happens to be up, because they really do dial PostgREST on :3000
+      #   - test_vectors' embedding-fallback test FAILS locally because
+      #     config.py's `load_dotenv(override=True)` means the real
+      #     OPENAI_API_KEY in .env beats the placeholder exported below, so the
+      #     call that was supposed to fail succeeds against the live API
+      # There is no .env on a runner and no stack behind it, which is exactly
+      # why the run here is the honest one.

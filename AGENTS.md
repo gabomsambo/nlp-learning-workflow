@@ -334,16 +334,36 @@ initial scheduling, so it is enforced, not advisory.
 `.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
 that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
 
-Baseline the day it was added: **248 passed, 32 failed, 10 errors**. The 42 are pre-existing
-drift between the tests and the code they cover, not flakes. Four clusters:
+Baseline on the runner the day it was added: **244 passed, 36 failed, 10 errors**. The 46
+are pre-existing drift between the tests and the code they cover, not flakes. Five clusters:
 tests patching `nlp_pillars.agents.discovery_agent.OpenAI` (a name that module no longer
 binds); fixtures predating `Lesson` gaining required `title` / `content`; `tests/test_db.py`
-handing back bare `Mock` where the code subscripts a response; and `tests/test_vectors.py`
-asserting SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form.
+handing back bare `Mock` where the code subscripts a response; `tests/test_vectors.py`
+asserting SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form; and five
+`tests/test_cli.py` tests that are not mocked at all and really do dial PostgREST.
 
 Judge a PR on whether it moves those numbers the right way. Do **not** make the job green
 with `continue-on-error`, `|| true`, `--ignore` or `-k` — a suppressed suite is the exact
 condition this workflow was added to end.
+
+**A local run flatters the suite by four tests, and CI is the honest one.** Locally you get
+248/32/10, for two reasons that are both the environment lying rather than the runner
+misbehaving. The five `test_cli.py` tests pass whenever the compose stack happens to be up,
+because they reach a real database instead of a mock — with the stack down they fail locally
+too, with `[Errno 111] Connection refused` from `db.py::get_pillars`. And
+`test_vectors.py::test_get_vector_size_failure_fallback` fails locally because
+`get_settings()`'s `load_dotenv(override=True)` means the real `OPENAI_API_KEY` in `.env`
+beats any placeholder you export, so the embedding call it needs to *fail* quietly succeeds
+against the live API — and bills you. A runner has neither a `.env` nor a stack behind it.
+
+Two consequences worth internalising: a local suite run is not hermetic and can spend real
+money, and "it passes on my machine" is not evidence here.
+
+The suite also only imports because `pyproject.toml` sets `pythonpath = ["."]`. There is no
+`conftest.py`, the project is not pip-installed into the test environment, and `tests/` has
+no `__init__.py`. Before that line, plain `pytest` failed every module with
+`ModuleNotFoundError: No module named 'nlp_pillars'` and only `python -m pytest` worked,
+because `-m` adds the working directory to `sys.path` as a side effect.
 
 The `guard` job is separate, stdlib-only, and **must stay green**. It runs
 `scripts/check_bare_slugs.py`, which fails the build on a pillar slug written without
