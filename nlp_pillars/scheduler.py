@@ -100,8 +100,21 @@ def run_all_pillars() -> None:
 
     try:
         pillars = db.get_pillars(limit=50)
-    except Exception as e:
+    except db.PillarLookupError as e:
+        # Reachable at last. get_pillars() used to swallow connection errors and
+        # return [], so this clause never ran and the nightly run instead fell into
+        # the "no pillars, seed them with create_pillars.py" branch below — telling
+        # the operator to seed a database that was merely unreachable, and doing so
+        # only at WARNING.
         logger.error(f"Daily run aborted: could not load pillars from database: {e}")
+        return
+    except Exception as e:
+        # Kept deliberately broad below the specific clause: this is a long-lived
+        # process and nothing about loading a pillar list may be allowed to kill it.
+        # Covered by test_database_failure_does_not_propagate.
+        logger.error(
+            f"Daily run aborted: unexpected error loading pillars: {e}", exc_info=True
+        )
         return
 
     if not pillars:

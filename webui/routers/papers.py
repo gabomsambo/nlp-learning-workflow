@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from nlp_pillars.db import get_pillars
+from nlp_pillars.db import get_pillars_or_empty
 from ..services.postgrest_client import PostgrestClient
 
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/papers")
 async def list_papers(request: Request, pillar: Optional[str] = None) -> HTMLResponse:
     client = PostgrestClient()
     data = await client.list_papers(pillar=pillar, limit=100)
-    pillars = get_pillars(limit=100)
+    pillars = get_pillars_or_empty(limit=100)
     return request.app.state.templates.TemplateResponse(
         request, "papers.html", {"papers": data, "pillar": pillar, "pillars": pillars}
     )

@@ -14,7 +14,8 @@ from nlp_pillars.db import (
     upsert_paper, mark_processed, insert_note, insert_lesson, insert_quiz_cards,
     get_recent_notes, queue_add_candidates, queue_pop_next,
     _paper_ref_to_dict, _dict_to_paper_ref, _paper_note_to_dict, _dict_to_paper_note,
-    _lesson_to_dict, _dict_to_lesson, _quiz_card_to_dict, _dict_to_quiz_card
+    _lesson_to_dict, _dict_to_lesson, _quiz_card_to_dict, _dict_to_quiz_card,
+    get_pillars, get_pillars_or_empty, PillarLookupError
 )
 
 
@@ -297,42 +298,36 @@ class TestUpsertPaper:
         assert insert_data['title'] == sample_paper_ref.title
 
     def test_upsert_paper_no_pillar_id(self, mock_supabase_client, sample_paper_ref):
-        """upsert_paper has no pillar_id validation.
+        """A write that cannot name its pillar is refused, not silently un-pillared.
 
-        add_paper builds its payload with _paper_ref_to_dict, which drops
-        every None value -- including a None pillar_id -- before the
-        insert, and its broad except would swallow a ValueError anyway.
-        Document what actually happens (the write goes through with
-        pillar_id silently absent) instead of the validation this test used
-        to assume existed.
+        _paper_ref_to_dict drops None values so optional metadata (venue, year,
+        abstract) can be omitted rather than written as NULL — but that filter applied
+        to every key, so a None pillar_id was quietly stripped and the row inserted
+        with no pillar at all. Pillar isolation is the one invariant this schema has.
+
+        add_paper turns the ValueError into False rather than letting it escape, so a
+        daily run records the paper as failed and carries on.
         """
         mock_supabase_client.table().insert.return_value = {
             'data': [{'id': 'test.12345'}], 'error': None
         }
 
-        result = upsert_paper(None, sample_paper_ref)
-
-        assert result is True
-        insert_data = mock_supabase_client.table().insert.call_args[0][0]
-        assert 'pillar_id' not in insert_data
+        assert upsert_paper(None, sample_paper_ref) is False
+        mock_supabase_client.table().insert.assert_not_called()
 
     def test_upsert_paper_no_paper_id(self, mock_supabase_client):
-        """Same absence of validation for an empty paper.id.
+        """An empty paper id is refused too.
 
-        Unlike a missing pillar_id, an empty string is not None, so
-        _paper_ref_to_dict keeps 'id': '' in the payload and the write goes
-        through unchanged.
+        An empty string is not None, so the None-filter never touched it and a row
+        with a blank primary key went straight to the database.
         """
         paper = PaperRef(id="", title="Test", authors=[])
         mock_supabase_client.table().insert.return_value = {
             'data': [{'id': ''}], 'error': None
         }
 
-        result = upsert_paper("linguistic-cognitive-foundations", paper)
-
-        assert result is True
-        insert_data = mock_supabase_client.table().insert.call_args[0][0]
-        assert insert_data['id'] == ''
+        assert upsert_paper("linguistic-cognitive-foundations", paper) is False
+        mock_supabase_client.table().insert.assert_not_called()
 
 
 class TestMarkProcessed:
@@ -710,23 +705,24 @@ class TestErrorHandling:
     """Test error handling and validation."""
     
     def test_missing_pillar_id_errors(self, mock_supabase_client):
-        """None of upsert_paper / mark_processed / get_recent_notes validate
-        pillar_id -- there is no ValueError path for a missing one. Document
-        the actual behaviour (the call proceeds and succeeds) instead of the
-        validation this test used to assume existed.
+        """A paper write without a pillar is refused; the reads still are not.
 
-        A None pillar_id does still do something odd downstream --
-        TableQuery.eq() renders it as the literal string 'None' (a
-        documented, deliberately-untouched bug, see AGENTS.md "Sharp
-        edges") -- but that does not change what these functions raise,
-        which is what this test actually exercises.
+        upsert_paper now rejects a missing pillar_id rather than letting
+        _paper_ref_to_dict's None-filter strip it and write an un-pillared row.
+
+        mark_processed and get_recent_notes still accept None and are left that way
+        on purpose: they only ever read or narrow, so the blast radius is a query that
+        matches nothing rather than a row written under the wrong pillar. Note the
+        related documented bug they run into — TableQuery.eq() renders None as the
+        literal string 'None', see AGENTS.md "Sharp edges" — which is deliberately
+        untouched here.
         """
         paper_ref = PaperRef(id="test", title="Test", authors=[])
 
         mock_supabase_client.table().insert.return_value = {
             'data': [{'id': 'test'}], 'error': None
         }
-        assert upsert_paper(None, paper_ref) is True
+        assert upsert_paper(None, paper_ref) is False
 
         mock_supabase_client.table().update.return_value = {'data': [], 'error': None}
         assert mark_processed(None, "test.123") is True
@@ -777,3 +773,85 @@ class TestErrorHandling:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestPillarLookupSignalling:
+    """get_pillars must distinguish "no pillars" from "cannot read pillars".
+
+    Collapsing the two into an empty list is what made two separate fallbacks dead
+    code: cli.get_valid_pillars() and scheduler.run_all_pillars() each wrap the call
+    in an except that could never fire. The user-visible results were a CLI that
+    rejected every --pillar argument with "Valid pillars: " and nothing after it, and
+    a scheduler that logged "no pillars in the database, nothing to do. Seed them with
+    create_pillars.py" — advice that is wrong when the database is merely down.
+    """
+
+    def test_an_empty_table_is_an_empty_list(self, mock_supabase_client):
+        """Genuine emptiness must stay a plain empty list, not an error."""
+        mock_supabase_client.table().select().order().limit().execute.return_value = {
+            'data': [], 'error': None
+        }
+        assert get_pillars() == []
+
+    def test_a_read_failure_raises(self, mock_supabase_client):
+        mock_supabase_client.table().select().order().limit().execute.return_value = {
+            'data': None, 'error': {'message': 'Connection refused'}
+        }
+        with pytest.raises(PillarLookupError) as excinfo:
+            get_pillars()
+        # The real reason has to survive to whoever handles it.
+        assert 'Connection refused' in str(excinfo.value)
+
+    def test_a_transport_exception_raises_too(self, mock_supabase_client):
+        mock_supabase_client.table.side_effect = RuntimeError('socket is closed')
+        with pytest.raises(PillarLookupError):
+            get_pillars()
+
+    def test_the_degrading_variant_swallows_it(self, mock_supabase_client):
+        """Render paths would rather show an empty dropdown than a 500 — but they
+        have to opt into that explicitly rather than getting it by default."""
+        mock_supabase_client.table.side_effect = RuntimeError('socket is closed')
+        assert get_pillars_or_empty() == []
+
+    def test_the_degrading_variant_still_returns_real_pillars(self, mock_supabase_client):
+        mock_supabase_client.table().select().order().limit().execute.return_value = {
+            'data': [{
+                'id': 'ai-safety-alignment',
+                'name': 'AI Safety',
+                'goal': 'Understand AI safety and alignment research.',
+                'focus_areas': [],
+                'papers_per_day': 1,
+                # Pillar requires both; a row without them fails to parse and the
+                # whole read is reported as a lookup failure.
+                'created_at': '2026-08-16T00:00:00+00:00',
+                'updated_at': '2026-08-16T00:00:00+00:00',
+            }],
+            'error': None,
+        }
+        assert [p.id for p in get_pillars_or_empty()] == ['ai-safety-alignment']
+
+
+class TestPillarIsRequiredToWrite:
+    """_paper_ref_to_dict must refuse a write it cannot attribute to a pillar."""
+
+    def test_a_none_pillar_is_rejected_not_stripped(self, sample_paper_ref):
+        with pytest.raises(ValueError) as excinfo:
+            _paper_ref_to_dict(None, sample_paper_ref)
+        assert 'pillar_id is required' in str(excinfo.value)
+
+    def test_an_empty_pillar_is_rejected(self, sample_paper_ref):
+        with pytest.raises(ValueError):
+            _paper_ref_to_dict('', sample_paper_ref)
+
+    def test_a_paper_with_no_id_is_rejected(self):
+        with pytest.raises(ValueError):
+            _paper_ref_to_dict('ai-safety-alignment', PaperRef(id='', title='T', authors=[]))
+
+    def test_optional_metadata_is_still_dropped_when_absent(self):
+        """The None-filter has a real job; the fix must not disable it."""
+        row = _paper_ref_to_dict(
+            'ai-safety-alignment',
+            PaperRef(id='arxiv:1', title='T', authors=[]),  # no venue/year/abstract
+        )
+        assert row['pillar_id'] == 'ai-safety-alignment'
+        assert 'venue' not in row and 'year' not in row and 'abstract' not in row

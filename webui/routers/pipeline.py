@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from nlp_pillars.db import get_pillars
+from nlp_pillars.db import get_pillars_or_empty
 from nlp_pillars.pillar_utils import validate_pillar_id
 from webui.services.run_service import (
     KIND_RUN_DAILY,
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/pipeline")
 @router.get("/", response_class=HTMLResponse)
 async def pipeline_home(request: Request) -> HTMLResponse:
     """Render the pipeline page, pre-selecting ``?pillar=`` when one is given."""
-    pillars = get_pillars(limit=100)
+    pillars = get_pillars_or_empty(limit=100)
     selected = request.query_params.get("pillar", "")
     return request.app.state.templates.TemplateResponse(
         request, "pipeline.html", {"pillars": pillars, "selected_pillar": selected}

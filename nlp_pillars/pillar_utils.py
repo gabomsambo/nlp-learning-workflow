@@ -6,7 +6,7 @@ Provides helpers for pillar config retrieval, abbreviation generation, and valid
 import logging
 from typing import Dict, Any, Optional
 
-from .db import get_pillar_by_id, pillar_exists, get_pillars
+from .db import get_pillar_by_id, pillar_exists, get_pillars_or_empty
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,9 @@ def get_all_pillar_ids() -> list[str]:
     Returns:
         List of pillar ID strings
     """
-    pillars = get_pillars(limit=100)
+    # _or_empty: these feed dropdowns and iteration, whose callers have no
+    # sensible response to a database outage beyond showing nothing.
+    pillars = get_pillars_or_empty(limit=100)
     return [p.id for p in pillars]
 
 
@@ -116,7 +118,7 @@ def get_pillar_choices() -> list[tuple[str, str]]:
     Returns:
         List of (id, name) tuples for use in select elements
     """
-    pillars = get_pillars(limit=100)
+    pillars = get_pillars_or_empty(limit=100)
     return [(p.id, p.name) for p in pillars]
 
 

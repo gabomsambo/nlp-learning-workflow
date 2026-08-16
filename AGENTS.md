@@ -352,6 +352,26 @@ Two pre-existing application bugs, both left alone deliberately:
   insert of the converter's payload round-trips all 18 weights — but the upsert can only
   ever update a row that already exists.
 
+Two others of the same shape were fixed in PR #17, and the resulting contracts matter:
+
+- **`get_pillars()` raises `PillarLookupError`; it no longer returns `[]` on failure.**
+  An empty list now means the table is empty and nothing else. Collapsing the two is
+  what made two fallbacks dead code — `cli.get_valid_pillars()` and
+  `scheduler.run_all_pillars()` both wrap the call in an `except` that could never
+  fire, so an unreachable database made the CLI reject every `--pillar` with
+  "Valid pillars: " and nothing after it, and made the scheduler advise seeding a
+  database that was merely down. Render paths that would rather show an empty dropdown
+  than a 500 call **`get_pillars_or_empty()`**, which makes swallowing the failure a
+  visible choice at the call site instead of everyone's silent default. All eight page
+  routers and both `pillar_utils` helpers use the degrading variant; the CLI and the
+  scheduler use the raising one.
+- **`_paper_ref_to_dict()` rejects a missing `pillar_id` or `paper.id`.** Its None-filter
+  exists so optional metadata (venue, year, abstract) is omitted rather than written as
+  NULL, but it applied to every key — so a `None` pillar_id was quietly stripped and the
+  row inserted with no pillar at all, against the one invariant this schema has.
+  `add_paper()` catches the `ValueError` and returns `False`, so a daily run records the
+  paper as failed and surfaces it rather than aborting mid-run.
+
 `upsert_text()` wraps its whole body in `except Exception: return 0`, and that body calls
 `chunk_text()` — so the `RuntimeError` PR #8 added there is caught and reported as "0 chunks
 upserted". Both `upsert_text()` callers (`orchestrator.py`, `upload_service.py`) invoke it

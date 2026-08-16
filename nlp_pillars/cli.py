@@ -29,13 +29,34 @@ console = Console()
 
 # Get valid pillars from database or fallback to static config
 def get_valid_pillars():
-    """Get list of valid pillar IDs from database."""
+    """Get list of valid pillar IDs, falling back to the static config.
+
+    The fallback was dead code until db.get_pillars() learned to raise: it swallowed
+    connection errors and returned an empty list, which is indistinguishable from an
+    empty table, so an unreachable database produced no valid pillars at all and every
+    command rejected its `--pillar` argument with "Valid pillars: " and nothing after
+    it. PILLAR_CONFIGS exists precisely so the CLI keeps working through an outage.
+    """
     try:
         pillars = db.get_pillars(limit=50)
-        return [p.id for p in pillars]
-    except Exception:
-        # Fallback to static config keys
+    except db.PillarLookupError as e:
+        console.print(
+            f"[yellow]Could not read pillars from the database ({e}); "
+            "using the built-in list.[/yellow]"
+        )
         return list(PILLAR_CONFIGS.keys())
+
+    # A reachable but empty table is also worth falling back on rather than rejecting
+    # every pillar the user could name — but say so, because it means the database
+    # has never been seeded.
+    if not pillars:
+        console.print(
+            "[yellow]No pillars in the database; using the built-in list. "
+            "Seed them with create_pillars.py.[/yellow]"
+        )
+        return list(PILLAR_CONFIGS.keys())
+
+    return [p.id for p in pillars]
 
 
 def _log_env_path():
