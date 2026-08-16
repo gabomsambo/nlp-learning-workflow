@@ -68,7 +68,7 @@ def sample_paper_note():
     """Sample paper note for testing."""
     return PaperNote(
         paper_id="paper.123",
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         problem="Limited attention mechanisms in neural networks",
         method="Multi-head self-attention with scaled dot-product",
         findings=[
@@ -93,7 +93,7 @@ def sample_lesson():
     """Sample lesson for testing."""
     return Lesson(
         paper_id="paper.123",
-        pillar_id=models-architectures,
+        pillar_id="models-architectures",
         tl_dr="Transformers revolutionized NLP by using attention mechanisms instead of recurrence",
         takeaways=[
             "Self-attention captures long-range dependencies effectively",
@@ -116,7 +116,7 @@ def sample_quiz_cards():
     return [
         QuizCard(
             paper_id="paper.123",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="What is the key innovation of the Transformer architecture?",
             answer="Multi-head self-attention mechanism that eliminates recurrence",
             difficulty=DifficultyLevel.EASY,
@@ -124,7 +124,7 @@ def sample_quiz_cards():
         ),
         QuizCard(
             paper_id="paper.123",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="What is the computational complexity of self-attention?",
             answer="Quadratic with respect to sequence length",
             difficulty=DifficultyLevel.MEDIUM,
@@ -132,7 +132,7 @@ def sample_quiz_cards():
         ),
         QuizCard(
             paper_id="paper.123",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="How would you adapt transformers for very long sequences?",
             answer="Use sparse attention patterns or sliding window attention",
             difficulty=DifficultyLevel.HARD,
@@ -140,7 +140,7 @@ def sample_quiz_cards():
         ),
         QuizCard(
             paper_id="paper.123",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="What enables parallel processing in transformers?",
             answer="Self-attention allows all positions to be processed simultaneously",
             difficulty=DifficultyLevel.MEDIUM,
@@ -148,7 +148,7 @@ def sample_quiz_cards():
         ),
         QuizCard(
             paper_id="paper.123",
-            pillar_id=models-architectures,
+            pillar_id="models-architectures",
             question="What is positional encoding used for in transformers?",
             answer="To provide sequence position information since there's no inherent order",
             difficulty=DifficultyLevel.EASY,
@@ -184,8 +184,8 @@ class TestOrchestratorHappyPath:
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
             queries=[
-                SearchQuery(pillar_id=models-architectures, query="transformer attention mechanisms"),
-                SearchQuery(pillar_id=models-architectures, query="BERT language models")
+                SearchQuery(pillar_id="models-architectures", query="transformer attention mechanisms"),
+                SearchQuery(pillar_id="models-architectures", query="BERT language models")
             ],
             rationale="Focus on attention and language models"
         )
@@ -218,11 +218,11 @@ class TestOrchestratorHappyPath:
         orchestrator.arxiv_tool.search = Mock(return_value=[sample_paper_refs[1]])
         
         # Run pipeline
-        result = orchestrator.run_daily(models-architectures, papers_limit=1)
+        result = orchestrator.run_daily("models-architectures", papers_limit=1)
         
         # Verify result structure
         assert isinstance(result, PipelineResult)
-        assert result.pillar_id == models-architectures
+        assert result.pillar_id == "models-architectures"
         assert result.success is True
         assert len(result.papers_processed) == 1
         assert result.papers_processed[0] == "paper.123"
@@ -232,21 +232,21 @@ class TestOrchestratorHappyPath:
         assert result.total_time_seconds > 0
         
         # Verify database calls with correct pillar_id
-        mock_db.get_recent_notes.assert_called_with(models-architectures, limit=5)
+        mock_db.get_recent_notes.assert_called_with("models-architectures", limit=5)
         mock_db.queue_add_candidates.assert_called_once()
         queue_call_args = mock_db.queue_add_candidates.call_args
-        assert queue_call_args[0][0] == models-architectures  # First arg is pillar_id
+        assert queue_call_args[0][0] == "models-architectures"  # First arg is pillar_id
         
-        mock_db.queue_pop_next.assert_called_with(models-architectures, limit=1)
-        mock_db.upsert_paper.assert_called_with(models-architectures, sample_paper_refs[0])
+        mock_db.queue_pop_next.assert_called_with("models-architectures", limit=1)
+        mock_db.upsert_paper.assert_called_with("models-architectures", sample_paper_refs[0])
         mock_db.insert_note.assert_called_with(sample_paper_note)
         mock_db.insert_lesson.assert_called_with(sample_lesson)
         mock_db.insert_quiz_cards.assert_called_with(sample_quiz_cards)
-        mock_db.mark_processed.assert_called_with(models-architectures, "paper.123")
+        mock_db.mark_processed.assert_called_with("models-architectures", "paper.123")
         
         # Verify vector operations
         mock_vectors.upsert_text.assert_called_with(
-            models-architectures, 
+            "models-architectures", 
             "paper.123", 
             sample_parsed_paper.full_text
         )
@@ -277,7 +277,7 @@ class TestOrchestratorHappyPath:
         """Test successful pipeline execution without quiz generation."""
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=linguistic-cognitive-foundations, query="test query")],
+            queries=[SearchQuery(pillar_id="linguistic-cognitive-foundations", query="test query")],
             rationale="test rationale"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -305,7 +305,7 @@ class TestOrchestratorHappyPath:
         orchestrator.arxiv_tool.search = Mock(return_value=[sample_paper_refs[0]])
         
         # Run pipeline
-        result = orchestrator.run_daily(linguistic-cognitive-foundations, papers_limit=1)
+        result = orchestrator.run_daily("linguistic-cognitive-foundations", papers_limit=1)
         
         # Verify result
         assert result.success is True
@@ -341,7 +341,7 @@ class TestOrchestratorErrorHandling:
         """Test that pipeline continues when one paper fails ingestion."""
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=data-training-methodologies, query="test")],
+            queries=[SearchQuery(pillar_id="data-training-methodologies", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -374,7 +374,7 @@ class TestOrchestratorErrorHandling:
         orchestrator.ingest_agent.ingest = Mock(side_effect=mock_ingest)
         
         # Run pipeline
-        result = orchestrator.run_daily(data-training-methodologies, papers_limit=2)
+        result = orchestrator.run_daily("data-training-methodologies", papers_limit=2)
         
         # Verify results
         assert result.success is True  # Should succeed because second paper worked
@@ -401,7 +401,7 @@ class TestOrchestratorErrorHandling:
         """Test handling of empty paper queue."""
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=data-training-methodologies, query="test")],
+            queries=[SearchQuery(pillar_id="data-training-methodologies", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -417,7 +417,7 @@ class TestOrchestratorErrorHandling:
         orchestrator.arxiv_tool.search = Mock(return_value=[])
         
         # Run pipeline
-        result = orchestrator.run_daily(evaluation-interpretability, papers_limit=1)
+        result = orchestrator.run_daily("evaluation-interpretability", papers_limit=1)
         
         # Verify results
         assert result.success is False  # No papers processed
@@ -432,7 +432,7 @@ class TestOrchestratorErrorHandling:
         """Test handling of pipeline-level failures."""
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=ethics-applications, query="test")],
+            queries=[SearchQuery(pillar_id="ethics-applications", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -450,7 +450,7 @@ class TestOrchestratorErrorHandling:
         orchestrator.arxiv_tool.search = Mock(return_value=[])
         
         # Run pipeline
-        result = orchestrator.run_daily(ethics-applications, papers_limit=1)
+        result = orchestrator.run_daily("ethics-applications", papers_limit=1)
         
         # Verify results
         assert result.success is False
@@ -484,7 +484,7 @@ class TestOrchestratorUtilities:
         orchestrator = Orchestrator()
         
         # Test different pillars
-        for pillar_id in [linguistic-cognitive-foundations, models-architectures, data-training-methodologies, evaluation-interpretability, ethics-applications]:
+        for pillar_id in ["linguistic-cognitive-foundations", "models-architectures", "data-training-methodologies", "evaluation-interpretability", "ethics-applications"]:
             config = orchestrator._get_pillar_config(pillar_id)
             
             assert config.id == pillar_id
@@ -519,7 +519,7 @@ class TestPillarIsolation:
         """Test that pillar_id is passed to all operations that require it."""
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=data-training-methodologies, query="test")],
+            queries=[SearchQuery(pillar_id="data-training-methodologies", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -547,7 +547,7 @@ class TestPillarIsolation:
         orchestrator.arxiv_tool.search = Mock(return_value=[sample_paper_refs[0]])
         
         # Run pipeline
-        test_pillar = data-training-methodologies
+        test_pillar = "data-training-methodologies"
         result = orchestrator.run_daily(test_pillar, papers_limit=1)
         
         # Verify all database operations include correct pillar_id
@@ -600,7 +600,7 @@ class TestLoggingAndTiming:
         """Test that logs include pillar_id and paper_id at key steps."""
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=data-training-methodologies, query="test")],
+            queries=[SearchQuery(pillar_id="data-training-methodologies", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -627,7 +627,7 @@ class TestLoggingAndTiming:
         
         # Run pipeline with logging capture
         with caplog.at_level("INFO"):
-            result = orchestrator.run_daily(models-architectures, papers_limit=1)
+            result = orchestrator.run_daily("models-architectures", papers_limit=1)
         
         # Check that logs contain pillar_id
         log_text = caplog.text
@@ -660,7 +660,7 @@ class TestLoggingAndTiming:
         
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
-            queries=[SearchQuery(pillar_id=data-training-methodologies, query="test")],
+            queries=[SearchQuery(pillar_id="data-training-methodologies", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
@@ -676,7 +676,7 @@ class TestLoggingAndTiming:
         orchestrator.arxiv_tool.search = Mock(return_value=[])
         
         # Run pipeline
-        result = orchestrator.run_daily(linguistic-cognitive-foundations, papers_limit=1)
+        result = orchestrator.run_daily("linguistic-cognitive-foundations", papers_limit=1)
         
         # Verify timing
         assert result.total_time_seconds == 5.5  # 1005.5 - 1000.0
