@@ -494,3 +494,112 @@ class PipelineResult(BaseModel):
     errors: List[dict] = Field(default_factory=list)
     total_time_seconds: float
     success: bool
+
+
+# ==========================================
+# Pipeline run tracking (migration 009)
+# ==========================================
+
+
+class StageName(str, Enum):
+    """The eleven `Step N` boundaries that already exist in orchestrator.py.
+
+    These are names for log lines that were always there — the comment on each
+    member is where it lives, so a rename in one place is easy to follow to the
+    other. `seq` in the database is this enum's declaration order, 1-based.
+    """
+
+    DISCOVERY = "discovery"      # Step 1  run_daily
+    SEARCH = "search"            # Step 2  run_daily
+    ENQUEUE = "enqueue"          # Step 3  run_daily
+    POP_QUEUE = "pop_queue"      # Step 4  run_daily
+    PROCESS = "process"          # Step 5  run_daily
+    INGEST = "ingest"            # Step 5a _process_paper
+    SUMMARIZE = "summarize"      # Step 5b _process_paper
+    SYNTHESIZE = "synthesize"    # Step 5c _process_paper
+    QUIZ = "quiz"                # Step 5d _process_paper
+    PERSIST = "persist"          # Step 5e _process_paper
+    VECTORS = "vectors"          # Step 5f _process_paper
+
+
+#: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
+RUN_DAILY_STAGES: List[StageName] = list(StageName)
+
+#: Stages for `process_selected_papers`, which has no discovery/search/enqueue/pop
+#: phase — the papers are already chosen, so it starts at PROCESS.
+PROCESS_SELECTED_STAGES: List[StageName] = [
+    StageName.PROCESS,
+    StageName.INGEST,
+    StageName.SUMMARIZE,
+    StageName.SYNTHESIZE,
+    StageName.QUIZ,
+    StageName.PERSIST,
+    StageName.VECTORS,
+]
+
+
+class RunStatus(str, Enum):
+    """Lifecycle of a pipeline run.
+
+    INTERRUPTED is deliberately distinct from FAILED: it is written only by the
+    startup sweep and means "the process died, we do not know what happened".
+    FAILED claims knowledge the sweep does not have.
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+
+
+#: Statuses that mean the run is over. Polling stops here.
+TERMINAL_RUN_STATUSES = frozenset({
+    RunStatus.SUCCEEDED.value,
+    RunStatus.FAILED.value,
+    RunStatus.CANCELLED.value,
+    RunStatus.INTERRUPTED.value,
+})
+
+
+class StageStatus(str, Enum):
+    """Lifecycle of one stage within a run."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class PipelineRunStage(BaseModel):
+    """One stage of a run. Rows are seeded PENDING when the run is created."""
+
+    id: Optional[str] = None
+    run_id: str
+    seq: int
+    name: str
+    status: str = StageStatus.PENDING.value
+    detail: Optional[str] = Field(None, description="Free text, e.g. '2/5 papers'")
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
+class PipelineRun(BaseModel):
+    """One pipeline execution, from any trigger."""
+
+    id: str
+    pillar_id: str
+    trigger_source: str = Field(..., description="ui_pipeline | ui_select | scheduler")
+    kind: str = Field(..., description="run_daily | process_selected")
+    status: str = RunStatus.PENDING.value
+    current_stage: Optional[str] = None
+    papers_processed: int = 0
+    papers_failed: int = 0
+    error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    heartbeat_at: Optional[datetime] = None
+    stages: List[PipelineRunStage] = Field(default_factory=list)

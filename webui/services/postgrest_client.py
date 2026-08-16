@@ -285,3 +285,82 @@ class PostgrestClient:
             return None
 
 
+
+    # ------------------------------------------------------------------
+    # Pipeline run polling (migration 009)
+    #
+    # These are the READ side of run tracking. They live on the async client
+    # because the browser polls them roughly once a second and a poll must never
+    # occupy a worker thread. The WRITE side is synchronous and lives in
+    # nlp_pillars/db.py, called from the pipeline's own thread. Do not cross them.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _shape_run(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalise a run row: rename the embed and sort stages by seq.
+
+        PostgREST returns the embedded child rows under the table name and in no
+        guaranteed order, so the ordering is done here rather than in every caller
+        and in the browser.
+        """
+        stages = row.pop("pipeline_run_stages", None) or []
+        row["stages"] = sorted(stages, key=lambda s: s.get("seq", 0))
+        return row
+
+    async def get_pipeline_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Get one run with its stages, or None if it does not exist.
+
+        Uses PostgREST resource embedding so the run and all eleven stages arrive in
+        a single request — at one poll per second, a second round trip per poll is
+        not free.
+        """
+        try:
+            params = {"select": "*,pipeline_run_stages(*)", "id": f"eq.{run_id}"}
+            data, _ = await self._get("pipeline_runs", params=params)
+        except Exception:
+            return None
+        if not data:
+            return None
+        return self._shape_run(data[0])
+
+    async def get_active_pipeline_run(
+        self, pillar_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get the in-flight run, optionally for one pillar.
+
+        Powers "reattach after a refresh" when the browser has no stored run id.
+        Filters on status rather than on a null finished_at, deliberately — see the
+        eq(None) note in nlp_pillars/db.py.
+        """
+        try:
+            params = {
+                "select": "*,pipeline_run_stages(*)",
+                "status": "in.(pending,running)",
+                "order": "created_at.desc",
+                "limit": 1,
+            }
+            if pillar_id:
+                params["pillar_id"] = f"eq.{pillar_id}"
+            data, _ = await self._get("pipeline_runs", params=params)
+        except Exception:
+            return None
+        if not data:
+            return None
+        return self._shape_run(data[0])
+
+    async def list_pipeline_runs(
+        self, pillar_id: Optional[str] = None, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Recent runs, newest first. Stages are not embedded — this is a summary."""
+        params: Dict[str, Any] = {
+            "select": "*",
+            "order": "created_at.desc",
+            "limit": limit,
+        }
+        if pillar_id:
+            params["pillar_id"] = f"eq.{pillar_id}"
+        try:
+            data, _ = await self._get("pipeline_runs", params=params)
+        except Exception:
+            return []
+        return data
