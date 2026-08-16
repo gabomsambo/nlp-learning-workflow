@@ -6,14 +6,16 @@ through the complete learning workflow with strict pillar isolation.
 """
 
 import logging
+import threading
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from .schemas import (
     PillarConfig, PipelineResult,
     PaperRef, Lesson, QuizCard, SearchQuery,
     DiscoveryInput, SummarizerInput, SynthesisInput, QuizGeneratorInput,
-    DiscoveryCandidate, PaperCitation
+    DiscoveryCandidate, PaperCitation,
+    StageName, StageStatus
 )
 from .agents.discovery_agent import DiscoveryAgent
 from .agents.ingest_agent import IngestAgent
@@ -32,6 +34,36 @@ from . import vectors
 logger = logging.getLogger(__name__)
 
 
+class RunCancelledError(Exception):
+    """Raised at a stage boundary when the run's cancel event has been set.
+
+    Distinct from a failure: the run did what it was told, it was just told to stop.
+    Callers should record it as 'cancelled', not 'failed'.
+    """
+
+
+#: The six stages that run once per paper, inside _process_paper. Used to work out
+#: which stage to blame when a paper raises — _process_paper has no try/except of its
+#: own, so the surrounding handler needs to be told.
+_PER_PAPER_STAGES = frozenset({
+    StageName.INGEST,
+    StageName.SUMMARIZE,
+    StageName.SYNTHESIZE,
+    StageName.QUIZ,
+    StageName.PERSIST,
+    StageName.VECTORS,
+})
+
+
+def _no_op_stage(name: str, status: str, detail: Optional[str] = None) -> None:
+    """Default progress sink. Deliberately does nothing.
+
+    A real function rather than ``None`` so every call site can invoke it
+    unconditionally — no ``if self._on_stage is not None`` scattered through the
+    pipeline, and no chance of one being forgotten.
+    """
+
+
 class Orchestrator:
     """
     End-to-end orchestrator for running the daily learning pipeline.
@@ -40,14 +72,34 @@ class Orchestrator:
     agents to process papers through the complete learning workflow.
     """
 
-    def __init__(self, enable_quiz: bool = True):
+    def __init__(
+        self,
+        enable_quiz: bool = True,
+        on_stage: Optional[Callable[[str, str, Optional[str]], None]] = None,
+        cancel: Optional[threading.Event] = None,
+    ):
         """
         Initialize the orchestrator.
 
         Args:
             enable_quiz: Whether to generate quiz cards during processing
+            on_stage: Optional progress sink, called ``on_stage(name, status, detail)``
+                as each of the eleven pipeline stages starts and finishes. Defaults to
+                a no-op, so every existing caller — the CLI, the scheduler, the tests —
+                behaves exactly as it did before. Keeping the sink out here rather than
+                writing to a database from inside the pipeline is what lets this module
+                stay free of any web or job concern.
+            cancel: Optional event checked when each stage *starts*. When set, the run
+                raises RunCancelledError at the next boundary. Checked on entry
+                rather than mid-stage on purpose: a stage always completes the
+                work it began, so the database is never left half-written. Nothing
+                can interrupt synchronous Python once it is inside a call, so this
+                is cooperative by necessity, not by preference.
         """
         self.enable_quiz = enable_quiz
+        self._on_stage = on_stage or _no_op_stage
+        self._cancel = cancel
+        self._current_paper_stage: Optional[StageName] = None
 
         # Initialize tools
         self.searxng_tool = SearXNGTool()
@@ -92,29 +144,46 @@ class Orchestrator:
         try:
             # Step 1: Discovery - Generate search queries
             logger.info(f"Step 1: Discovery for pillar {pillar_id}")
+            self._stage(StageName.DISCOVERY, StageStatus.RUNNING.value)
             discovery_queries = self._run_discovery(pillar_id)
             logger.info(f"Generated {len(discovery_queries)} search queries for pillar {pillar_id}")
+            self._stage(StageName.DISCOVERY, StageStatus.COMPLETED.value,
+                        f"{len(discovery_queries)} queries")
 
             # Step 2: Search - Find candidate papers
             logger.info(f"Step 2: Searching for candidates for pillar {pillar_id}")
+            self._stage(StageName.SEARCH, StageStatus.RUNNING.value)
             candidates = self._search_candidates(pillar_id, discovery_queries)
             logger.info(f"Found {len(candidates)} candidate papers for pillar {pillar_id}")
+            self._stage(StageName.SEARCH, StageStatus.COMPLETED.value,
+                        f"{len(candidates)} candidates")
 
             # Step 3: Dedupe and enqueue candidates
             logger.info(f"Step 3: Enqueueing candidates for pillar {pillar_id}")
+            self._stage(StageName.ENQUEUE, StageStatus.RUNNING.value)
             enqueued_count = self._enqueue_candidates(pillar_id, candidates)
             logger.info(f"Enqueued {enqueued_count} new papers for pillar {pillar_id}")
+            self._stage(StageName.ENQUEUE, StageStatus.COMPLETED.value,
+                        f"{enqueued_count} enqueued")
 
             # Step 4: Pop papers from queue for processing
             logger.info(f"Step 4: Popping papers from queue for pillar {pillar_id}")
+            self._stage(StageName.POP_QUEUE, StageStatus.RUNNING.value)
             papers_to_process = self._pop_queue(pillar_id, papers_limit)
             logger.info(f"Retrieved {len(papers_to_process)} papers to process for pillar {pillar_id}")
+            self._stage(StageName.POP_QUEUE, StageStatus.COMPLETED.value,
+                        f"{len(papers_to_process)} popped")
 
             # Step 5: Process each paper through the pipeline
             logger.info(f"Step 5: Processing {len(papers_to_process)} papers for pillar {pillar_id}")
-            for paper in papers_to_process:
+            total_to_process = len(papers_to_process)
+            self._stage(StageName.PROCESS, StageStatus.RUNNING.value,
+                        f"0/{total_to_process} papers")
+            for index, paper in enumerate(papers_to_process, start=1):
                 try:
                     logger.info(f"Processing paper {paper.id} for pillar {pillar_id}")
+                    self._stage(StageName.PROCESS, StageStatus.RUNNING.value,
+                                f"{index}/{total_to_process}: {paper.id}")
 
                     # Process single paper through complete pipeline
                     lesson, quiz_cards = self._process_paper(pillar_id, paper)
@@ -127,6 +196,10 @@ class Orchestrator:
 
                     logger.info(f"Successfully processed paper {paper.id} for pillar {pillar_id}")
 
+                except RunCancelledError:
+                    # Cancellation is not a paper failure — stop the loop and let the
+                    # caller record the run as cancelled rather than partly failed.
+                    raise
                 except Exception as e:
                     error_msg = f"Failed to process paper {paper.id}: {str(e)}"
                     logger.error(f"Error in pillar {pillar_id}: {error_msg}")
@@ -135,7 +208,13 @@ class Orchestrator:
                         "step": "process_paper",
                         "message": error_msg
                     })
+                    # _process_paper has no internal try/except, so the per-paper stage
+                    # that was in flight is still marked running. Close it out here.
+                    self._mark_current_paper_stage_failed(error_msg)
                     continue
+
+            self._stage(StageName.PROCESS, StageStatus.COMPLETED.value,
+                        f"{len(papers_processed)}/{total_to_process} papers processed")
 
             # Calculate results
             total_time = time.time() - start_time
@@ -174,6 +253,61 @@ class Orchestrator:
                 errors=[{"paper_id": "pipeline", "step": "run_daily", "message": error_msg}],
                 total_time_seconds=total_time,
                 success=False
+            )
+
+    def _stage(
+        self,
+        name: StageName,
+        status: str,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Report a stage transition, and honour cancellation when one starts.
+
+        Raises:
+            RunCancelledError: if a cancel event was supplied and is set, and this call
+                marks a stage as starting.
+
+        """
+        if (
+            status == StageStatus.RUNNING.value
+            and self._cancel is not None
+            and self._cancel.is_set()
+        ):
+            raise RunCancelledError(f"cancelled before stage {name.value}")
+
+        # Remember which per-paper stage is in flight. _process_paper has no internal
+        # try/except, so when a paper blows up the handler in the caller knows only
+        # that it failed, not where. This is how the right stage gets marked.
+        if status == StageStatus.RUNNING.value and name in _PER_PAPER_STAGES:
+            self._current_paper_stage = name
+        elif status != StageStatus.RUNNING.value and name is self._current_paper_stage:
+            self._current_paper_stage = None
+
+        try:
+            self._on_stage(name.value, status, detail)
+        except Exception:
+            # A broken progress sink must never take the pipeline down with it —
+            # losing the display is bad, losing the run is worse.
+            logger.warning(
+                f"on_stage callback failed for {name.value}/{status}", exc_info=True
+            )
+
+    def _mark_current_paper_stage_failed(self, detail: str) -> None:
+        """Mark the per-paper stage that was in flight as failed.
+
+        Called from the per-paper except blocks. Without this, a paper that dies in,
+        say, summarize leaves that stage stuck at 'running' in the UI forever while
+        the run moves on to the next paper.
+        """
+        stage = self._current_paper_stage
+        if stage is None:
+            return
+        self._current_paper_stage = None
+        try:
+            self._on_stage(stage.value, StageStatus.FAILED.value, detail)
+        except Exception:
+            logger.warning(
+                f"on_stage callback failed for {stage.value}/failed", exc_info=True
             )
 
     def _run_discovery(self, pillar_id: str) -> List[str]:
@@ -303,10 +437,13 @@ class Orchestrator:
 
         # Step 5a: Ingest paper
         logger.info(f"Step 5a: Ingesting paper {paper.id} for pillar {pillar_id}")
+        self._stage(StageName.INGEST, StageStatus.RUNNING.value, paper.id)
         parsed_paper = self.ingest_agent.ingest(paper_ref=paper)
+        self._stage(StageName.INGEST, StageStatus.COMPLETED.value, paper.id)
 
         # Step 5b: Summarize paper
         logger.info(f"Step 5b: Summarizing paper {paper.id} for pillar {pillar_id}")
+        self._stage(StageName.SUMMARIZE, StageStatus.RUNNING.value, paper.id)
         recent_notes = db.get_recent_notes(pillar_id, limit=5)
         summarizer_input = SummarizerInput(
             parsed_paper=parsed_paper,
@@ -314,9 +451,11 @@ class Orchestrator:
             recent_notes=[note.problem + " " + note.method for note in recent_notes[-3:]]
         )
         paper_note = SummarizerAgent.run(summarizer_input)
+        self._stage(StageName.SUMMARIZE, StageStatus.COMPLETED.value, paper.id)
 
         # Step 5c: Synthesize lesson
         logger.info(f"Step 5c: Synthesizing lesson for paper {paper.id} in pillar {pillar_id}")
+        self._stage(StageName.SYNTHESIZE, StageStatus.RUNNING.value, paper.id)
         pillar_config = self._get_pillar_config(pillar_id)
         synthesis_input = SynthesisInput(
             paper_note=paper_note,
@@ -324,32 +463,47 @@ class Orchestrator:
             related_lessons=[]  # Could get recent lessons from DB
         )
         lesson = SynthesisAgent.run(synthesis_input)
+        self._stage(StageName.SYNTHESIZE, StageStatus.COMPLETED.value, paper.id)
 
         # Step 5d: Generate quiz (if enabled)
         quiz_cards = None
+        if not self.enable_quiz:
+            # Report it as skipped rather than leaving the row pending forever — the
+            # UI must be able to tell "turned off" from "not reached yet".
+            self._stage(StageName.QUIZ, StageStatus.SKIPPED.value, "quiz disabled")
         if self.enable_quiz:
             logger.info(f"Step 5d: Generating quiz for paper {paper.id} in pillar {pillar_id}")
+            self._stage(StageName.QUIZ, StageStatus.RUNNING.value, paper.id)
             quiz_input = QuizGeneratorInput(
                 paper_note=paper_note,
                 num_questions=5,
                 difficulty_mix={"easy": 2, "medium": 2, "hard": 1}
             )
             quiz_cards = QuizAgent.run(quiz_input)
+            self._stage(StageName.QUIZ, StageStatus.COMPLETED.value,
+                        f"{len(quiz_cards or [])} cards")
 
         # Step 5e: Persist to database
         logger.info(f"Step 5e: Persisting data for paper {paper.id} in pillar {pillar_id}")
+        self._stage(StageName.PERSIST, StageStatus.RUNNING.value, paper.id)
         db.upsert_paper(pillar_id, paper)
         db.insert_note(paper_note)
         db.insert_lesson(lesson)
         if quiz_cards:
             db.insert_quiz_cards(quiz_cards)
         db.mark_processed(pillar_id, paper.id)
+        self._stage(StageName.PERSIST, StageStatus.COMPLETED.value, paper.id)
 
         # Step 5f: Store in vector database
         logger.info(f"Step 5f: Upserting vectors for paper {paper.id} in pillar {pillar_id}")
+        self._stage(StageName.VECTORS, StageStatus.RUNNING.value, paper.id)
         # Ensure Qdrant collection exists before upserting
         vectors.ensure_collections()
-        vectors.upsert_text(pillar_id, paper.id, parsed_paper.full_text)
+        chunks_upserted = vectors.upsert_text(
+            pillar_id, paper.id, parsed_paper.full_text
+        )
+        self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
+                    f"{chunks_upserted} chunks")
 
         logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
         return lesson, quiz_cards
@@ -507,8 +661,14 @@ class Orchestrator:
         quizzes_generated = []
         errors = []
 
-        for paper in papers_to_process:
+        total_to_process = len(papers_to_process)
+        self._stage(StageName.PROCESS, StageStatus.RUNNING.value,
+                    f"0/{total_to_process} papers")
+        for index, paper in enumerate(papers_to_process, start=1):
             try:
+                self._stage(StageName.PROCESS, StageStatus.RUNNING.value,
+                            f"{index}/{total_to_process}: {paper.id}")
+
                 # Process through pipeline
                 lesson, quiz_cards = self._process_paper(pillar_id, paper)
 
@@ -520,6 +680,9 @@ class Orchestrator:
                 # Fetch and store citations
                 self._fetch_and_store_citations(paper.id)
 
+            except RunCancelledError:
+                # Not a paper failure — let the caller record the run as cancelled.
+                raise
             except Exception as e:
                 error_msg = f"Failed to process paper {paper.id}: {str(e)}"
                 logger.error(error_msg)
@@ -528,6 +691,12 @@ class Orchestrator:
                     "step": "process_paper",
                     "message": error_msg
                 })
+                # _process_paper has no try/except of its own, so close out whichever
+                # per-paper stage was in flight rather than leaving it 'running'.
+                self._mark_current_paper_stage_failed(error_msg)
+
+        self._stage(StageName.PROCESS, StageStatus.COMPLETED.value,
+                    f"{len(papers_processed)}/{total_to_process} papers processed")
 
         total_time = time.time() - start_time
 

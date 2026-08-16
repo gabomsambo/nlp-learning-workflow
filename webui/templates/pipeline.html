@@ -2,13 +2,19 @@
 {% block content %}
 <h2>Pipeline Control</h2>
 
+<p>
+  Runs discovery, search and ingest <strong>automatically</strong> and adds whatever it
+  finds, without asking. To look through candidates and choose which papers to keep,
+  use <a href="/discovery/{% if selected_pillar %}?pillar={{ selected_pillar }}{% endif %}">Discovery</a> instead.
+</p>
+
 <form id="run-form">
   <div class="grid">
     <label>
       Pillar
       <select name="pillar" required>
         {% for pillar in pillars %}
-        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+        <option value="{{ pillar.id }}" {% if selected_pillar == pillar.id %}selected{% endif %}>{{ pillar.name }}</option>
         {% endfor %}
       </select>
     </label>
@@ -17,33 +23,80 @@
       <input type="number" name="papers" min="1" max="10" value="1" />
     </label>
   </div>
-  <button type="submit">Run Pipeline</button>
+  <button type="submit" id="run-btn">Run Pipeline</button>
   <span id="status"></span>
-  <pre id="output" style="white-space: pre-wrap"></pre>
 </form>
 
+<div id="progress" style="margin-top:1rem"></div>
+
+<script src="/static/run-progress.js"></script>
 <script>
 const form = document.getElementById('run-form');
 const statusEl = document.getElementById('status');
-const outputEl = document.getElementById('output');
+const progressEl = document.getElementById('progress');
+const runBtn = document.getElementById('run-btn');
+const els = { status: statusEl, stages: progressEl };
+
+function setBusy(busy) {
+  runBtn.disabled = busy;
+  runBtn.textContent = busy ? 'Running…' : 'Run Pipeline';
+}
+
+function onFinished() {
+  setBusy(false);
+}
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  statusEl.textContent = 'Running...';
-  outputEl.textContent = '';
+  setBusy(true);
+  statusEl.textContent = 'Starting…';
+  statusEl.style.color = '';
+  progressEl.innerHTML = '';
+
   const data = new FormData(form);
   const pillar = data.get('pillar');
   const papers = data.get('papers');
+
   try {
-    const res = await fetch(`/pipeline/run?pillar=${pillar}&papers=${papers}`, { method: 'POST' });
+    // Returns immediately with a run id; the work happens on a worker thread and we
+    // follow it by polling. This used to hold the request open for the whole run.
+    const res = await fetch(`/pipeline/run?pillar=${encodeURIComponent(pillar)}&papers=${encodeURIComponent(papers)}`, { method: 'POST' });
     const json = await res.json();
-    statusEl.textContent = json.success ? 'Success' : 'Failed';
-    outputEl.textContent = JSON.stringify(json, null, 2);
+
+    if (res.status === 409) {
+      // A run is already active for this pillar — attach to it rather than telling
+      // the user "no" and leaving them with nothing to look at.
+      statusEl.textContent = json.error || 'A run is already in progress.';
+      statusEl.style.color = 'darkorange';
+      await RunProgress.reattach(els, onFinished);
+      return;
+    }
+    if (!res.ok || !json.run_id) {
+      throw new Error(json.error || `HTTP ${res.status}`);
+    }
+
+    RunProgress.attach(json.run_id, els, onFinished);
   } catch (err) {
-    statusEl.textContent = 'Error';
-    outputEl.textContent = String(err);
+    setBusy(false);
+    statusEl.textContent = 'Error: ' + err.message;
+    statusEl.style.color = 'crimson';
+  }
+});
+
+// A reload mid-run must not lose the run: pick it up from ?run=, then localStorage,
+// then by asking the server what is in flight. The server lookup is not filtered by
+// pillar — a run for a different pillar is still yours, and hiding it because the
+// dropdown moved on is how a run appears to vanish.
+window.addEventListener('DOMContentLoaded', async () => {
+  const found = await RunProgress.reattach(els, onFinished);
+  if (!found) return;
+  setBusy(true);
+  // When the server told us which pillar is running, point the form at it so the
+  // page is not describing one pillar while showing another's progress.
+  if (found.pillar_id) {
+    const select = form.querySelector('select[name=pillar]');
+    if (select) select.value = found.pillar_id;
   }
 });
 </script>
 {% endblock %}
-
-

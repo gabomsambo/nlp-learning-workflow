@@ -191,6 +191,84 @@ before, 2/2 after.
 created before it**. `add_to_paper_queue` degrades to arXiv-only queueing and logs the
 migration path if PostgREST reports the column missing.
 
+## Long runs are background jobs, and their state is in Postgres
+
+`POST /pipeline/run` and `POST /api/pillars/{id}/select` return **202 with a run id**
+and do the work on a thread. Before 2026-08-16 both ran the synchronous `Orchestrator`
+inside the request handler — `/pipeline/run` by shelling out to
+`python -m nlp_pillars.cli run` and awaiting `proc.communicate()`, `/select` by calling
+`process_selected_papers` directly — so the browser sat on "Running..." for minutes and
+the single uvicorn process was frozen for every other request, `/health` included.
+
+`POST /api/pillars/{id}/discover` still answers synchronously, because the user needs
+those candidates in front of them to choose from, but its blocking call is now behind
+`asyncio.to_thread`. Measured after the change: the call takes ~30s and `/health`
+answers in 5ms during it.
+
+Run state lives in `pipeline_runs` + `pipeline_run_stages`, **not** in memory. The
+`scheduler` container is a separate process against the same database, so a webui-local
+registry could never show a nightly run. `docs/migrations/009_pipeline_runs.sql` must be
+run **by hand** against any existing database.
+
+**Stages are a child table because PostgREST cannot partially update a JSONB column.**
+There is no path syntax on PATCH and no `set.` filter, so an array column would mean
+read-modify-write eleven times per run from a worker thread while the browser polls the
+same row. One row per stage makes each transition an independent single-row PATCH.
+
+`Orchestrator(on_stage=..., cancel=...)` — both optional, both defaulting to inert, so
+the CLI, the scheduler and every existing test are unaffected. `on_stage(name, status,
+detail)` fires at the eleven `Step N` boundaries that already existed. Two things worth
+knowing before changing it:
+
+- `_process_paper` has **no internal try/except**, so a paper that dies leaves its stage
+  marked running. The orchestrator tracks the in-flight per-paper stage itself and the
+  caller's handler closes it out via `_mark_current_paper_stage_failed`. A callback that
+  only fires "before each step" cannot report *which* step failed.
+- A callback that raises is caught and logged, never propagated. Losing the progress
+  display is bad; losing the run with it is worse.
+
+`RunCancelledError` is raised when a stage *starts* and the cancel event is set — never
+mid-stage, so a stage always finishes the work it began and the database is not left
+half-written. This is cooperative because it has to be: **nothing can interrupt
+synchronous Python**. There is no `Thread.kill()`, and neither APScheduler's
+`shutdown(wait=True)` nor a `ThreadPoolExecutor` will do it.
+
+Because a killed process cannot record its own death, startup sweeps any run still
+`pending`/`running` to **`interrupted`** — a status deliberately distinct from `failed`,
+since all it means is "nobody is working on this any more". The sweep is scoped by
+`trigger_source` so a webui restart cannot declare a live scheduler run dead.
+
+One active run per pillar, enforced by a **partial unique index**
+(`pipeline_runs_one_active_per_pillar`) rather than a check-then-insert, which races.
+A second insert returns HTTP 409 / Postgres `23505`; `create_pipeline_run` turns that
+into `None` and the route into a 409.
+
+Two traps in the job machinery, both of which fail silently:
+
+- **APScheduler's `misfire_grace_time` defaults to one second.** A job that reaches the
+  executor later than that is discarded with only a WARNING — the user gets their 202
+  and the run sits at `pending` forever. Always pass `misfire_grace_time=None`.
+- **Do not use FastAPI `BackgroundTasks` here.** Starlette awaits them *inside* the ASGI
+  cycle (`responses.py`: `await self.background()`), so a minutes-long task blocks
+  graceful shutdown and its exceptions land after the response with nothing listening.
+
+Writes go through the **synchronous** `nlp_pillars/db.py` client from the worker thread;
+the poll endpoint reads through the **async** `webui/services/postgrest_client.py`.
+Never cross them — calling the sync client from an `async def` handler is the original
+bug. `httpx.Client` is thread-safe and designed to be shared, so the module-global
+singleton is fine to use from both.
+
+The browser side is `webui/static/run-progress.js`, shared by both pages. It polls with
+a **recursive `setTimeout`, never `setInterval`** — `setInterval` queues the next tick
+regardless of whether the last response arrived, so a slow server renders stages out of
+order. It backs off on errors only, and reattaches after a reload from `?run=`, then
+`localStorage`, then `GET /api/pipeline-runs/active`. That last lookup is deliberately
+**not** filtered by pillar: filtering by whatever the dropdown shows is how a run
+appears to vanish after a refresh.
+
+More background, with sources and measurements:
+`PRPs/ai_docs/background-jobs-and-postgrest-gotchas.md`.
+
 ## Sharp edges
 
 `schema.sql` now covers all 11 tables, but it was **reconstructed from application code**,

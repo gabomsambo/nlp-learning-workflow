@@ -14,7 +14,8 @@ from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
     ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
-    PaperCitation, PodcastScript
+    PaperCitation, PodcastScript,
+    PipelineRun, PipelineRunStage, RunStatus, StageStatus
 )
 
 logger = logging.getLogger(__name__)
@@ -2110,3 +2111,363 @@ def get_citation_network_papers(paper_ids: List[str], limit: int = 20) -> List[s
     except Exception as e:
         logger.error(f"Failed to get citation network: {e}")
         return []
+
+
+# =====================================
+# Pipeline Run Tracking (migration 009)
+#
+# These are the WRITE side of run tracking and they are deliberately synchronous:
+# they are called from the worker thread that runs the pipeline, where there is no
+# event loop. Reads for the polling endpoint go through the async client in
+# webui/services/postgrest_client.py instead. Do not mix the two.
+#
+# httpx.Client is thread-safe and designed to be shared, so the module-global
+# singleton behind get_client() is fine to use from both the request thread and the
+# worker thread.
+# =====================================
+
+def _dict_to_pipeline_run_stage(data: Dict[str, Any]) -> PipelineRunStage:
+    """Convert a pipeline_run_stages row to a PipelineRunStage."""
+    return PipelineRunStage(
+        id=data.get('id'),
+        run_id=data['run_id'],
+        seq=data['seq'],
+        name=data['name'],
+        status=data.get('status', StageStatus.PENDING.value),
+        detail=data.get('detail'),
+        started_at=data.get('started_at'),
+        finished_at=data.get('finished_at'),
+    )
+
+
+def _dict_to_pipeline_run(data: Dict[str, Any]) -> PipelineRun:
+    """Convert a pipeline_runs row to a PipelineRun.
+
+    Accepts an embedded ``pipeline_run_stages`` list if PostgREST resource embedding
+    was used, and sorts it by ``seq`` so callers never have to.
+    """
+    raw_stages = data.get('pipeline_run_stages') or []
+    stages = sorted(
+        (_dict_to_pipeline_run_stage(s) for s in raw_stages),
+        key=lambda s: s.seq,
+    )
+    return PipelineRun(
+        id=data['id'],
+        pillar_id=data['pillar_id'],
+        trigger_source=data['trigger_source'],
+        kind=data['kind'],
+        status=data.get('status', RunStatus.PENDING.value),
+        current_stage=data.get('current_stage'),
+        papers_processed=data.get('papers_processed', 0),
+        papers_failed=data.get('papers_failed', 0),
+        error=data.get('error'),
+        created_at=data.get('created_at'),
+        started_at=data.get('started_at'),
+        finished_at=data.get('finished_at'),
+        heartbeat_at=data.get('heartbeat_at'),
+        stages=stages,
+    )
+
+
+def create_pipeline_run(
+    pillar_id: str,
+    trigger_source: str,
+    kind: str,
+    stage_names: List[str],
+) -> Optional[PipelineRun]:
+    """Create a run row plus its seeded stage rows.
+
+    Returns None — rather than raising — when a run is already active for this
+    pillar. That case is not an error: it is the `pipeline_runs_one_active_per_pillar`
+    partial unique index doing its job, and PostgREST reports it as HTTP 409 with
+    Postgres code 23505. The caller turns None into a 409 response.
+
+    Args:
+        pillar_id: Target pillar slug.
+        trigger_source: 'ui_pipeline' | 'ui_select' | 'scheduler'.
+        kind: 'run_daily' | 'process_selected'.
+        stage_names: Ordered stage names; index + 1 becomes the stored ``seq``.
+
+    Returns:
+        The created PipelineRun with its seeded stages, or None if a run is already
+        active for this pillar, or None if creation failed for any other reason
+        (logged at ERROR).
+
+    """
+    try:
+        client = get_client()
+        response = client.table('pipeline_runs').insert({
+            'pillar_id': pillar_id,
+            'trigger_source': trigger_source,
+            'kind': kind,
+            'status': RunStatus.PENDING.value,
+        })
+
+        if response['error']:
+            error_info = response['error']
+            # 409 from TableQuery.insert, or 23505 straight from Postgres.
+            if isinstance(error_info, dict) and (
+                error_info.get('code') in (409, '409', '23505')
+                or 'one_active_per_pillar' in str(error_info)
+            ):
+                logger.info(
+                    f"Not starting a run for pillar {pillar_id}: one is already active"
+                )
+                return None
+            logger.error(f"Failed to create pipeline run: {error_info}")
+            return None
+
+        if not response['data']:
+            logger.error("Pipeline run insert returned no row")
+            return None
+
+        run = _dict_to_pipeline_run(response['data'][0])
+
+        # Seed the stage skeleton so the UI can render every step as pending
+        # immediately, instead of rows appearing one at a time.
+        stage_rows = [
+            {
+                'run_id': run.id,
+                'seq': i + 1,
+                'name': name,
+                'status': StageStatus.PENDING.value,
+            }
+            for i, name in enumerate(stage_names)
+        ]
+        # PostgREST accepts a JSON array for a bulk insert. TableQuery.insert types
+        # its argument as a dict, but it passes the value straight to httpx `json=`,
+        # so a list works and is one round trip instead of eleven.
+        stages_response = client.table('pipeline_run_stages').insert(stage_rows)
+        if stages_response['error']:
+            logger.error(
+                f"Created run {run.id} but failed to seed stages: "
+                f"{stages_response['error']}"
+            )
+        elif stages_response['data']:
+            run.stages = sorted(
+                (_dict_to_pipeline_run_stage(s) for s in stages_response['data']),
+                key=lambda s: s.seq,
+            )
+
+        logger.info(
+            f"Created pipeline run {run.id} for pillar {pillar_id} "
+            f"({kind}, via {trigger_source})"
+        )
+        return run
+
+    except Exception as e:
+        logger.error(f"Failed to create pipeline run for pillar {pillar_id}: {e}")
+        return None
+
+
+def start_pipeline_run(run_id: str) -> bool:
+    """Mark a run as running. Called from the worker thread as it picks the job up."""
+    now = datetime.now(timezone.utc).isoformat()
+    return _update_pipeline_run(run_id, {
+        'status': RunStatus.RUNNING.value,
+        'started_at': now,
+        'heartbeat_at': now,
+    })
+
+
+def update_pipeline_run_stage(
+    run_id: str,
+    stage_name: str,
+    status: str,
+    detail: Optional[str] = None,
+) -> bool:
+    """Advance one stage of a run, and refresh the run's current_stage/heartbeat.
+
+    Two writes on purpose: the stage row carries per-stage timing, and the
+    denormalised ``current_stage`` on the run row means the poll endpoint can answer
+    "where is it" without inspecting the stage list.
+
+    Args:
+        run_id: The run.
+        stage_name: A StageName value.
+        status: A StageStatus value.
+        detail: Optional free text, e.g. "2/5 papers".
+
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    stage_patch: Dict[str, Any] = {'status': status}
+    if detail is not None:
+        stage_patch['detail'] = detail
+    if status == StageStatus.RUNNING.value:
+        stage_patch['started_at'] = now
+    elif status in (StageStatus.COMPLETED.value, StageStatus.FAILED.value,
+                    StageStatus.SKIPPED.value):
+        stage_patch['finished_at'] = now
+
+    ok = True
+    try:
+        client = get_client()
+        # TableQuery.update() calls raise_for_status() WITHOUT catching it, unlike
+        # insert()/execute(). Hence the try/except around every update in this module.
+        response = (client.table('pipeline_run_stages')
+                    .eq('run_id', run_id)
+                    .eq('name', stage_name)
+                    .update(stage_patch))
+        if response['error']:
+            logger.error(
+                f"Failed to update stage {stage_name} of run {run_id}: "
+                f"{response['error']}"
+            )
+            ok = False
+    except Exception as e:
+        logger.error(f"Failed to update stage {stage_name} of run {run_id}: {e}")
+        ok = False
+
+    run_patch: Dict[str, Any] = {'heartbeat_at': now}
+    if status == StageStatus.RUNNING.value:
+        run_patch['current_stage'] = stage_name
+    if not _update_pipeline_run(run_id, run_patch):
+        ok = False
+
+    return ok
+
+
+def finish_pipeline_run(
+    run_id: str,
+    status: str,
+    papers_processed: int = 0,
+    papers_failed: int = 0,
+    error: Optional[str] = None,
+) -> bool:
+    """Write a terminal status onto a run.
+
+    Args:
+        run_id: The run to close out.
+        status: A terminal RunStatus value — succeeded, failed, cancelled or
+            interrupted. Passing a non-terminal status here is a bug; polling
+            clients stop only on a terminal one.
+        papers_processed: Count for the run row.
+        papers_failed: Count for the run row.
+        error: Optional message, truncated to 2000 chars on the row.
+
+    """
+    patch: Dict[str, Any] = {
+        'status': status,
+        'papers_processed': papers_processed,
+        'papers_failed': papers_failed,
+        'finished_at': datetime.now(timezone.utc).isoformat(),
+    }
+    if error is not None:
+        # Keep the row readable; the full traceback is in the logs.
+        patch['error'] = error[:2000]
+    return _update_pipeline_run(run_id, patch)
+
+
+def get_pipeline_run(run_id: str) -> Optional[PipelineRun]:
+    """Read a run and its stages. Synchronous — for the sweep and for tests.
+
+    The polling endpoint uses the async client instead; see the module comment.
+    """
+    try:
+        client = get_client()
+        response = (client.table('pipeline_runs')
+                    .select('*,pipeline_run_stages(*)')
+                    .eq('id', run_id)
+                    .execute())
+        if response['error']:
+            logger.error(f"Failed to read pipeline run {run_id}: {response['error']}")
+            return None
+        if not response['data']:
+            return None
+        return _dict_to_pipeline_run(response['data'][0])
+    except Exception as e:
+        logger.error(f"Failed to read pipeline run {run_id}: {e}")
+        return None
+
+
+def get_active_pipeline_run(pillar_id: str) -> Optional[PipelineRun]:
+    """Return the pending/running run for a pillar, if there is one.
+
+    Filters on ``status``, never on "finished_at IS NULL": TableQuery.eq() renders
+    Python None as the string "None", so a null filter silently matches nothing.
+    """
+    try:
+        client = get_client()
+        query = client.table('pipeline_runs').select('*,pipeline_run_stages(*)')
+        query.params['pillar_id'] = f'eq.{pillar_id}'
+        query.params['status'] = 'in.(pending,running)'
+        response = query.limit(1).execute()
+        if response['error']:
+            logger.error(
+                f"Failed to look up active run for pillar {pillar_id}: "
+                f"{response['error']}"
+            )
+            return None
+        if not response['data']:
+            return None
+        return _dict_to_pipeline_run(response['data'][0])
+    except Exception as e:
+        logger.error(f"Failed to look up active run for pillar {pillar_id}: {e}")
+        return None
+
+
+def sweep_interrupted_runs(trigger_sources: Optional[List[str]] = None) -> int:
+    """Mark still-open runs as interrupted. Call once at application startup.
+
+    A process that is killed cannot record its own death, so without this a crashed
+    run stays 'running' forever and is indistinguishable from a live one. The status
+    is 'interrupted' rather than 'failed' precisely because we do not know what
+    happened — only that nobody is working on it any more.
+
+    Args:
+        trigger_sources: Restrict the sweep to runs this process could have owned.
+            This matters because webui and the scheduler are SEPARATE containers
+            sharing one database: an unscoped sweep on webui startup would declare a
+            perfectly healthy scheduler run dead. webui passes its two UI sources,
+            the scheduler passes its own. None sweeps everything, which is only
+            correct when nothing else can be running.
+
+    Returns:
+        The number of rows swept, or 0 on failure (logged).
+
+    """
+    try:
+        client = get_client()
+        query = client.table('pipeline_runs')
+        query.params['status'] = 'in.(pending,running)'
+        if trigger_sources:
+            joined = ','.join(trigger_sources)
+            query.params['trigger_source'] = f'in.({joined})'
+        response = query.update({
+            'status': RunStatus.INTERRUPTED.value,
+            'finished_at': datetime.now(timezone.utc).isoformat(),
+            'error': 'Process exited before this run finished',
+        })
+        if response['error']:
+            logger.error(f"Failed to sweep interrupted runs: {response['error']}")
+            return 0
+        count = len(response['data'] or [])
+        if count:
+            logger.warning(
+                f"Swept {count} pipeline run(s) left open by a previous process"
+            )
+        return count
+    except Exception as e:
+        logger.error(f"Failed to sweep interrupted runs: {e}")
+        return 0
+
+
+def _update_pipeline_run(run_id: str, patch: Dict[str, Any]) -> bool:
+    """PATCH one pipeline_runs row, swallowing and logging any failure.
+
+    Progress bookkeeping must never take the pipeline down with it, so this returns
+    a bool rather than raising.
+    """
+    try:
+        client = get_client()
+        response = (client.table('pipeline_runs')
+                    .eq('id', run_id)
+                    .update(patch))
+        if response['error']:
+            logger.error(f"Failed to update pipeline run {run_id}: {response['error']}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"Failed to update pipeline run {run_id}: {e}")
+        return False

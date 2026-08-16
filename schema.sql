@@ -348,6 +348,60 @@ CREATE TABLE scripts (
 );
 
 -- ==========================================
+-- 12. PIPELINE_RUNS TABLE
+-- ==========================================
+-- Not reconstructed — this table is new (migration 009). It records one row per
+-- pipeline execution so the web UI can return immediately and poll for progress
+-- instead of holding the HTTP request open for the whole run.
+--
+-- Postgres and not an in-memory registry because the scheduler runs the same
+-- pipeline in a SEPARATE container, so webui-process state could never see a
+-- nightly run.
+CREATE TABLE pipeline_runs (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pillar_id        TEXT NOT NULL,
+    trigger_source   TEXT NOT NULL
+        CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'scheduler')),
+    kind             TEXT NOT NULL
+        CHECK (kind IN ('run_daily', 'process_selected')),
+    -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
+    -- string "None", so nothing here may be filtered while nullable. Lookups use
+    -- status, never "finished_at IS NULL".
+    status           TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'succeeded', 'failed',
+                          'cancelled', 'interrupted')),
+    current_stage    TEXT,
+    papers_processed INTEGER NOT NULL DEFAULT 0,
+    papers_failed    INTEGER NOT NULL DEFAULT 0,
+    error            TEXT,
+    created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    started_at       TIMESTAMP WITH TIME ZONE,
+    finished_at      TIMESTAMP WITH TIME ZONE,
+    heartbeat_at     TIMESTAMP WITH TIME ZONE
+);
+
+-- ==========================================
+-- 13. PIPELINE_RUN_STAGES TABLE
+-- ==========================================
+-- One row per stage of a run, seeded 'pending' at run creation so the UI has a full
+-- skeleton before work starts. A child table and NOT a JSONB column on pipeline_runs:
+-- PostgREST cannot partially update JSONB, so an array column would mean
+-- read-modify-write eleven times per run from a worker thread while the browser polls
+-- the same row, which loses updates.
+CREATE TABLE pipeline_run_stages (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id      UUID NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    seq         SMALLINT NOT NULL,
+    name        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+    detail      TEXT,
+    started_at  TIMESTAMP WITH TIME ZONE,
+    finished_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE (run_id, seq)
+);
+
+-- ==========================================
 -- TRIGGERS
 -- ==========================================
 
@@ -456,6 +510,25 @@ CREATE INDEX idx_review_logs_timestamp ON review_logs(review_timestamp);
 -- get_citations_for_paper() filters on paper_id, optionally + citation_direction.
 CREATE INDEX idx_paper_citations_paper_id ON paper_citations(paper_id, citation_direction);
 CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_id);
+
+-- Pipeline run indexes
+-- The partial unique index is the one-active-run-per-pillar guard. It is a
+-- correctness constraint, not a performance index: a check-then-insert in Python
+-- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
+CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
+    ON pipeline_runs (pillar_id) WHERE status IN ('pending', 'running');
+CREATE INDEX idx_pipeline_runs_pillar ON pipeline_runs(pillar_id, created_at DESC);
+CREATE INDEX idx_pipeline_runs_active ON pipeline_runs(status)
+    WHERE status IN ('pending', 'running');
+CREATE INDEX idx_pipeline_run_stages_run ON pipeline_run_stages(run_id, seq);
+
+COMMENT ON TABLE pipeline_runs IS
+    'One row per pipeline execution, from any trigger. status=interrupted means the '
+    'process died mid-run and the startup sweep found the row, NOT that the pipeline '
+    'failed - a killed process cannot write its own epitaph.';
+COMMENT ON TABLE pipeline_run_stages IS
+    'Per-stage progress for a run. Seeded pending at run creation; seq matches the '
+    'Step N ordering in nlp_pillars/orchestrator.py.';
 
 -- ==========================================
 -- VALIDATION COMMENTS

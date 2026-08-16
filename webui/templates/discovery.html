@@ -9,7 +9,7 @@
       Pillar
       <select name="pillar" id="pillar-select" required>
         {% for pillar in pillars %}
-        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+        <option value="{{ pillar.id }}" {% if selected_pillar == pillar.id %}selected{% endif %}>{{ pillar.name }}</option>
         {% endfor %}
       </select>
     </label>
@@ -51,6 +51,8 @@
   </div>
 </div>
 
+<div id="run-progress" style="margin-top: 1rem;"></div>
+
 <div id="processing-results" style="display: none; margin-top: 1rem;">
   <h3>Processing Results</h3>
   <div id="processing-output"></div>
@@ -62,6 +64,7 @@
   <p>Papers failed: <span id="total-failed" style="color: red;">0</span></p>
 </div>
 
+<script src="/static/run-progress.js"></script>
 <script>
 // State
 let candidates = [];
@@ -85,6 +88,8 @@ const processingOutput = document.getElementById('processing-output');
 const sessionSummary = document.getElementById('session-summary');
 const totalProcessedEl = document.getElementById('total-processed');
 const totalFailedEl = document.getElementById('total-failed');
+const runProgressEl = document.getElementById('run-progress');
+const progressEls = { status: null, stages: runProgressEl };
 
 // Discover papers
 discoverForm.addEventListener('submit', async (e) => {
@@ -211,6 +216,9 @@ processBtn.addEventListener('click', async () => {
   processingOutput.innerHTML = '<p>Processing papers...</p>';
 
   try {
+    // Returns 202 with a run id straight away. This used to run the whole
+    // ingest/summarize/synthesize/quiz/vector pipeline for every selected paper
+    // inline, before responding — many minutes with the server frozen.
     const res = await fetch(`/api/pillars/${pillar}/select`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -219,28 +227,27 @@ processBtn.addEventListener('click', async () => {
 
     const data = await res.json();
 
-    // Update totals
-    totalProcessed += data.queued;
-    totalFailed += selectedIds.length - data.queued;
-
-    // Show results
-    let html = '';
-    if (data.queued > 0) {
-      html += `<p style="color: green;">&#10003; Processed ${data.queued} papers successfully</p>`;
+    if (res.status === 409) {
+      processingOutput.innerHTML =
+        `<p style="color: orange;">${data.detail || 'A run is already in progress for this pillar.'}</p>`;
+      await RunProgress.reattach(progressEls, onRunFinished);
+      processBtn.disabled = false;
+      processBtn.textContent = 'Process Selected';
+      return;
     }
-    if (selectedIds.length - data.queued > 0) {
-      html += `<p style="color: orange;">&#9888; ${selectedIds.length - data.queued} papers failed</p>`;
+    if (!res.ok || !data.run_id) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
     }
-    html += `<p><small>${data.message}</small></p>`;
 
-    processingOutput.innerHTML = html;
+    processingOutput.innerHTML =
+      `<p>${data.message}. Following progress below \u2014 you can leave this page.</p>`;
 
-    // Update session summary
-    sessionSummary.style.display = 'block';
-    totalProcessedEl.textContent = totalProcessed;
-    totalFailedEl.textContent = totalFailed;
+    // Remember what this run was for, so the summary can be written when it ends.
+    pendingSelection = { count: selectedIds.length };
+    RunProgress.attach(data.run_id, progressEls, onRunFinished);
 
-    // Re-render candidates (removes attempted ones)
+    // The candidates that were sent are now attempted; drop them from the table so
+    // the user is not tempted to submit them twice while the run is in flight.
     renderCandidates();
 
   } catch (err) {
@@ -248,13 +255,45 @@ processBtn.addEventListener('click', async () => {
     totalFailed += selectedIds.length;
     totalFailedEl.textContent = totalFailed;
     sessionSummary.style.display = 'block';
+    processBtn.disabled = false;
 
     // Still re-render to remove attempted
     renderCandidates();
   }
 
-  processBtn.textContent = 'Process Selected';
   selectAllCheckbox.checked = false;
+});
+
+// Session totals are only knowable once the run ends, so they are written here
+// rather than from the (now immediate) POST response.
+let pendingSelection = null;
+
+function onRunFinished(run) {
+  const attempted = pendingSelection ? pendingSelection.count : run.papers_processed;
+  pendingSelection = null;
+
+  totalProcessed += run.papers_processed;
+  totalFailed += Math.max(0, attempted - run.papers_processed);
+
+  sessionSummary.style.display = 'block';
+  totalProcessedEl.textContent = totalProcessed;
+  totalFailedEl.textContent = totalFailed;
+
+  processBtn.disabled = false;
+  processBtn.textContent = 'Process Selected';
+  updateSelectedCount();
+}
+
+// Reattach to a run still in flight after a reload, so leaving the page mid-process
+// does not lose sight of it.
+window.addEventListener('DOMContentLoaded', async () => {
+  const found = await RunProgress.reattach(progressEls, onRunFinished);
+  if (!found) return;
+  processingResults.style.display = 'block';
+  processingOutput.innerHTML = '<p>Reattached to a run already in progress.</p>';
+  processBtn.disabled = true;
+  processBtn.textContent = 'Processing\u2026';
+  if (found.pillar_id) pillarSelect.value = found.pillar_id;
 });
 </script>
 {% endblock %}
