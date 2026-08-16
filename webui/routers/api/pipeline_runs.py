@@ -65,7 +65,11 @@ async def get_run(run_id: str) -> Dict[str, Any]:
     client = PostgrestClient()
     try:
         run = await client.get_pipeline_run(run_id)
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, ValueError) as e:
+        # ValueError covers json.JSONDecodeError, which _get() can raise on a 200 with
+        # a malformed body. Without it that case escapes as a 500, and the browser
+        # treats an unexpected status the same as any other error — retry — so it is
+        # not fatal, just less honest than the 503 this is meant to produce.
         logger.warning(f"Could not read pipeline run {run_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

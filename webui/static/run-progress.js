@@ -165,9 +165,22 @@
     return stage.status;
   }
 
+  /**
+   * How many stages are done, counted the way they are DISPLAYED.
+   *
+   * Must go through displayStatus for the same reason renderStages does, or the bar
+   * and the list disagree: db.update_pipeline_run_stage() swallows its own failures,
+   * so a completed stage's write can be silently lost and the row left at 'running'.
+   * The list then shows eleven green rows (displayStatus resolves them) while a bar
+   * counting raw status sticks at 10/11 and never fills.
+   *
+   * Skipped counts as done — quiz is skipped when disabled, and a bar that can never
+   * reach the end because of a deliberate skip reads as a stall.
+   */
   function countCompleted(run) {
     return (run.stages || []).filter(function (s) {
-      return s.status === 'completed' || s.status === 'skipped';
+      var status = displayStatus(s, run);
+      return status === 'completed' || status === 'skipped';
     }).length;
   }
 

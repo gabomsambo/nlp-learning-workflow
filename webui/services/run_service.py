@@ -152,7 +152,7 @@ def execute_run(
             run_id,
             _terminal_status(result),
             papers_processed=len(result.papers_processed),
-            papers_failed=len(result.errors),
+            papers_failed=_count_failed_papers(result),
             error=_summarise_errors(result),
         )
         logger.info(
@@ -237,6 +237,20 @@ def sweep_interrupted_runs_on_startup() -> int:
 def _to_paper_refs(papers: List[Any]) -> List[PaperRef]:
     """Accept PaperRef objects or plain dicts, since the route hands over JSON."""
     return [p if isinstance(p, PaperRef) else PaperRef(**p) for p in papers]
+
+
+#: The `step` the orchestrator stamps on a per-paper failure. Everything else in
+#: `errors` is a failure of the shared plumbing (search, queue, database), which must
+#: not be counted as a dead paper.
+_PAPER_FAILURE_STEP = "process_paper"
+
+
+def _count_failed_papers(result) -> int:
+    """How many PAPERS failed, as opposed to how many things went wrong."""
+    return sum(
+        1 for e in result.errors
+        if isinstance(e, dict) and e.get("step") == _PAPER_FAILURE_STEP
+    )
 
 
 def _terminal_status(result) -> str:

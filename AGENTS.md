@@ -516,10 +516,12 @@ initial scheduling, so it is enforced, not advisory.
 `.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
 that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
 
-Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**. The
-`fix/pipeline-progress-error-relay` branch adds ~40 passing tests and moves neither
-the failures nor the errors (measured locally against main with the same `.env`
-present in both: 29 failed / 13 errors before and after, 220 -> 252 passed). The 38 are
+Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**, measured at
+PR #14. PR #15 added 23 passing tests, taking main to **275 passed, 28 failed, 10
+errors**, and `fix/pipeline-progress-error-relay` (#16) takes it to **309 passed, 28
+failed, 10 errors** — +34 passing with the failures and errors untouched. Quote the
+runner's numbers, not a local run's: the two differ for the reasons below, and only
+these are reproducible. The 38 are
 pre-existing drift between the tests and the code they cover, not flakes. Four clusters:
 15 in `tests/test_db.py`, whose mocks hand back a bare `Mock` where the code subscripts a
 response; the 10 errors, every one of them a fixture predating `Lesson` gaining required

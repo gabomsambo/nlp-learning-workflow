@@ -301,6 +301,68 @@ def test_empty_paper_still_completes_the_vectors_stage(
 @patch("nlp_pillars.orchestrator.vectors")
 @patch("nlp_pillars.orchestrator.db")
 @patch("nlp_pillars.orchestrator.DiscoveryAgent")
+def test_a_dead_stack_does_not_look_like_a_caught_up_pillar(
+    mock_discovery, mock_db, mock_vectors, paper,
+):
+    """Search, enqueue and pop each degrade to empty — but must say why.
+
+    Each of the three catches its own exception so one dead backend cannot abort a
+    run, which is right. But the failure then lived only in the log, so a run where
+    ALL of them failed produced no papers AND no errors — indistinguishable from a
+    pillar that had simply caught up. run_service._terminal_status() reads an empty
+    errors list as success, so a completely dead stack reported
+    "Done — no new papers to process" in green.
+    """
+    mock_db.get_recent_notes.return_value = []
+    mock_db.queue_add_candidates.side_effect = RuntimeError("PostgREST refused")
+    mock_db.queue_pop_next.side_effect = RuntimeError("PostgREST refused")
+    # Real query strings, so the search loop actually runs. A bare MagicMock makes
+    # _run_discovery fall back, and the fallback can yield nothing.
+    mock_discovery.run.return_value = Mock(queries=[Mock(query="state space models")])
+
+    orch = _build(paper=paper)
+    orch.searxng_tool.search = Mock(side_effect=RuntimeError("SearXNG unreachable"))
+    orch.arxiv_tool.search = Mock(side_effect=RuntimeError("arXiv unreachable"))
+
+    result = orch.run_daily(PILLAR, papers_limit=1)
+
+    assert result.papers_processed == []
+    assert result.errors, "a totally failed run must not come back with zero errors"
+    steps = {e["step"] for e in result.errors}
+    assert "search" in steps
+    assert "pop_queue" in steps
+    # Every one of these is plumbing, not a paper, so none may inflate papers_failed.
+    assert all(e["paper_id"] == "pipeline" for e in result.errors)
+    joined = " ".join(e["message"] for e in result.errors)
+    assert "SearXNG unreachable" in joined
+    assert "PostgREST refused" in joined
+
+
+@patch("nlp_pillars.orchestrator.vectors")
+@patch("nlp_pillars.orchestrator.db")
+@patch("nlp_pillars.orchestrator.DiscoveryAgent")
+def test_a_genuinely_caught_up_pillar_still_reports_no_errors(
+    mock_discovery, mock_db, mock_vectors,
+):
+    """The other half of the contract: nothing wrong means nothing reported.
+
+    Without this, the fix above could be 'satisfied' by making every quiet run look
+    like a failure, which is the bug this branch set out to remove.
+    """
+    mock_db.get_recent_notes.return_value = []
+    mock_db.queue_add_candidates.return_value = 0
+    mock_db.queue_pop_next.return_value = []
+
+    orch = _build()  # searches return [] without raising
+    result = orch.run_daily(PILLAR, papers_limit=1)
+
+    assert result.papers_processed == []
+    assert result.errors == []
+
+
+@patch("nlp_pillars.orchestrator.vectors")
+@patch("nlp_pillars.orchestrator.db")
+@patch("nlp_pillars.orchestrator.DiscoveryAgent")
 def test_discovery_fallback_is_visible_in_the_stage_detail(
     mock_discovery, mock_db, mock_vectors, paper,
 ):

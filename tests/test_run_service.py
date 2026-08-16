@@ -24,6 +24,7 @@ from webui.services import run_service
 from webui.services.run_service import (
     KIND_RUN_DAILY,
     RunAlreadyActiveError,
+    _count_failed_papers,
     _summarise_errors,
     _terminal_status,
     dispatch_run,
@@ -61,6 +62,37 @@ def test_a_run_that_found_nothing_is_not_a_failure():
 def test_a_run_whose_every_paper_died_is_a_failure():
     result = FakeResult(errors=[{"message": "boom"}])
     assert _terminal_status(result) == RunStatus.FAILED.value
+
+
+def test_a_run_that_processed_nothing_because_everything_broke_is_a_failure():
+    """"Nothing to do" and "nothing worked" must not look the same.
+
+    Regression on the fix itself. _terminal_status maps an empty `errors` list to
+    succeeded, and the orchestrator's search / enqueue / pop helpers each swallow
+    their exceptions and degrade to an empty result. Before those helpers recorded
+    anything, a run against a completely dead stack produced no papers AND no errors,
+    so it was reported as succeeded and rendered "Done — no new papers to process" in
+    green. A dead database looked exactly like a pillar that had caught up.
+    """
+    result = FakeResult(errors=[
+        {"paper_id": "pipeline", "step": "search", "message": "SearXNG search failed: timeout"},
+        {"paper_id": "pipeline", "step": "pop_queue", "message": "Could not read the queue: refused"},
+    ])
+    assert _terminal_status(result) == RunStatus.FAILED.value
+    # ...and the reason reaches the user, not just the log.
+    assert "Could not read the queue" in _summarise_errors(result)
+
+
+def test_plumbing_failures_are_not_counted_as_failed_papers():
+    """papers_failed is a count of PAPERS. A dead search backend is not a paper."""
+    result = FakeResult(
+        papers=["a"],
+        errors=[
+            {"paper_id": "pipeline", "step": "search", "message": "backend down"},
+            {"paper_id": "arxiv:1", "step": "process_paper", "message": "paper died"},
+        ],
+    )
+    assert _count_failed_papers(result) == 1
 
 
 def test_a_partial_run_succeeds_but_keeps_its_error():

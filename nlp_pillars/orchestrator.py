@@ -100,6 +100,10 @@ class Orchestrator:
         self._on_stage = on_stage or _no_op_stage
         self._cancel = cancel
         self._current_paper_stage: Optional[StageName] = None
+        #: Failures in the shared plumbing (search / enqueue / pop), which each degrade
+        #: to an empty result rather than aborting the run. Kept apart from per-paper
+        #: errors so `papers_failed` stays a count of papers. See _record_infra_error.
+        self._infra_errors: List[dict] = []
 
         # Initialize tools
         self.searxng_tool = SearXNGTool()
@@ -140,6 +144,7 @@ class Orchestrator:
         lessons_created = []
         quizzes_generated = []
         errors = []
+        self._infra_errors = []
 
         try:
             # Step 1: Discovery - Generate search queries
@@ -227,6 +232,11 @@ class Orchestrator:
             # Calculate results
             total_time = time.time() - start_time
             success = len(papers_processed) > 0  # Success if at least one paper processed
+
+            # A run that processed nothing because the search, the queue or the
+            # database was broken is not the same as one that had nothing to do, and
+            # the caller can only tell them apart if the plumbing failures are here.
+            errors = errors + self._infra_errors
 
             result = PipelineResult(
                 pillar_id=pillar_id,
@@ -398,6 +408,24 @@ class Orchestrator:
         logger.info(f"Using {len(queries)} fallback queries: {queries}")
         return queries
 
+    def _record_infra_error(self, step: str, message: str) -> None:
+        """Remember a failure in the shared plumbing, not in one paper.
+
+        These three helpers — search, enqueue, pop — each catch their own exceptions
+        and degrade to an empty result, which is right: one dead search backend should
+        not abort a run. But the failure then existed only in the log, and a run where
+        EVERY one of them failed came out indistinguishable from a run that had simply
+        caught up: no papers, no errors. run_service._terminal_status() reads an empty
+        errors list as success, so a completely dead stack would report
+        "Done — no new papers to process" in green.
+
+        Recorded separately from per-paper errors so `papers_failed` stays a count of
+        papers. Merged into PipelineResult.errors at the end of the run.
+        """
+        self._infra_errors.append(
+            {"paper_id": "pipeline", "step": step, "message": message}
+        )
+
     def _search_candidates(self, pillar_id: str, queries: List[str]) -> List[PaperRef]:
         """Search for candidate papers using available tools."""
         all_candidates = []
@@ -418,6 +446,7 @@ class Orchestrator:
                 logger.debug(f"SearXNG found {len(searxng_results)} results for query: {query_str}")
             except Exception as e:
                 logger.warning(f"SearXNG search failed for query '{query_str}': {e}")
+                self._record_infra_error("search", f"SearXNG search failed: {e}")
 
             try:
                 # ArXiv search
@@ -426,6 +455,7 @@ class Orchestrator:
                 logger.debug(f"ArXiv found {len(arxiv_results)} results for query: {query_str}")
             except Exception as e:
                 logger.warning(f"ArXiv search failed for query '{query_str}': {e}")
+                self._record_infra_error("search", f"arXiv search failed: {e}")
 
         # Deduplicate candidates
         deduplicated = self._dedupe_papers(all_candidates)
@@ -444,6 +474,7 @@ class Orchestrator:
             return count
         except Exception as e:
             logger.error(f"Failed to enqueue candidates for pillar {pillar_id}: {e}")
+            self._record_infra_error("enqueue", f"Could not queue candidates: {e}")
             return 0
 
     def _pop_queue(self, pillar_id: str, limit: int) -> List[PaperRef]:
@@ -454,6 +485,7 @@ class Orchestrator:
             return papers
         except Exception as e:
             logger.error(f"Failed to pop papers from queue for pillar {pillar_id}: {e}")
+            self._record_infra_error("pop_queue", f"Could not read the queue: {e}")
             return []
 
     def _process_paper(self, pillar_id: str, paper: PaperRef) -> tuple[Lesson, Optional[List[QuizCard]]]:
@@ -684,6 +716,8 @@ class Orchestrator:
         """
         start_time = time.time()
 
+        self._infra_errors = []
+
         # Handle both papers and paper_ids for backward compatibility
         papers_to_process = []
         if papers:
@@ -693,6 +727,13 @@ class Orchestrator:
                 paper = self._get_or_fetch_paper(pillar_id, paper_id)
                 if paper:
                     papers_to_process.append(paper)
+                else:
+                    # Silently dropping it would leave a run that resolved nothing
+                    # looking exactly like one that had nothing to do.
+                    self._record_infra_error(
+                        "pop_queue",
+                        f"Could not resolve paper {paper_id} to a downloadable PDF",
+                    )
 
         logger.info(f"Processing {len(papers_to_process)} selected papers for pillar {pillar_id}")
 
@@ -746,7 +787,7 @@ class Orchestrator:
             lessons_created=lessons_created,
             quizzes_generated=quizzes_generated,
             podcasts_created=[],
-            errors=errors,
+            errors=errors + self._infra_errors,
             total_time_seconds=total_time,
             success=len(papers_processed) > 0
         )

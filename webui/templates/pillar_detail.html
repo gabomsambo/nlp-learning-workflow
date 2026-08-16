@@ -1412,7 +1412,7 @@ async function performSearch(pillarId, query, topK) {
         console.error('Search error:', error);
         resultsContainer.innerHTML = `
             <div class="empty-state">
-                <p>Search failed: ${error.message}</p>
+                <p>Search failed: ${escapeHtml(error.message)}</p>
                 <button onclick="location.reload()" class="btn-secondary">Try again</button>
             </div>
         `;
@@ -1428,7 +1428,7 @@ function displaySearchResults(results, query) {
     if (!results || results.length === 0) {
         resultsContainer.innerHTML = `
             <div class="empty-state">
-                <p>No papers found for "${query}"</p>
+                <p>No papers found for "${escapeHtml(query)}"</p>
                 <small>Try different keywords or broaden your search</small>
             </div>
         `;
@@ -1437,7 +1437,7 @@ function displaySearchResults(results, query) {
     
     const resultsHtml = `
         <div class="search-results-header">
-            <h4>Found ${results.length} result${results.length === 1 ? '' : 's'} for "${query}"</h4>
+            <h4>Found ${results.length} result${results.length === 1 ? '' : 's'} for "${escapeHtml(query)}"</h4>
         </div>
         <div class="search-results-list">
             ${results.map(result => createSearchResultCard(result)).join('')}
