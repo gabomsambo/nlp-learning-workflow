@@ -269,6 +269,72 @@ appears to vanish after a refresh.
 More background, with sources and measurements:
 `PRPs/ai_docs/background-jobs-and-postgrest-gotchas.md`.
 
+### Reporting a run's outcome honestly
+
+Four rules the run-status path now enforces, each of which was previously a lie the UI
+told the user:
+
+- **`PipelineResult.success` is not the run status.** It is `len(papers_processed) > 0`,
+  so a run that legitimately finds nothing arrives as `success=False` with an empty
+  `errors` list. `run_service._terminal_status()` maps that to **succeeded**; only
+  `errors` makes a run failed. `success` itself is left alone — the CLI, the scheduler
+  and fourteen tests read it and its meaning is right for them.
+- **`RunCancelledError` subclasses `Exception`**, so any broad `except Exception` on the
+  cancel path needs a narrower `except RunCancelledError: raise` above it.
+  `run_daily` lacked one and recorded cancellations as failures while
+  `process_selected_papers`, which has no wrapper, was always correct.
+- **`create_pipeline_run()` returns `None` only for the one-active-per-pillar
+  conflict** and raises `PipelineRunCreateError` for everything else. Every `None` used
+  to become HTTP 409, so a missing table or a bad grant told the user "a run is already
+  in progress".
+- **A 404 from `GET /api/pipeline-runs/{id}` means the run does not exist, and nothing
+  else.** `postgrest_client.get_pipeline_run()` no longer swallows exceptions: a missing
+  row is already `200` with an empty array, so the old blanket `except` could only hide
+  real failures. The route answers **503** for those, because the browser treats 404 as
+  "forget this run" and one blip used to detach the UI from a live job.
+
+`upsert_text()` returning 0 is ambiguous — empty text and a dead Qdrant look identical —
+so `_process_paper` marks VECTORS **failed** when it gets 0 chunks from non-empty text.
+Non-fatal: the lesson and quiz are already written.
+
+### The browser side, and why it is not just a status line
+
+`webui/static/run-progress.js` renders rows with `createElement` + `textContent`, never
+`innerHTML` with a template literal. Its `escapeHtml()` escapes `& < >` and **not
+quotes** — it serializes a text node, and the HTML spec only escapes quotes in attribute
+mode — so `title="${escapeHtml(x)}"` is still injectable and was measured injecting an
+`onmouseover`. Use `setAttribute` for attributes; `escapeAttr()` in `pillar_detail.html`
+covers the string-building case, and neither is safe for `on*=` handlers, which need a
+data attribute plus a delegated listener.
+
+`onGone` (the 404 path) **must** call `onFinished`. It is the only thing that re-enables
+each page's button, and without it a stale run id left the UI disabled on "Running…"
+with a blank panel and no recovery but a reload.
+
+Stage names are `StageName` slugs; `STAGE_LABEL` maps them to prose so nobody is shown
+`pop_queue`. Stage rows are per-**run**, not per-paper, so a failure in one paper is
+overwritten when the next paper re-enters that stage — the run-level `error` carries
+every failure (`_summarise_errors`), not just the first. A terminal run never renders a
+stage as still running: `displayStatus()` resolves a left-over `running` to `unknown`.
+
+The one-sentence summary lives in a `role="status" aria-live="polite"` element rendered
+**empty** by the template — a live region announces changes, not content already present
+at load. The stage list is `aria-live="off"`; re-announcing eleven rows a second is
+unusable.
+
+### JS tests exist now, and they are deliberately narrow
+
+`tests/js/run-progress.test.js`, run by `node --test tests/js/*.test.js` in its own CI
+job. Stdlib only — no npm, no bundler, no `package.json` — reached through a CommonJS
+guard at the bottom of `run-progress.js` that the browser ignores. Use the glob, not
+`node --test tests/js/`: the directory form resolves as a module and dies with
+`MODULE_NOT_FOUND` when the repo path contains a space.
+
+It covers the pure helpers only. The polling loop, `AbortController` teardown and the
+404 path need a DOM and are **not** covered; jsdom means npm and Playwright means a
+browser download, both rejected. Do not read that job's green tick as "the frontend is
+tested".
+
 ## Sharp edges
 
 `schema.sql` now covers all 11 tables, but it was **reconstructed from application code**,
@@ -450,7 +516,10 @@ initial scheduling, so it is enforced, not advisory.
 `.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
 that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
 
-Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**. The 38 are
+Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**. The
+`fix/pipeline-progress-error-relay` branch adds ~40 passing tests and moves neither
+the failures nor the errors (measured locally against main with the same `.env`
+present in both: 29 failed / 13 errors before and after, 220 -> 252 passed). The 38 are
 pre-existing drift between the tests and the code they cover, not flakes. Four clusters:
 15 in `tests/test_db.py`, whose mocks hand back a bare `Mock` where the code subscripts a
 response; the 10 errors, every one of them a fixture predating `Lesson` gaining required
