@@ -141,6 +141,30 @@ class TestCreatePipelineRun:
 
         assert db.create_pipeline_run(PILLAR, "ui_pipeline", "run_daily", ["x"]) is None
 
+    def test_raises_rather_than_returning_none_on_a_real_failure(self, mock_client):
+        """A broken database must not look like a conflict.
+
+        Regression. Every None used to mean "already active", and dispatch_run turns
+        that into HTTP 409, so a missing table or a bad grant told the user "a run is
+        already in progress" and sent them looking for a run that did not exist.
+        """
+        mock_client.table.return_value.insert.return_value = {
+            "data": None,
+            "error": {"code": "42P01", "message": 'relation "pipeline_runs" does not exist'},
+        }
+
+        with pytest.raises(db.PipelineRunCreateError) as excinfo:
+            db.create_pipeline_run(PILLAR, "ui_pipeline", "run_daily", ["x"])
+        # The real reason has to survive to the user, not be replaced by "409".
+        assert "does not exist" in str(excinfo.value)
+
+    def test_raises_when_the_transport_itself_fails(self, mock_client):
+        """A connection error is not a conflict either."""
+        mock_client.table.return_value.insert.side_effect = RuntimeError("connection refused")
+
+        with pytest.raises(db.PipelineRunCreateError):
+            db.create_pipeline_run(PILLAR, "ui_pipeline", "run_daily", ["x"])
+
     def test_survives_stage_seeding_failure(self, mock_client):
         """A run with no stage rows is degraded, not fatal — the run still exists."""
         table = mock_client.table.return_value
