@@ -342,6 +342,27 @@ running the PDF ingest inline froze the event loop for every other request. Meas
 Claude calls that each carry the full paper text; measured end to end on a 5-page paper at
 37.8K input + 9.6K output tokens ≈ **$0.26**.
 
+`discovery_agent` became a real LLM agent on 2026-08-16; before that it was a stub that
+pasted stopword-stripped pillar goals into three fixed templates and never called a model.
+It is the cheapest agent in the project by a wide margin. Measured over three
+representative calls on gpt-4o-mini (cold start, daily run with five recent paper ids, and
+user-steered with two priority topics), usage barely moves: **451-526 input tokens and
+129-133 output**, averaging 492 in / 132 out. The prompt is a fixed system message plus a
+pillar's focus areas — it does not scale with paper text, which is why it is so stable.
+
+At $0.15/$0.60 per million input/output tokens that is **~$0.00015 per call**, about 6,500
+calls to the dollar. Eight pillars discovering once a day is **$0.0012/day, ~$0.45/year** —
+less than two podcasts. Re-derive from the token counts rather than trusting the dollar
+figure; those rates were current when this was written and the token counts are the part
+that will not drift.
+
+Both callers guard the call and fall back to `Orchestrator._fallback_queries`, so no
+discovery failure — missing key, rate limit, network — can stop a daily run or 500 the
+discovery API. That fallback returns the pillar's own focus areas, reordered by
+`DiscoveryAgent._blend_topics` so user topics come first. It deliberately does *not*
+interpolate the pillar slug the way the old fallback did: "recent advances
+neural-architectures-language" is not a phrase in any paper.
+
 `quiz_agent` trusts the model's `question_type` but still overwrites `difficulty` from
 `QuizGeneratorInput.difficulty_mix` — that mix is a declared caller input and seeds FSRS
 initial scheduling, so it is enforced, not advisory.

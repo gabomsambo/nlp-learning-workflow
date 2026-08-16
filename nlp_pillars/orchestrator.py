@@ -203,8 +203,41 @@ class Orchestrator:
 
         except Exception as e:
             logger.warning(f"Discovery failed for pillar {pillar_id}: {e}")
-            # Fallback to generic queries
-            return [f"recent advances {pillar_id}", f"latest research {pillar_id}"]
+            return self._fallback_queries(self._get_pillar_config(pillar_id))
+
+    def _fallback_queries(
+        self,
+        pillar_config,
+        priority_topics: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Deterministic queries for when the discovery LLM is unavailable.
+
+        Discovery is one OpenAI call, so it can fail for reasons that have
+        nothing to do with this pillar — no API key, a rate limit, a network
+        blip. None of those should stop a daily run, so both callers fall back
+        here instead of propagating.
+
+        The queries are the pillar's own focus areas, reordered by
+        `_blend_topics` so anything the user asked for comes first. That reuses
+        the exact ordering rule the LLM prompt uses, and focus areas are already
+        the right shape — short keyword phrases.
+
+        This replaced `["recent advances <pillar_id>", "latest research
+        <pillar_id>"]`, which interpolated the *slug*: "recent advances
+        neural-architectures-language" is not a phrase in any paper, and arXiv
+        matches it on the filler words. Same failure mode measured for
+        LLM-written prose queries — see discovery_agent's output_instructions.
+        """
+        topics = DiscoveryAgent._blend_topics(
+            list(pillar_config.focus_areas or []),
+            priority_topics or [],
+        )
+        queries = [t for t in topics[:3] if t and t.strip()]
+        if not queries:
+            # A pillar with no focus areas at all; its goal is all there is.
+            queries = [DiscoveryAgent._extract_keywords(pillar_config.goal)]
+        logger.info(f"Using {len(queries)} fallback queries: {queries}")
+        return queries
 
     def _search_candidates(self, pillar_id: str, queries: List[str]) -> List[PaperRef]:
         """Search for candidate papers using available tools."""
@@ -390,11 +423,23 @@ class Orchestrator:
             priority_topics=priority_topics or []
         )
 
-        # Generate blended queries
-        discovery_output = DiscoveryAgent.run(discovery_input)
-        queries = [q.query for q in discovery_output.queries]
-
-        logger.info(f"Generated {len(queries)} queries: {queries}")
+        # Generate blended queries.
+        #
+        # Guarded for the same reason _run_discovery is: discovery is one OpenAI
+        # call and this is the user-facing path — it is reached from
+        # `GET/POST /api/pillars/{id}/discover` and from `cli discover`. An
+        # unguarded raise here turned a transient rate limit into a 500 with no
+        # candidates, when four usable queries were available without a model.
+        try:
+            discovery_output = DiscoveryAgent.run(discovery_input)
+            queries = [q.query for q in discovery_output.queries]
+            logger.info(f"Generated {len(queries)} queries: {queries}")
+        except Exception as e:
+            logger.warning(
+                f"Discovery failed for pillar {pillar_id}, falling back to "
+                f"focus-area queries: {e}"
+            )
+            queries = self._fallback_queries(pillar_config, priority_topics)
 
         # Search all sources
         all_candidates = []
