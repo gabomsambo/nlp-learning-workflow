@@ -647,7 +647,12 @@ class TestLoggingAndTiming:
         
         # Check that logs contain pillar_id
         log_text = caplog.text
-        assert "pillar P2" in log_text
+        # Used to assert "pillar P2" — a leftover from the pre-migration
+        # legacy IDs (config.LEGACY_TO_SLUG). The pipeline is invoked below
+        # with the real slug "models-architectures" and every log line
+        # interpolates whatever pillar_id was passed in, so that's what
+        # actually appears now. See AGENTS.md "There are eight pillars...".
+        assert "pillar models-architectures" in log_text
         assert "paper.123" in log_text
         
         # Check for key pipeline steps in logs
@@ -663,8 +668,12 @@ class TestLoggingAndTiming:
     @patch('nlp_pillars.orchestrator.vectors')
     @patch('nlp_pillars.orchestrator.db')
     @patch('nlp_pillars.orchestrator.DiscoveryAgent')
+    @patch('nlp_pillars.orchestrator.VectorSearchTool')
+    @patch('nlp_pillars.orchestrator.get_pillar_config')
     def test_timing_calculation(
         self,
+        mock_get_pillar_config,
+        mock_vector_search_tool_class,
         mock_discovery_agent,
         mock_db,
         mock_vectors,
@@ -673,27 +682,53 @@ class TestLoggingAndTiming:
         """Test that timing is calculated correctly."""
         # Mock time progression
         mock_time.side_effect = [1000.0, 1005.5]  # Start and end times
-        
+
+        # `nlp_pillars.orchestrator.time.time` patches the real stdlib `time`
+        # module's `.time` attribute process-wide, not just the two explicit
+        # `time.time()` calls in run_daily — anything else that calls
+        # `time.time()` while this patch is active (e.g. Python logging's
+        # LogRecord, or httpx/qdrant-client internals during a real network
+        # call) also consumes from this 2-item side_effect and starves the
+        # ones run_daily actually needs, raising StopIteration. Two real I/O
+        # paths do exactly that here and both must be neutralised:
+        #
+        # 1. Orchestrator()'s real __init__ constructs a real VectorSearchTool,
+        #    which calls ensure_collections() and hits Qdrant over httpx —
+        #    patched out below.
+        # 2. `_get_pillar_config` calls the real `get_pillar_config`, which
+        #    tries a real PostgREST lookup first and logs an ERROR (which
+        #    still builds a LogRecord, and still calls time.time()) before
+        #    falling back to the static PILLAR_CONFIGS — patched out below.
+        mock_vector_search_tool_class.return_value = Mock()
+        mock_get_pillar_config.return_value = {
+            'id': 'linguistic-cognitive-foundations',
+            'name': 'Linguistic & Cognitive Foundations',
+            'goal': 'test goal',
+            'focus_areas': ['test'],
+            'papers_per_day': 2,
+            'abbreviation': '',
+        }
+
         # Mock discovery agent
         mock_discovery_output = DiscoveryOutput(
             queries=[SearchQuery(pillar_id="data-training-methodologies", query="test")],
             rationale="test"
         )
         mock_discovery_agent.run.return_value = mock_discovery_output
-        
+
         # Mock database operations
         mock_db.get_recent_notes.return_value = []
         mock_db.queue_add_candidates.return_value = 0
         mock_db.queue_pop_next.return_value = []  # Empty queue
-        
+
         # Create orchestrator
         orchestrator = Orchestrator()
         orchestrator.searxng_tool.search = Mock(return_value=[])
         orchestrator.arxiv_tool.search = Mock(return_value=[])
-        
+
         # Run pipeline
         result = orchestrator.run_daily("linguistic-cognitive-foundations", papers_limit=1)
-        
+
         # Verify timing
         assert result.total_time_seconds == 5.5  # 1005.5 - 1000.0
 

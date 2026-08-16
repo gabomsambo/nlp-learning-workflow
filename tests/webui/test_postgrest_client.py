@@ -64,8 +64,15 @@ async def test_get_quick_stats_failure(monkeypatch):
 
     monkeypatch.setattr(client, "_get", fake_get)
 
-    with pytest.raises(httpx.HTTPError):
-        await client.get_quick_stats()
+    # get_quick_stats() deliberately degrades to 0 per table on a transport
+    # error (see commit 4f81ba9's count_table try/except, added specifically
+    # so the dashboard renders instead of 500ing while the database is
+    # unreachable) -- the same tolerate-per-table-failure contract
+    # get_recent_activity() already has. It must not propagate here.
+    stats = await client.get_quick_stats()
+    assert stats.total_papers == 0
+    assert stats.total_lessons == 0
+    assert stats.total_quiz_cards == 0
 
 
 @pytest.mark.asyncio

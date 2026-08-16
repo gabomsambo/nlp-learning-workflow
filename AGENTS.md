@@ -511,41 +511,60 @@ neural-architectures-language" is not a phrase in any paper.
 `QuizGeneratorInput.difficulty_mix` — that mix is a declared caller input and seeds FSRS
 initial scheduling, so it is enforced, not advisory.
 
-## The test suite runs in CI now, and it is knowingly red
+## The test suite runs in CI, and it is green — keep it that way
 
 `.github/workflows/tests.yml` (added 2026-08-16) is the first CI this project has ever had
 that runs `pytest`. `daily.yml` is unrelated and its schedule is disabled.
 
-Baseline on the runner, 2026-08-16: **252 passed, 28 failed, 10 errors**, measured at
-PR #14. PR #15 added 23 passing tests, taking main to **275 passed, 28 failed, 10
-errors**, and `fix/pipeline-progress-error-relay` (#16) takes it to **309 passed, 28
-failed, 10 errors** — +34 passing with the failures and errors untouched. Quote the
-runner's numbers, not a local run's: the two differ for the reasons below, and only
-these are reproducible. The 38 are
-pre-existing drift between the tests and the code they cover, not flakes. Four clusters:
-15 in `tests/test_db.py`, whose mocks hand back a bare `Mock` where the code subscripts a
-response; the 10 errors, every one of them a fixture predating `Lesson` gaining required
-`title` / `content` (5 in `integration/test_orchestrator`, 3 in `e2e/test_smoke`, 2 in
-`test_db`, so one repair per file clears all ten); 5 in `tests/test_cli.py`, which are not
-mocked at all and really do dial PostgREST; and 4 in `tests/test_vectors.py`, asserting
-SHA1-hex point ids where qdrant-client 1.19 normalises to UUID form.
+It was knowingly red for its first three PRs — 252 passed / 28 failed / 10 errors at PR
+#14, rising to 275 / 28 / 10 by PR #15. PR #16 cleared all of it: **353 passed, 0 failed,
+0 errors**. A failing test is now a real signal. Do not add to the red, and do **not**
+reach for `continue-on-error`, `|| true`, `--ignore` or `-k` if you break something — a
+suppressed suite is the exact condition this workflow was added to end.
 
-Judge a PR on whether it moves those numbers the right way. Do **not** make the job green
-with `continue-on-error`, `|| true`, `--ignore` or `-k` — a suppressed suite is the exact
-condition this workflow was added to end.
+What the 38 turned out to be, since the diagnosis is worth keeping:
 
-**A local run flatters the suite by four tests, and CI is the honest one.** Locally you get
-256/24/10, for two reasons that are both the environment lying rather than the runner
-misbehaving. The five `test_cli.py` tests pass whenever the compose stack happens to be up,
-because they reach a real database instead of a mock — with the stack down they fail locally
-too, with `[Errno 111] Connection refused` from `db.py::get_pillars`. And
-`test_vectors.py::test_get_vector_size_failure_fallback` fails locally because
-`get_settings()`'s `load_dotenv(override=True)` means the real `OPENAI_API_KEY` in `.env`
-beats any placeholder you export, so the embedding call it needs to *fail* quietly succeeds
-against the live API — and bills you. A runner has neither a `.env` nor a stack behind it.
+- **10 errors, one cause.** Three `Lesson` fixtures predating the schema gaining required
+  `title` / `content`. Each raised at construction, so those tests had not actually run in
+  a long time. `scripts/smoke_local.py` had the same bug and had been silently reporting
+  `Success: False`.
+- **15 in `tests/test_db.py`.** The file predates the rewrite from a supabase-py-style
+  client to the hand-rolled `PostgRESTClient`. Mocks returned a bare `Mock` where the code
+  subscripts `response['error']`, and several tests asserted a `ValueError` validation
+  path and an `.upsert()` method that have never existed here.
+- **5 in `tests/test_cli.py`.** Not mocked at all; they really dialled PostgREST. The
+  trap underneath: `cli.get_valid_pillars()` only falls back to `PILLAR_CONFIGS` on an
+  *exception*, but `db.get_pillars()` swallows its own connection errors and returns `[]`
+  — so an unreachable database yields an empty valid-pillar list instead of the fallback,
+  and every pillar looks invalid.
+- **The rest** were qdrant-client 1.19 normalising point ids to UUID form, three
+  `*_no_client` tests that depended on execution order and on `QDRANT_URL` being unset,
+  and a stale assertion on a legacy `P2` pillar id.
 
-Two consequences worth internalising: a local suite run is not hermetic and can spend real
-money, and "it passes on my machine" is not evidence here.
+**The suite is hermetic now, and that is load-bearing.** It previously gave different
+answers locally and on CI, in both directions, and the difference was always the
+environment lying:
+
+- the `test_cli.py` tests passed locally *only* when the compose stack happened to be up
+- `test_vectors.py::test_get_vector_size_failure_fallback` failed locally because
+  `get_settings()`'s `load_dotenv(override=True)` means the real `OPENAI_API_KEY` in
+  `.env` beats any placeholder you export, so the embedding call it needed to *fail*
+  succeeded against the live API — **billing the project on every local run**
+
+Both are fixed at the source: nothing in the suite reaches a database or the network, and
+no test decides which branch it is exercising by looking at your shell. Local and CI now
+agree exactly (353/353 both ways, measured). If you add a test that only passes with the
+stack up or with a real key present, you have reintroduced the problem.
+
+To check a change the way CI sees it, run without `.env` and against dead ports — that is
+all the runner is:
+
+    OPENAI_API_KEY=test-key-not-real DEFAULT_MODEL=gpt-4o-mini \
+    POSTGREST_URL=http://127.0.0.1:9 SUPABASE_URL=http://127.0.0.1:9 \
+    QDRANT_URL=http://127.0.0.1:9 pytest tests/ -q
+
+…from a copy of the tree with no `.env` in it, since `find_dotenv()` walks up from
+`config.py` and will find the repo's own regardless of your cwd.
 
 The suite also only imports because `pyproject.toml` sets `pythonpath = ["."]`. There is no
 `conftest.py`, the project is not pip-installed into the test environment, and `tests/` has

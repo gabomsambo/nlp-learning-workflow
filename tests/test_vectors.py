@@ -5,10 +5,14 @@ All Qdrant and OpenAI calls are mocked for fast, reliable testing.
 
 import pytest
 import hashlib
+import os
+import uuid
+from contextlib import contextmanager
 from unittest.mock import Mock, patch, MagicMock
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from nlp_pillars import vectors
 from nlp_pillars.vectors import (
     get_client, set_client, set_openai_client, reset_vector_size,
     ensure_collections, upsert_text, search_similar,
@@ -103,6 +107,32 @@ def setup_clean_state():
     set_client(None)
     set_openai_client(None)
     reset_vector_size()
+
+
+@contextmanager
+def no_qdrant_client():
+    """Force vectors.get_client() to return None, deterministically.
+
+    Two things have to be true and neither is guaranteed by default:
+
+    - the module singleton must be cleared. Other tests in this file call
+      set_client(mock) and never reset it, so whether these tests saw a client
+      depended on execution order.
+    - QDRANT_URL must be unset. get_client() only gives up when the variable is
+      missing, and it is set both in CI and in .env — so with a URL present the
+      client is constructed (unreachable, but not None) and the "Cannot ..."
+      warning these tests assert on never fires.
+
+    Restores the previous singleton afterwards so ordering stays irrelevant.
+    """
+    previous = vectors._client
+    set_client(None)
+    try:
+        with patch.dict(os.environ, {"QDRANT_URL": ""}, clear=False):
+            yield
+    finally:
+        set_client(previous)
+
 
 
 class TestClientBootstrap:
@@ -207,12 +237,37 @@ class TestEmbeddings:
         assert size == 4  # Length of mock embedding
     
     def test_get_vector_size_failure_fallback(self):
-        """Test vector size fallback when embedding fails."""
-        with patch('nlp_pillars.vectors.logger') as mock_logger:
-            size = _get_vector_size()
-            
-            assert size == 1536  # Default size for text-embedding-3-small
-            mock_logger.warning.assert_called()
+        """Test vector size fallback when embedding fails.
+
+        The failure is forced explicitly rather than relying on the environment
+        lacking a usable OPENAI_API_KEY. It used to depend on that, and it made the
+        test both order-dependent and expensive: get_settings() does
+        load_dotenv(override=True), so the real key in .env beats any placeholder a
+        developer exports, the embedding call SUCCEEDED against the live API — billing
+        the project on every local suite run — and the warning this asserts on was
+        never logged. Passing on CI and failing locally for that reason is precisely
+        the asymmetry AGENTS.md warns about; a unit test must not decide whether it is
+        testing the failure path by looking at your shell.
+
+        _vector_size is a cached module global, so it is cleared before and restored
+        after, or whichever test ran first would decide the answer.
+        """
+        previous_size = vectors._vector_size
+        vectors._vector_size = None
+
+        exploding = Mock()
+        exploding.embeddings.create.side_effect = RuntimeError("no API key")
+
+        try:
+            set_openai_client(exploding)
+            with patch('nlp_pillars.vectors.logger') as mock_logger:
+                size = _get_vector_size()
+
+                assert size == 1536  # Default size for text-embedding-3-small
+                mock_logger.warning.assert_called()
+        finally:
+            vectors._vector_size = previous_size
+            set_openai_client(None)
 
 
 class TestEnsureCollections:
@@ -220,7 +275,7 @@ class TestEnsureCollections:
     
     def test_ensure_collections_no_client(self):
         """Test ensure_collections when client is not available."""
-        with patch('nlp_pillars.vectors.logger') as mock_logger:
+        with no_qdrant_client(), patch('nlp_pillars.vectors.logger') as mock_logger:
             ensure_collections()
             
             # Check that the warning about collections was called (may have other warnings too)
@@ -283,7 +338,7 @@ class TestUpsertText:
     
     def test_upsert_text_no_client(self):
         """Test upsert_text when client is not available."""
-        with patch('nlp_pillars.vectors.logger') as mock_logger:
+        with no_qdrant_client(), patch('nlp_pillars.vectors.logger') as mock_logger:
             result = upsert_text("linguistic-cognitive-foundations", "test.123", "test text")
 
             assert result == 0
@@ -327,8 +382,12 @@ class TestUpsertText:
         assert len(points) > 0
         first_point = points[0]
 
-        # Check deterministic ID format (SHA1 hex)
-        expected_id = hashlib.sha1("models-architectures|test.456|0".encode()).hexdigest()
+        # Check deterministic ID format. vectors.py takes the first 16 bytes
+        # of the SHA1 digest and formats them as a UUID (qdrant-client 1.19
+        # requires point ids to be an unsigned int or a UUID, not an
+        # arbitrary hex string) - see nlp_pillars/vectors.py's upsert_text.
+        hash_bytes = hashlib.sha1("models-architectures|test.456|0".encode()).digest()[:16]
+        expected_id = str(uuid.UUID(bytes=hash_bytes))
         assert first_point.id == expected_id
 
         # Check payload
@@ -383,7 +442,7 @@ class TestSearchSimilar:
     
     def test_search_similar_no_client(self):
         """Test search_similar when client is not available."""
-        with patch('nlp_pillars.vectors.logger') as mock_logger:
+        with no_qdrant_client(), patch('nlp_pillars.vectors.logger') as mock_logger:
             result = search_similar("linguistic-cognitive-foundations", "test query")
 
             assert result == []
