@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 logger = logging.getLogger(__name__)
 
 from nlp_pillars.db import (
-    get_pillars,
+    get_pillars_or_empty,
     get_pillar_by_id,
     get_papers,
     get_lessons,
@@ -32,7 +32,7 @@ async def pillars_page(request: Request) -> HTMLResponse:
     """
     try:
         # Get all pillars
-        pillars = get_pillars(limit=100)
+        pillars = get_pillars_or_empty(limit=100)
         
         # Render template
         templates = request.app.state.templates

@@ -5,7 +5,7 @@ Podcast page router for web UI.
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from nlp_pillars.db import get_pillars, get_all_papers, get_podcast_scripts
+from nlp_pillars.db import get_pillars_or_empty, get_all_papers, get_podcast_scripts
 
 
 router = APIRouter(prefix="/podcast")
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/podcast")
 async def podcast_home(request: Request) -> HTMLResponse:
     """Render the podcast generation page."""
     # Get pillars for filter dropdown
-    pillars = get_pillars(limit=100)
+    pillars = get_pillars_or_empty(limit=100)
 
     # Get papers for selection dropdown
     papers = get_all_papers(limit=100)

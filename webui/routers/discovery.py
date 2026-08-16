@@ -5,7 +5,7 @@ Discovery page router for web UI.
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from nlp_pillars.db import get_pillars
+from nlp_pillars.db import get_pillars_or_empty
 
 
 router = APIRouter(prefix="/discovery")
@@ -19,7 +19,7 @@ async def discovery_home(request: Request) -> HTMLResponse:
     that pillar already chosen. The link carried the parameter before this; nothing
     read it, so the user had to re-pick the pillar they had just come from.
     """
-    pillars = get_pillars(limit=100)
+    pillars = get_pillars_or_empty(limit=100)
     selected = request.query_params.get("pillar", "")
     return request.app.state.templates.TemplateResponse(
         request,

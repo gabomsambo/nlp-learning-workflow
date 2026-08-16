@@ -169,7 +169,29 @@ def set_client(client: PostgRESTClient) -> None:
 # =====================================
 
 def _paper_ref_to_dict(pillar_id: str, paper: PaperRef) -> Dict[str, Any]:
-    """Convert PaperRef to papers table row."""
+    """Convert PaperRef to papers table row.
+
+    Raises:
+        ValueError: if `pillar_id` or `paper.id` is missing. The None-filter at the
+            bottom of this function exists to let optional metadata (venue, year,
+            abstract) be omitted rather than written as NULL — but it applied to
+            EVERY key, so a None pillar_id was quietly stripped and the row was
+            inserted with no pillar at all. Pillar isolation is the one invariant
+            this schema has; a write that cannot name its pillar is a bug in the
+            caller, not a row to be written anyway.
+
+            add_paper() catches this and returns False, so a daily run records the
+            paper as failed and surfaces it, rather than aborting mid-run.
+
+    """
+    if not pillar_id:
+        raise ValueError(
+            f"pillar_id is required to write paper {paper.id!r}; "
+            "refusing to insert a paper with no pillar"
+        )
+    if not paper.id:
+        raise ValueError("paper.id is required; refusing to insert a paper with no id")
+
     data = {
         'id': paper.id,
         'pillar_id': pillar_id,
@@ -1502,15 +1524,34 @@ def create_pillar(pillar_data: PillarCreate) -> Pillar:
         raise PillarCreateError(f"Failed to create pillar: {e}")
 
 
+class PillarLookupError(Exception):
+    """The pillar list could not be read from the database.
+
+    Distinct from "there are no pillars", which is an empty list. Collapsing the two
+    is why several callers' fallbacks were dead code: `cli.get_valid_pillars()` and
+    `scheduler.run_daily_pipeline()` both wrap the call in `except Exception` and both
+    could never fire, so an unreachable database made every pillar look invalid and
+    made the scheduler report "no pillars in the database, nothing to do. Seed them
+    with create_pillars.py" — advice that is actively wrong when the database is
+    simply down.
+    """
+
+
 def get_pillars(limit: int = 50) -> List[Pillar]:
     """
     Get all pillars.
-    
+
     Args:
         limit: Maximum number of pillars to return
-        
+
     Returns:
-        List of pillars
+        List of pillars. Empty means the table is empty — nothing else.
+
+    Raises:
+        PillarLookupError: the database could not be read. Callers that would rather
+            degrade than fail should use get_pillars_or_empty(), which is explicit
+            about the trade rather than hiding it in a return value.
+
     """
     try:
         client = get_client()
@@ -1522,15 +1563,34 @@ def get_pillars(limit: int = 50) -> List[Pillar]:
 
         if response['error']:
             logger.error(f"Failed to get pillars: {response['error']}")
-            return []
+            raise PillarLookupError(
+                f"Could not read the pillar list: {response['error']}"
+            )
 
         if not response['data']:
             return []
 
         return [_dict_to_pillar(row) for row in response['data']]
 
+    except PillarLookupError:
+        raise
     except Exception as e:
         logger.error(f"Failed to get pillars: {e}")
+        raise PillarLookupError(f"Could not read the pillar list: {e}") from e
+
+
+def get_pillars_or_empty(limit: int = 50) -> List[Pillar]:
+    """Pillars, or an empty list if the database could not be read.
+
+    For the page routers, which render a pillar dropdown and would rather show an
+    empty one than a 500. Separate from get_pillars() so the choice to swallow the
+    failure is visible at the call site instead of being the silent default for
+    everybody — including the CLI and the scheduler, which genuinely need to know.
+    """
+    try:
+        return get_pillars(limit=limit)
+    except PillarLookupError as e:
+        logger.error(f"Falling back to an empty pillar list: {e}")
         return []
 
 

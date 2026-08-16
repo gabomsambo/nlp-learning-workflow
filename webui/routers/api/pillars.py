@@ -19,7 +19,7 @@ from nlp_pillars.db import (
     delete_pillar,
     get_papers,
     get_pillar_by_id,
-    get_pillars,
+    get_pillars_or_empty,
     pillar_exists,
     update_pillar,
 )
@@ -68,7 +68,7 @@ async def list_pillars(limit: int = 50) -> List[Pillar]:
     Returns pillars ordered by creation date (oldest first).
     """
     try:
-        pillars = get_pillars(limit=limit)
+        pillars = get_pillars_or_empty(limit=limit)
         return pillars
     except Exception as e:
         raise HTTPException(
