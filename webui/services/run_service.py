@@ -35,20 +35,25 @@ from typing import Any, Dict, List, Optional
 from nlp_pillars import db
 from nlp_pillars.orchestrator import Orchestrator, RunCancelledError
 from nlp_pillars.schemas import (
+    DISCOVER_STAGES,
     PROCESS_SELECTED_STAGES,
     RUN_DAILY_STAGES,
     PaperRef,
     RunStatus,
+    StageStatus,
 )
+from webui.services.discovery_results import candidates_payload
 
 logger = logging.getLogger(__name__)
 
 KIND_RUN_DAILY = "run_daily"
 KIND_PROCESS_SELECTED = "process_selected"
+KIND_DISCOVER = "discover"
 
 _STAGES_FOR_KIND = {
     KIND_RUN_DAILY: RUN_DAILY_STAGES,
     KIND_PROCESS_SELECTED: PROCESS_SELECTED_STAGES,
+    KIND_DISCOVER: DISCOVER_STAGES,
 }
 
 
@@ -70,9 +75,10 @@ def dispatch_run(
         scheduler: The APScheduler instance from ``app.state.scheduler``.
         cancel_events: The ``app.state.cancel_events`` registry, keyed by run id.
         pillar_id: Target pillar slug.
-        trigger_source: 'ui_pipeline' | 'ui_select' | 'scheduler'.
-        kind: KIND_RUN_DAILY or KIND_PROCESS_SELECTED.
-        **kwargs: ``papers_limit`` for run_daily, ``papers`` for process_selected.
+        trigger_source: 'ui_pipeline' | 'ui_select' | 'ui_discover' | 'scheduler'.
+        kind: KIND_RUN_DAILY, KIND_PROCESS_SELECTED or KIND_DISCOVER.
+        **kwargs: ``papers_limit`` for run_daily, ``papers`` for process_selected,
+            ``priority_topics`` and ``limit`` for discover.
 
     Raises:
         RunAlreadyActiveError: if this pillar already has a pending/running run. The
@@ -130,7 +136,13 @@ def execute_run(
     logger.info(f"Run {run_id} started ({kind}, pillar {pillar_id})")
 
     def on_stage(name: str, status: str, detail: Optional[str] = None) -> None:
-        db.update_pipeline_run_stage(run_id, name, status, detail)
+        # DROPPED is not a status a row can hold — the CHECK constraint does not admit
+        # it. It means "this run has decided this step will not happen", and the
+        # honest rendering of that is no row at all rather than a step left pending.
+        if status == StageStatus.DROPPED.value:
+            db.delete_pipeline_run_stage(run_id, name)
+        else:
+            db.update_pipeline_run_stage(run_id, name, status, detail)
 
     try:
         # Built HERE, inside the worker thread. Never cached on app.state and never
@@ -140,25 +152,20 @@ def execute_run(
             enable_quiz=True, on_stage=on_stage, cancel=cancel_event
         )
 
-        if kind == KIND_RUN_DAILY:
-            result = orchestrator.run_daily(
-                pillar_id, papers_limit=kwargs.get("papers_limit", 1)
+        if kind == KIND_DISCOVER:
+            _finish_discovery(run_id, orchestrator, pillar_id, kwargs)
+        elif kind == KIND_RUN_DAILY:
+            _finish_pipeline(
+                run_id,
+                orchestrator.run_daily(
+                    pillar_id, papers_limit=kwargs.get("papers_limit", 1)
+                ),
             )
         else:
             papers = _to_paper_refs(kwargs.get("papers") or [])
-            result = orchestrator.process_selected_papers(pillar_id, papers=papers)
-
-        db.finish_pipeline_run(
-            run_id,
-            _terminal_status(result),
-            papers_processed=len(result.papers_processed),
-            papers_failed=_count_failed_papers(result),
-            error=_summarise_errors(result),
-        )
-        logger.info(
-            f"Run {run_id} finished: {len(result.papers_processed)} processed, "
-            f"{len(result.errors)} failed"
-        )
+            _finish_pipeline(
+                run_id, orchestrator.process_selected_papers(pillar_id, papers=papers)
+            )
 
     except RunCancelledError as e:
         logger.info(f"Run {run_id} cancelled: {e}")
@@ -175,6 +182,80 @@ def execute_run(
 
     finally:
         cancel_events.pop(run_id, None)
+
+
+def _finish_pipeline(run_id: str, result) -> None:
+    """Close out a run_daily / process_selected run from its PipelineResult."""
+    db.finish_pipeline_run(
+        run_id,
+        _terminal_status(result),
+        papers_processed=len(result.papers_processed),
+        papers_failed=_count_failed_papers(result),
+        error=_summarise_errors(result),
+    )
+    logger.info(
+        f"Run {run_id} finished: {len(result.papers_processed)} processed, "
+        f"{len(result.errors)} failed"
+    )
+
+
+def _finish_discovery(
+    run_id: str, orchestrator: Orchestrator, pillar_id: str, kwargs: Dict[str, Any]
+) -> None:
+    """Close out a discovery run, storing the candidates it found.
+
+    Discovery does not produce a PipelineResult, and forcing it into one would mean
+    reporting candidates as `papers_processed` — a count of papers this run put
+    through the pipeline, which is zero. The candidate list goes in `result` instead,
+    where the browser picks it up from the same poll it was already making.
+
+    A source that failed does not fail the run: the other three still found papers,
+    and the failed stage rows say what went wrong. The run is only FAILED when it has
+    nothing to show AND something went wrong — a discovery that legitimately matched
+    nothing is a succeeded run, exactly as an empty daily run is.
+    """
+    candidates = orchestrator.run_discovery_with_selection(
+        pillar_id,
+        priority_topics=kwargs.get("priority_topics") or [],
+        limit=kwargs.get("limit", 10),
+    )
+    problems = [e.get("message", "") for e in orchestrator.infra_errors]
+    problems = [p for p in problems if p]
+
+    status = (
+        RunStatus.FAILED.value
+        if problems and not candidates
+        else RunStatus.SUCCEEDED.value
+    )
+    db.finish_pipeline_run(
+        run_id,
+        status,
+        # Deliberately 0: nothing was *processed*. The count of what was found lives
+        # in the payload, where it cannot be mistaken for pipeline work.
+        papers_processed=0,
+        papers_failed=0,
+        error=_join_problems(problems),
+        result=candidates_payload(candidates),
+    )
+    logger.info(
+        f"Run {run_id} finished discovery: {len(candidates)} candidate(s), "
+        f"{len(problems)} problem(s)"
+    )
+
+
+def _join_problems(problems: List[str]) -> Optional[str]:
+    """One run-level line for the degradations a discovery run survived.
+
+    Kept even on a succeeded run: "we found ten papers, but arXiv was rate-limited and
+    these are the other three sources' results" is a materially different claim from
+    "we found ten papers", and the user is the one who decides whether to rerun.
+    """
+    if not problems:
+        return None
+    joined = " | ".join(problems)
+    if len(joined) > _MAX_ERROR_CHARS:
+        joined = joined[:_MAX_ERROR_CHARS].rstrip() + " …(truncated, see logs)"
+    return joined
 
 
 def request_cancel(cancel_events: Dict[str, threading.Event], run_id: str) -> bool:
@@ -217,7 +298,7 @@ def on_job_error(event) -> None:
 #: Trigger sources this process owns. The scheduler container runs the same pipeline
 #: against the same database, so the startup sweep must not touch its runs — see
 #: db.sweep_interrupted_runs.
-WEBUI_TRIGGER_SOURCES = ["ui_pipeline", "ui_select"]
+WEBUI_TRIGGER_SOURCES = ["ui_pipeline", "ui_select", "ui_discover"]
 
 
 def sweep_interrupted_runs_on_startup() -> int:

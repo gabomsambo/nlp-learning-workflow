@@ -2238,6 +2238,7 @@ def _dict_to_pipeline_run(data: Dict[str, Any]) -> PipelineRun:
         finished_at=data.get('finished_at'),
         heartbeat_at=data.get('heartbeat_at'),
         stages=stages,
+        result=data.get('result'),
     )
 
 
@@ -2417,12 +2418,42 @@ def update_pipeline_run_stage(
     return ok
 
 
+def delete_pipeline_run_stage(run_id: str, stage_name: str) -> bool:
+    """Remove a seeded stage row for work the run has decided not to do.
+
+    Stage rows are seeded from a fixed per-kind list when the run is created, before
+    anything is known about the pillar. Discovery's citation step is conditional on
+    the pillar having recent papers to follow, and that is only known once the run has
+    started — so the row is created and then taken away, rather than left pending
+    forever on a step that will never run. `seq` is left with a gap, which is fine:
+    ordering reads seq, it does not count it.
+    """
+    try:
+        client = get_client()
+        response = (client.table('pipeline_run_stages')
+                    .eq('run_id', run_id)
+                    .eq('name', stage_name)
+                    .delete())
+        if response['error']:
+            logger.error(
+                f"Failed to delete stage {stage_name} of run {run_id}: "
+                f"{response['error']}"
+            )
+            return False
+        return True
+    except Exception as e:
+        # Cosmetic: a leftover pending row is a blemish, not a reason to lose a run.
+        logger.error(f"Failed to delete stage {stage_name} of run {run_id}: {e}")
+        return False
+
+
 def finish_pipeline_run(
     run_id: str,
     status: str,
     papers_processed: int = 0,
     papers_failed: int = 0,
     error: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Write a terminal status onto a run.
 
@@ -2434,6 +2465,11 @@ def finish_pipeline_run(
         papers_processed: Count for the run row.
         papers_failed: Count for the run row.
         error: Optional message, truncated to 2000 chars on the row.
+        result: Optional terminal payload for run kinds that produce one — today only
+            a `discover` run, which stores the candidate list the user has to choose
+            from. Written once here rather than incrementally, which is why it can be
+            a JSONB column when the stage list could not be (PostgREST cannot
+            partially update JSONB; see migration 009).
 
     """
     patch: Dict[str, Any] = {
@@ -2445,6 +2481,8 @@ def finish_pipeline_run(
     if error is not None:
         # Keep the row readable; the full traceback is in the logs.
         patch['error'] = error[:2000]
+    if result is not None:
+        patch['result'] = result
     return _update_pipeline_run(run_id, patch)
 
 

@@ -2,15 +2,13 @@
 Discovery API endpoints for enhanced paper discovery with user selection.
 """
 
-import asyncio
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from nlp_pillars.orchestrator import Orchestrator
-from nlp_pillars.schemas import DiscoveryCandidate, PaperRef
 from webui.services.run_service import (
+    KIND_DISCOVER,
     KIND_PROCESS_SELECTED,
     RunAlreadyActiveError,
     dispatch_run,
@@ -29,10 +27,15 @@ class DiscoverRequest(BaseModel):
 
 
 class DiscoverResponse(BaseModel):
-    """Response from discovery endpoint."""
-    candidates: List[dict]
-    total_found: int
-    sources_used: List[str]
+    """Acknowledgement of a discovery run, returned before the work happens.
+
+    The candidates themselves arrive on the run: the browser polls
+    GET /api/pipeline-runs/{run_id} for per-step progress and reads the finished run's
+    `result` payload. There is no second request to make.
+    """
+    run_id: str
+    pillar_id: str
+    message: str
 
 
 class PaperData(BaseModel):
@@ -65,68 +68,61 @@ class SelectResponse(BaseModel):
     message: str
 
 
-@router.post("/{pillar_id}/discover", response_model=DiscoverResponse)
-async def discover_papers(pillar_id: str, request: DiscoverRequest):
+@router.post("/{pillar_id}/discover", response_model=DiscoverResponse, status_code=202)
+async def discover_papers(
+    pillar_id: str, request: DiscoverRequest, http_request: Request
+):
     """
-    Discover papers for a pillar from multiple sources.
+    Start discovery for a pillar and return a run id immediately.
 
-    Returns ranked candidates for user selection without processing.
+    This endpoint used to answer synchronously, and the comment here used to explain
+    why: the user needs the candidates in front of them to choose from, so there was
+    nothing useful to do with an early return. That reasoning was about the *result*,
+    and it was sound — but it left the page showing one static "Discovering papers…"
+    line for the thirty seconds the work takes, with no steps, no counts, and no way
+    to tell work from a hang. Worse, everything that can go wrong underneath — the
+    query model falling back to focus areas, a rate-limited arXiv, an unreachable
+    vector store — arrived as a short list that looked like an honest answer.
+
+    So this is now a background run, deliberately reversing that decision. The
+    candidates still reach the user in one round trip's worth of polling they were
+    already doing, and the progress, the per-source counts, the generated queries, the
+    failure reasons, reload-survival and a cancel button come with it, because the
+    pipeline_runs machinery already provides all of them.
+
+    Note the work still must not happen on the event loop — that part of the old
+    comment is permanent. It is on an APScheduler worker thread now rather than in
+    asyncio.to_thread, which is the same isolation plus supervision.
     """
     try:
-        # Run discovery - pillar_id is now a string slug.
-        #
-        # run_discovery_with_selection is synchronous and takes tens of seconds
-        # (an LLM call plus arXiv, SearXNG and Semantic Scholar searches). Called
-        # directly from this async handler it blocked the event loop outright, so the
-        # entire single-process server — /health included — was frozen for the
-        # duration. asyncio.to_thread moves it off the loop; same precedent and same
-        # reasoning as podcast_agent's _get_full_text, which measured 0 co-running
-        # requests inline versus 13/13 through to_thread.
-        #
-        # This endpoint stays request/response rather than becoming a job: the user
-        # needs these candidates in front of them to choose from, so there is nothing
-        # useful to do with an early return.
-        orchestrator = Orchestrator(enable_quiz=True)
-        candidates = await asyncio.to_thread(
-            orchestrator.run_discovery_with_selection,
-            pillar_id,
-            request.priority_topics,
-            request.limit,
+        run_id = dispatch_run(
+            http_request.app.state.scheduler,
+            http_request.app.state.cancel_events,
+            pillar_id=pillar_id,
+            trigger_source="ui_discover",
+            kind=KIND_DISCOVER,
+            priority_topics=request.priority_topics,
+            limit=request.limit,
         )
-
-        # Extract sources used
-        sources_used = list(set(c.source for c in candidates))
-
-        # Convert to dict for JSON response
-        candidates_data = []
-        for c in candidates:
-            candidates_data.append({
-                "paper": {
-                    "id": c.paper.id,
-                    "title": c.paper.title,
-                    "authors": c.paper.authors[:3] if c.paper.authors else [],  # Limit authors
-                    "year": c.paper.year,
-                    "abstract": c.paper.abstract[:300] + "..." if c.paper.abstract and len(c.paper.abstract) > 300 else c.paper.abstract,
-                    "url_pdf": c.paper.url_pdf,
-                    "citation_count": c.paper.citation_count
-                },
-                "source": c.source,
-                "relevance_score": round(c.relevance_score, 3),
-                "citation_count": c.citation_count,
-                "is_influential": c.is_influential
-            })
-
         return DiscoverResponse(
-            candidates=candidates_data,
-            total_found=len(candidates),
-            sources_used=sources_used
+            run_id=run_id,
+            pillar_id=pillar_id,
+            message=f"Discovering papers for {pillar_id}",
         )
 
+    except RunAlreadyActiveError as e:
+        # Enforced by the partial unique index, not guessed at. Discovery and
+        # processing share the one-active-run-per-pillar rule, which is the behaviour
+        # we want: kicking off a new search while the last selection is still being
+        # processed would compete for the same pillar.
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Discovery failed for pillar {pillar_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Discovery failed: {str(e)}")
+        logger.error(f"Could not start discovery for pillar {pillar_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Could not start discovery: {str(e)}"
+        )
 
 
 @router.post("/{pillar_id}/select", response_model=SelectResponse, status_code=202)

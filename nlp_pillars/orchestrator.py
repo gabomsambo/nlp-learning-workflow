@@ -6,9 +6,10 @@ through the complete learning workflow with strict pillar isolation.
 """
 
 import logging
+import re
 import threading
 import time
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, NamedTuple, Optional, Tuple
 
 from .schemas import (
     PillarConfig, PipelineResult,
@@ -53,6 +54,100 @@ _PER_PAPER_STAGES = frozenset({
     StageName.PERSIST,
     StageName.VECTORS,
 })
+
+
+class SourceResult(NamedTuple):
+    """What one discovery source produced, and how it failed if it did.
+
+    A bare list could not answer the only question the user actually has when a
+    source returns nothing: was there nothing to find, or did the search not happen?
+    ``failures`` holds plain-English reasons, already fit to put on screen.
+    """
+
+    candidates: List[DiscoveryCandidate]
+    #: Plain-English reasons, empty when the source answered cleanly. No default:
+    #: every construction site has to decide what it is claiming.
+    failures: List[str]
+
+
+def _unwrap_retry(e: Exception) -> Exception:
+    """Follow a tenacity RetryError down to the failure it is actually reporting.
+
+    Measured live against Semantic Scholar: three 403s from the API arrived on screen
+    as ``RetryError[<Future at 0x74f0… state=finished raised HTTPStatusError>]`` — a
+    repr of tenacity's own bookkeeping, with the status code that tells the user what
+    happened nowhere in it. The real exception is on ``last_attempt``.
+
+    Duck-typed rather than importing tenacity: this is a display helper, and it should
+    not care which retry library a search tool happens to use.
+    """
+    attempt = getattr(e, "last_attempt", None)
+    if attempt is None or not hasattr(attempt, "exception"):
+        return e
+    try:
+        inner = attempt.exception()
+    except Exception:
+        return e
+    return inner if isinstance(inner, BaseException) and inner is not e else e
+
+
+def _first_line(e: Exception) -> str:
+    """One short, printable line for an exception, for a stage detail."""
+    e = _unwrap_retry(e)
+    text = str(e).strip().splitlines()
+    line = text[0] if text else ""
+    # httpx puts the whole request URL — fields, limits, encoded query and all — after
+    # " for url ". The status is the part a reader can act on; the URL is 300
+    # characters that push it off the row.
+    line = line.split(" for url ")[0].strip()
+    # instructor's retry exception opens an XML-ish block on the first line
+    # ("Instructor completion failed: <failed_attempts>") and puts the attempts
+    # themselves on the lines we just dropped. Left in, that dangling opening tag
+    # reads as truncated output rather than as a reason.
+    line = re.sub(r"\s*<[^<>\s]*>\s*$", "", line).strip().rstrip(":").strip()
+    return (line or e.__class__.__name__)[:160]
+
+
+def _friendly_source_error(e: Exception) -> str:
+    """Say what a failed search means, in the words the user needs.
+
+    Rate limiting is called out by name because it is the common one and the only one
+    with an obvious remedy: arXiv throttles a burst of queries, and SearXNG responds
+    by suspending the engine for a full hour (AGENTS.md, "SearXNG serves JSON only
+    because settings.yml says so"). Both were previously indistinguishable from a
+    query that legitimately matched nothing.
+    """
+    lowered = str(_unwrap_retry(e)).lower()
+    if any(t in lowered for t in
+           ("429", "too many requests", "rate limit", "rate-limit", "suspended")):
+        return "rate-limited — try again in a few minutes"
+    return _first_line(e)
+
+
+def _quote_queries(queries: List[str], limit: int = 6) -> str:
+    """Render search queries for display: quoted, comma-free, bounded."""
+    shown = [f'"{q}"' for q in queries[:limit] if q]
+    text = " · ".join(shown)
+    if len(queries) > limit:
+        text += f" (+{len(queries) - limit} more)"
+    return text or "no queries"
+
+
+#: How much of a stage detail to keep. The column is unbounded TEXT, but this is read
+#: as one line next to a step name, and a wall of exception text there is not a
+#: progress display.
+_MAX_STAGE_DETAIL = 300
+
+
+def _summarise_query_failures(failures: List[str], attempted: List[str]) -> List[str]:
+    """Collapse per-query failures into one line that keeps the proportion.
+
+    "1 of 2 queries failed" and "2 of 2 queries failed" mean very different things to
+    someone looking at a low result count, and both were previously invisible.
+    """
+    if not failures:
+        return []
+    return [f"{len(failures)} of {len(attempted)} queries failed: {failures[0]}"]
 
 
 def _no_op_stage(name: str, status: str, detail: Optional[str] = None) -> None:
@@ -302,12 +397,17 @@ class Orchestrator:
         ):
             raise RunCancelledError(f"cancelled before stage {name.value}")
 
+        # DROPPED is a request to remove the stage row, not a status it can hold, so it
+        # never becomes the current per-paper stage and never clears one.
         # Remember which per-paper stage is in flight. _process_paper has no internal
         # try/except, so when a paper blows up the handler in the caller knows only
         # that it failed, not where. This is how the right stage gets marked.
         if status == StageStatus.RUNNING.value and name in _PER_PAPER_STAGES:
             self._current_paper_stage = name
-        elif status != StageStatus.RUNNING.value and name is self._current_paper_stage:
+        elif (
+            status not in (StageStatus.RUNNING.value, StageStatus.DROPPED.value)
+            and name is self._current_paper_stage
+        ):
             self._current_paper_stage = None
 
         try:
@@ -407,6 +507,17 @@ class Orchestrator:
             queries = [DiscoveryAgent._extract_keywords(pillar_config.goal)]
         logger.info(f"Using {len(queries)} fallback queries: {queries}")
         return queries
+
+    @property
+    def infra_errors(self) -> List[dict]:
+        """Failures in the shared plumbing recorded by the most recent run.
+
+        Public because a caller that does not get a PipelineResult back — discovery
+        returns a plain candidate list — otherwise has no way to tell a run that found
+        ten papers cleanly from one that found ten with two sources down. Returns a
+        copy so a caller cannot edit the pipeline's own record of what went wrong.
+        """
+        return list(self._infra_errors)
 
     def _record_infra_error(self, step: str, message: str) -> None:
         """Remember a failure in the shared plumbing, not in one paper.
@@ -625,6 +736,18 @@ class Orchestrator:
         """
         Discover papers from multiple sources for user selection.
 
+        Every step reports itself through ``self._stage`` as it starts and finishes,
+        carrying the number of candidates it actually produced. That is not
+        decoration. This call takes about thirty seconds, each of its steps was
+        already logged, none of it was visible, and three of its failure modes — the
+        query LLM falling back to focus areas, a rate-limited search backend, an
+        unreachable vector store — each produced an empty list that read exactly like
+        a genuine "nothing matched". A step here says "0 found" only when it really
+        found nothing; every other empty result is a failed stage carrying its reason.
+
+        The progress sink defaults to a no-op, so `cli discover` and every existing
+        caller behave exactly as before.
+
         Args:
             pillar_id: Target pillar
             priority_topics: Optional user-provided topic hints
@@ -635,67 +758,162 @@ class Orchestrator:
         """
         logger.info(f"Running enhanced discovery for pillar {pillar_id}")
 
-        # Get pillar config
+        self._infra_errors = []
+
         pillar_config = self._get_pillar_config(pillar_id)
 
-        # Get recent notes for context
-        recent_notes = db.get_recent_notes(pillar_id, limit=5)
-        recent_paper_ids = [note.paper_id for note in recent_notes]
-
-        # Build discovery input with user topics
-        discovery_input = DiscoveryInput(
-            pillar=pillar_config,
-            recent_papers=recent_paper_ids,
-            priority_topics=priority_topics or []
-        )
-
-        # Generate blended queries.
-        #
-        # Guarded for the same reason _run_discovery is: discovery is one OpenAI
-        # call and this is the user-facing path — it is reached from
-        # `GET/POST /api/pillars/{id}/discover` and from `cli discover`. An
-        # unguarded raise here turned a transient rate limit into a 500 with no
-        # candidates, when four usable queries were available without a model.
+        # --- Step D1: pillar context ---------------------------------------------
+        self._stage(StageName.DISCOVER_CONTEXT, StageStatus.RUNNING.value)
+        recent_paper_ids: List[str] = []
         try:
-            discovery_output = DiscoveryAgent.run(discovery_input)
+            recent_notes = db.get_recent_notes(pillar_id, limit=5)
+            recent_paper_ids = [note.paper_id for note in recent_notes]
+            self._stage(
+                StageName.DISCOVER_CONTEXT, StageStatus.COMPLETED.value,
+                f"{len(recent_paper_ids)} recent paper(s) read" if recent_paper_ids
+                else "no papers read yet in this pillar",
+            )
+        except Exception as e:
+            # Context is an input to discovery, not a precondition for it: without it
+            # the agent gets no "already seen" list and there are no citations to
+            # follow, but every search still works. Report it and carry on.
+            message = f"couldn't read your recent papers: {_first_line(e)}"
+            logger.warning(f"Discovery context failed for pillar {pillar_id}: {e}")
+            self._record_infra_error(StageName.DISCOVER_CONTEXT.value, message)
+            self._stage(StageName.DISCOVER_CONTEXT, StageStatus.FAILED.value, message)
+
+        # `_search_citations` is guarded by `if recent_paper_ids`. Take its seeded row
+        # away now rather than leaving a step on screen that will never run.
+        if not recent_paper_ids:
+            self._stage(StageName.DISCOVER_CITATIONS, StageStatus.DROPPED.value)
+
+        # --- Step D2: search queries ----------------------------------------------
+        #
+        # Guarded for the same reason _run_discovery is: discovery is one OpenAI call
+        # and this is the user-facing path — reached from
+        # `POST /api/pillars/{id}/discover` and from `cli discover`. An unguarded raise
+        # turned a transient rate limit into a 500 with no candidates, when usable
+        # queries were available without a model.
+        #
+        # The fallback is now said out loud. It used to be a log line, so the page
+        # showed the pillar's own focus areas as though the model had written them.
+        self._stage(StageName.DISCOVER_QUERIES, StageStatus.RUNNING.value)
+        try:
+            discovery_output = DiscoveryAgent.run(
+                DiscoveryInput(
+                    pillar=pillar_config,
+                    recent_papers=recent_paper_ids,
+                    priority_topics=priority_topics or [],
+                )
+            )
             queries = [q.query for q in discovery_output.queries]
             logger.info(f"Generated {len(queries)} queries: {queries}")
+            self._stage(
+                StageName.DISCOVER_QUERIES, StageStatus.COMPLETED.value,
+                _quote_queries(queries),
+            )
         except Exception as e:
             logger.warning(
                 f"Discovery failed for pillar {pillar_id}, falling back to "
                 f"focus-area queries: {e}"
             )
             queries = self._fallback_queries(pillar_config, priority_topics)
+            reason = (
+                f"couldn't reach the model ({_first_line(e)}) — using your pillar's "
+                f"focus areas instead"
+            )
+            # The stage row shows the substituted queries too; the run-level summary
+            # does not. That line is one sentence next to the run's status, and a full
+            # query list in it pushes everything else off the screen.
+            self._record_infra_error(StageName.DISCOVER_QUERIES.value, reason)
+            self._stage(
+                StageName.DISCOVER_QUERIES, StageStatus.FAILED.value,
+                f"{reason}: {_quote_queries(queries)}",
+            )
 
-        # Search all sources
-        all_candidates = []
+        # --- Steps D3-D6: the sources ---------------------------------------------
+        all_candidates: List[DiscoveryCandidate] = []
+        first_query = queries[0] if queries else pillar_config.goal
 
-        # 1. Vector search (semantic similarity from existing papers)
-        vector_candidates = self._search_vectors(pillar_id, queries[0] if queries else pillar_config.goal)
-        all_candidates.extend(vector_candidates)
-        logger.info(f"Vector search found {len(vector_candidates)} candidates")
-
-        # 2. ArXiv search
-        arxiv_candidates = self._search_arxiv_candidates(pillar_id, queries)
-        all_candidates.extend(arxiv_candidates)
-        logger.info(f"ArXiv search found {len(arxiv_candidates)} candidates")
-
-        # 3. Semantic Scholar search
-        s2_candidates = self._search_semantic_scholar(queries)
-        all_candidates.extend(s2_candidates)
-        logger.info(f"Semantic Scholar search found {len(s2_candidates)} candidates")
-
-        # 4. Citation network search (if we have papers)
+        all_candidates += self._run_source_stage(
+            StageName.DISCOVER_VECTORS,
+            lambda: self._search_vectors(pillar_id, first_query),
+        )
+        all_candidates += self._run_source_stage(
+            StageName.DISCOVER_ARXIV,
+            lambda: self._search_arxiv_candidates(pillar_id, queries),
+        )
+        all_candidates += self._run_source_stage(
+            StageName.DISCOVER_S2,
+            lambda: self._search_semantic_scholar(queries),
+        )
         if recent_paper_ids:
-            citation_candidates = self._search_citations(recent_paper_ids)
-            all_candidates.extend(citation_candidates)
-            logger.info(f"Citation search found {len(citation_candidates)} candidates")
+            all_candidates += self._run_source_stage(
+                StageName.DISCOVER_CITATIONS,
+                lambda: self._search_citations(recent_paper_ids),
+            )
 
-        # Normalize scores, dedupe, and rank
+        # --- Step D7: rank and dedupe ---------------------------------------------
+        self._stage(StageName.DISCOVER_RANK, StageStatus.RUNNING.value)
         candidates = self._rank_and_dedupe(all_candidates, limit)
+        self._stage(
+            StageName.DISCOVER_RANK, StageStatus.COMPLETED.value,
+            f"{len(candidates)} kept from {len(all_candidates)} hit(s)",
+        )
 
         logger.info(f"Enhanced discovery returned {len(candidates)} candidates")
         return candidates
+
+    def _run_source_stage(
+        self,
+        stage: StageName,
+        search: Callable[[], SourceResult],
+    ) -> List[DiscoveryCandidate]:
+        """Run one discovery source and report what it did — including how it failed.
+
+        The four ``_search_*`` helpers return a :class:`SourceResult` rather than a
+        bare list precisely so this can tell apart three outcomes that used to look
+        identical from outside:
+
+        * it answered, with n candidates      -> completed, "n found"
+        * it answered, but part of it broke   -> completed, "n found · <reason>"
+        * it could not answer at all          -> FAILED, carrying the reason
+
+        The third is the one that mattered. A rate-limited arXiv, an unreachable
+        Qdrant and a genuinely empty library all produced ``[]``, and the page showed
+        the same reassuring nothing for each.
+
+        A failed source is not a failed run: the others still have something to say,
+        which is why this reports and returns rather than raising.
+        """
+        self._stage(stage, StageStatus.RUNNING.value)
+        try:
+            outcome = search()
+        except Exception as e:
+            # The helpers are not supposed to raise. If one does, the stage is still
+            # the right place to say so — losing the whole run over one source is not.
+            message = _friendly_source_error(e)
+            logger.error(f"{stage.value} raised: {e}", exc_info=True)
+            self._record_infra_error(stage.value, message)
+            self._stage(stage, StageStatus.FAILED.value, message)
+            return []
+
+        for failure in outcome.failures:
+            self._record_infra_error(stage.value, failure)
+
+        if outcome.failures and not outcome.candidates:
+            self._stage(stage, StageStatus.FAILED.value,
+                        "; ".join(outcome.failures)[:_MAX_STAGE_DETAIL])
+        elif outcome.failures:
+            self._stage(
+                stage, StageStatus.COMPLETED.value,
+                f"{len(outcome.candidates)} found · "
+                f"{outcome.failures[0]}"[:_MAX_STAGE_DETAIL],
+            )
+        else:
+            self._stage(stage, StageStatus.COMPLETED.value,
+                        f"{len(outcome.candidates)} found")
+        return outcome.candidates
 
     def process_selected_papers(
         self,
@@ -792,24 +1010,56 @@ class Orchestrator:
             success=len(papers_processed) > 0
         )
 
-    def _search_vectors(self, pillar_id: str, query: str) -> List[DiscoveryCandidate]:
-        """Search for similar papers using vector database."""
+    def _search_vectors(self, pillar_id: str, query: str) -> SourceResult:
+        """Search the pillar's own indexed papers by meaning.
+
+        Three ways this returns nothing, and the user is told which:
+
+        * the tool could not be built (``__init__`` logged and set it to None),
+        * vectors are switched off entirely — ``QDRANT_URL`` unset, which
+          ``vectors.get_client()`` answers with None after a WARNING nobody reads,
+        * the search ran and the library is empty.
+
+        Only the third is "no results". The first two were reported as an empty
+        result set for the whole life of this endpoint.
+        """
         if not self.vector_search_tool:
-            return []
+            return SourceResult([], ["vector search is unavailable — the client could "
+                                     "not be initialised"])
+        if vectors.get_client() is None:
+            return SourceResult([], ["vector search is switched off — QDRANT_URL is "
+                                     "not set"])
 
         try:
             settings = get_settings()
             top_k = getattr(settings, 'vector_search_top_k', 5)
-            return self.vector_search_tool.search_similar_papers(pillar_id, query, top_k)
+            return SourceResult(
+                self.vector_search_tool.search_similar_papers(pillar_id, query, top_k),
+                [],
+            )
         except Exception as e:
+            # search_similar_papers now lets RuntimeError through — that is the
+            # "this code disagrees with its library or its server" case from
+            # vectors.search_similar (a removed method, or a 4xx such as the missing
+            # pillar_id payload index under Qdrant strict mode), and it is precisely
+            # what must never be reported as "nothing matched".
             logger.warning(f"Vector search failed: {e}")
-            return []
+            return SourceResult([], [_friendly_source_error(e)])
 
-    def _search_arxiv_candidates(self, pillar_id: str, queries: List[str]) -> List[DiscoveryCandidate]:
-        """Search ArXiv and convert to DiscoveryCandidate."""
+    def _search_arxiv_candidates(
+        self, pillar_id: str, queries: List[str]
+    ) -> SourceResult:
+        """Search arXiv and convert to DiscoveryCandidate.
+
+        Each query is tried independently, and a query that raises is counted rather
+        than merely logged: arXiv throttles bursts, and the resulting exception used
+        to leave the caller with a shorter list and no idea why.
+        """
         candidates = []
+        failures: List[str] = []
+        attempted = queries[:2]  # Limit to first 2 queries
 
-        for query_str in queries[:2]:  # Limit to first 2 queries
+        for query_str in attempted:
             try:
                 search_query = SearchQuery(
                     pillar_id=pillar_id,
@@ -832,17 +1082,21 @@ class Orchestrator:
 
             except Exception as e:
                 logger.warning(f"ArXiv search failed for query '{query_str}': {e}")
+                failures.append(_friendly_source_error(e))
 
-        return candidates
+        return SourceResult(candidates, _summarise_query_failures(failures, attempted))
 
-    def _search_semantic_scholar(self, queries: List[str]) -> List[DiscoveryCandidate]:
+    def _search_semantic_scholar(self, queries: List[str]) -> SourceResult:
         """Search Semantic Scholar and convert to DiscoveryCandidate."""
         if not self.semantic_scholar_tool:
-            return []
+            return SourceResult([], ["Semantic Scholar is unavailable — the client "
+                                     "could not be initialised"])
 
         candidates = []
+        failures: List[str] = []
+        attempted = queries[:2]  # Limit to first 2 queries
 
-        for query in queries[:2]:  # Limit to first 2 queries
+        for query in attempted:
             try:
                 papers = self.semantic_scholar_tool.search(query, limit=5, year="2023-2024")
 
@@ -860,15 +1114,27 @@ class Orchestrator:
 
             except Exception as e:
                 logger.warning(f"Semantic Scholar search failed for query '{query}': {e}")
+                failures.append(_friendly_source_error(e))
 
-        return candidates
+        return SourceResult(candidates, _summarise_query_failures(failures, attempted))
 
-    def _search_citations(self, paper_ids: List[str]) -> List[DiscoveryCandidate]:
+    def _search_citations(self, paper_ids: List[str]) -> SourceResult:
         """Search citation network for related papers."""
         candidates = []
+        failures: List[str] = []
 
-        # Get papers from citation network in database
-        network_paper_ids = db.get_citation_network_papers(paper_ids, limit=10)
+        try:
+            network_paper_ids = db.get_citation_network_papers(paper_ids, limit=10)
+        except Exception as e:
+            # Without this the whole step returns [] and reads as "your papers cite
+            # nothing we can find", when the truth is that the query never ran.
+            logger.warning(f"Citation network lookup failed: {e}")
+            return SourceResult([], [f"couldn't read the citation network: "
+                                     f"{_first_line(e)}"])
+
+        if not self.semantic_scholar_tool and network_paper_ids:
+            return SourceResult([], ["Semantic Scholar is unavailable, so cited "
+                                     "papers could not be looked up"])
 
         for paper_id in network_paper_ids:
             # Try to get paper details from S2
@@ -886,8 +1152,12 @@ class Orchestrator:
                         candidates.append(candidate)
                 except Exception as e:
                     logger.warning(f"Could not fetch paper {paper_id} from S2: {e}")
+                    failures.append(_friendly_source_error(e))
 
-        return candidates
+        if failures:
+            failures = [f"{len(failures)} of {len(network_paper_ids)} cited paper(s) "
+                        f"could not be fetched: {failures[0]}"]
+        return SourceResult(candidates, failures)
 
     def _rank_and_dedupe(
         self,

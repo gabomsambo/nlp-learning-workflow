@@ -24,6 +24,8 @@ const {
   countCompleted,
   displayStatus,
   duration,
+  candidateCount,
+  safely,
 } = require('../../webui/static/run-progress.js');
 
 /** Eleven stages, the first `done` of them completed. */
@@ -100,6 +102,71 @@ test('an interrupted run explains itself rather than blaming the pipeline', () =
 
 test('a pending run with no stage yet says Starting', () => {
   assert.equal(summarise({ status: 'pending', stages: stages(0) }), 'Starting…');
+});
+
+/* ------------------------------------------------- summarise: discovery runs */
+
+/** The seven discovery stages, the first `done` of them completed. */
+function discoverStages(done) {
+  const names = ['discover_context', 'discover_queries', 'discover_vectors',
+                 'discover_arxiv', 'discover_semantic_scholar',
+                 'discover_citations', 'discover_rank'];
+  return names.map((name, i) => ({
+    name, status: i < done ? 'completed' : 'pending',
+  }));
+}
+
+test('discovery steps are named for what the user gets, not for the function', () => {
+  assert.equal(stageLabel('discover_arxiv'), 'Searching arXiv');
+  assert.equal(stageLabel('discover_vectors'), 'Searching your library by meaning');
+  assert.equal(stageLabel('discover_queries'), 'Writing search queries');
+});
+
+test('a discovery run counts candidates, not processed papers', () => {
+  // papers_processed is 0 on a discovery run on purpose: it processed no papers.
+  // Reporting that number here would say "0 papers" over a full table of results.
+  const run = {
+    kind: 'discover', status: 'succeeded', papers_processed: 0, papers_failed: 0,
+    stages: discoverStages(7),
+    result: { candidates: [{}, {}, {}], sources_used: ['arxiv'] },
+  };
+  assert.equal(summarise(run), 'Done — 3 candidate paper(s) found');
+});
+
+test('a discovery that matched nothing says so plainly', () => {
+  const run = {
+    kind: 'discover', status: 'succeeded', papers_processed: 0,
+    stages: discoverStages(7), result: { candidates: [] },
+  };
+  assert.equal(summarise(run), 'Done — no papers matched');
+});
+
+test('a discovery that succeeded with a source down still says which', () => {
+  // The point of the exercise: "ten papers" and "ten papers, but arXiv was
+  // rate-limited" are different claims, and only the user can decide what to do.
+  const run = {
+    kind: 'discover', status: 'succeeded', papers_processed: 0,
+    stages: discoverStages(7),
+    error: 'rate-limited — try again in a few minutes',
+    result: { candidates: [{}, {}] },
+  };
+  assert.match(summarise(run), /2 candidate\(s\)|2 candidate paper\(s\) found/);
+  assert.match(summarise(run), /rate-limited/);
+});
+
+test('a discovery run in flight reports its step like any other run', () => {
+  const run = {
+    kind: 'discover', status: 'running', current_stage: 'discover_arxiv',
+    stages: discoverStages(3),
+  };
+  assert.equal(summarise(run), 'Step 4 of 7 — Searching arXiv');
+});
+
+test('a missing or malformed payload counts as zero candidates, not a crash', () => {
+  assert.equal(candidateCount({}), 0);
+  assert.equal(candidateCount({ result: null }), 0);
+  assert.equal(candidateCount({ result: { candidates: 'not an array' } }), 0);
+  assert.equal(candidateCount({ result: { candidates: [{}] } }), 1);
 });
 
 /* ------------------------------------------------------------- statusColor */
@@ -180,4 +247,38 @@ test('durations over a minute are shown as minutes and seconds', () => {
 test('an unfinished stage measures against now', () => {
   const started = new Date(Date.now() - 5000).toISOString();
   assert.match(duration({ started_at: started, finished_at: null }), /^[45]\.\ds$/);
+});
+
+
+/*
+ * safely(): a rendering handler must not be able to break the poll.
+ *
+ * Before this, handlers ran inside tick()'s try, so a TypeError in a page's render
+ * was caught by the *transport* catch and announced as "Lost contact with the
+ * server — retrying" while the throw skipped the isTerminal check, leaving the page
+ * polling a finished run. Measured against a discovery run whose stored candidates
+ * were the wrong shape.
+ */
+test('a throwing handler is contained rather than propagated', () => {
+  const errors = [];
+  const realError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    assert.doesNotThrow(() => safely(() => { throw new TypeError('boom'); }, {}, 'onDone'));
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(errors.length, 1, 'the failure is logged, not swallowed silently');
+  assert.match(String(errors[0][0]), /onDone/);
+});
+
+test('a handler that works is called with its argument, once', () => {
+  const seen = [];
+  safely((run) => seen.push(run), { id: 'r1' }, 'onUpdate');
+  assert.deepEqual(seen, [{ id: 'r1' }]);
+});
+
+test('a missing handler is not an error', () => {
+  assert.doesNotThrow(() => safely(undefined, {}, 'onGone'));
+  assert.doesNotThrow(() => safely(null, {}, 'onGone'));
 });

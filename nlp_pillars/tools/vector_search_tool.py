@@ -37,6 +37,12 @@ class VectorSearchTool:
         -------
             List of DiscoveryCandidate objects with vector search results
 
+        Raises:
+        ------
+            RuntimeError: the query could not be made — this code disagrees with the
+                installed qdrant-client, or the server rejected the request (4xx).
+                Deliberately not degraded to an empty list; see the except clause.
+
         """
         if not query_text or not query_text.strip():
             logger.warning("Empty query text provided")
@@ -77,6 +83,15 @@ class VectorSearchTool:
             logger.info(f"Found {len(candidates)} similar papers from vector search")
             return candidates
 
+        except RuntimeError:
+            # vectors.search_similar() raises RuntimeError for exactly one class of
+            # problem: this code disagreeing with its library or its server — a method
+            # qdrant-client 1.19 removed, or a 4xx such as the missing pillar_id
+            # payload index that Qdrant strict mode requires. None of that is "nothing
+            # matched", and flattening it into [] here would undo the distinction that
+            # module goes out of its way to draw. The caller reports it as a failed
+            # discovery step.
+            raise
         except Exception as e:
             logger.error(f"Vector search failed: {e}")
             return []

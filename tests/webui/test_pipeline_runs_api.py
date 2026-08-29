@@ -110,8 +110,13 @@ async def test_the_history_list_degrades_to_empty():
     assert await _client(handler).list_pipeline_runs() == []
 
 
-async def test_the_history_list_does_not_embed_stages():
-    """It is a summary view; embedding eleven stage rows per run would be wasteful."""
+async def test_the_history_list_does_not_embed_stages_or_payloads():
+    """It is a summary view.
+
+    Embedding eleven stage rows per run would be wasteful; so would `result`, which on
+    a discovery run is the entire candidate list. Both are fetched by whoever opens the
+    single run.
+    """
     captured = {}
 
     def handler(request):
@@ -119,7 +124,9 @@ async def test_the_history_list_does_not_embed_stages():
         return httpx.Response(200, json=[])
 
     await _client(handler).list_pipeline_runs(limit=5)
-    assert captured["select"] == "*"
+    assert "pipeline_run_stages" not in captured["select"]
+    assert "result" not in captured["select"].split(",")
+    assert "status" in captured["select"].split(",")
 
 
 # ----------------------------------------------------------------- route mapping

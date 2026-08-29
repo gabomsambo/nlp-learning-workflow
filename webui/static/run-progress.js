@@ -47,6 +47,34 @@
 
   /* ---------------------------------------------------------------- polling */
 
+  /**
+   * Call a caller's handler without letting it break the poll.
+   *
+   * The handlers render; the poll is transport. Running them inside tick()'s try
+   * meant any rendering bug was caught by the transport catch and reported as
+   * "Lost contact with the server — retrying", which is a lie, and — because the
+   * throw jumped over the isTerminal check — left the page polling a finished run
+   * for as long as it stayed open. Measured on a discovery run whose stored
+   * candidates were the wrong shape: a TypeError in the candidates table produced
+   * exactly that, with no console error to say otherwise.
+   *
+   * Same reasoning as the orchestrator's on_stage sink (AGENTS.md, "Long runs are
+   * background jobs"): losing the progress display is bad, losing the run with it
+   * is worse. Logged rather than swallowed — a render bug should still be findable.
+   */
+  function safely(fn, arg, what) {
+    if (!fn) return;
+    try {
+      fn(arg);
+    } catch (err) {
+      // `global` is the IIFE's parameter (window in a browser, globalThis under
+      // node --test), not a bare `window` — which would itself throw in node.
+      if (global.console && global.console.error) {
+        global.console.error('run-progress: ' + what + ' handler failed', err);
+      }
+    }
+  }
+
   function pollRun(runId, handlers) {
     var delay = POLL_MS;
     var stopped = false;
@@ -72,24 +100,24 @@
           // forever. Note this is now ONLY sent for a real absence: a database
           // failure answers 503 and falls through to the retry path below.
           stop();
-          if (handlers.onGone) handlers.onGone(runId);
+          safely(handlers.onGone, runId, 'onGone');
           return;
         }
         if (!res.ok) throw new Error('HTTP ' + res.status);
 
         var run = await res.json();
-        if (handlers.onUpdate) handlers.onUpdate(run);
+        safely(handlers.onUpdate, run, 'onUpdate');
 
         if (isTerminal(run.status)) {
           stop();
-          if (handlers.onDone) handlers.onDone(run);
+          safely(handlers.onDone, run, 'onDone');
           return;
         }
         delay = POLL_MS; // healthy: back to a fast poll
       } catch (err) {
         if (err.name === 'AbortError') return; // deliberate stop, not a failure
         delay = Math.min(delay * 2, MAX_BACKOFF_MS);
-        if (handlers.onError) handlers.onError(err);
+        safely(handlers.onError, err, 'onError');
       }
       timer = setTimeout(tick, delay); // scheduled AFTER the response, never before
     }
@@ -133,6 +161,15 @@
     quiz: 'Building quiz cards',
     persist: 'Saving to the database',
     vectors: 'Indexing for search',
+    // run_discovery_with_selection. Named for what the user gets out of each step,
+    // not for the function that does it.
+    discover_context: 'Reading your recent papers',
+    discover_queries: 'Writing search queries',
+    discover_vectors: 'Searching your library by meaning',
+    discover_arxiv: 'Searching arXiv',
+    discover_semantic_scholar: 'Searching Semantic Scholar',
+    discover_citations: 'Following citations from your recent papers',
+    discover_rank: 'Ranking and removing duplicates',
   };
 
   function stageLabel(name) {
@@ -274,6 +311,18 @@
     return d.innerHTML;
   }
 
+  /**
+   * How many candidates a finished discovery run found.
+   *
+   * Read from the stored payload rather than from papers_processed, which a discovery
+   * run leaves at 0 on purpose: it processed no papers, it found some. Conflating the
+   * two would put "10 papers processed" on a run that ingested nothing.
+   */
+  function candidateCount(run) {
+    var result = run && run.result;
+    return result && Array.isArray(result.candidates) ? result.candidates.length : 0;
+  }
+
   function summarise(run) {
     var total = (run.stages || []).length;
     var done = countCompleted(run);
@@ -282,6 +331,18 @@
       if (!run.current_stage) return 'Starting…';
       return 'Step ' + Math.min(done + 1, total) + ' of ' + total + ' — ' +
              stageLabel(run.current_stage);
+    }
+    if (run.kind === 'discover' && run.status === 'succeeded') {
+      // A discovery run counts candidates, not processed papers, and it reports the
+      // sources that failed even when it succeeded: "ten papers, but arXiv was
+      // rate-limited" is a different claim from "ten papers", and only the user can
+      // decide whether that is worth a retry.
+      var found = candidateCount(run);
+      var msg = found
+        ? 'Done — ' + found + ' candidate paper(s) found'
+        : 'Done — no papers matched';
+      if (run.error) msg += ' — ' + run.error;
+      return msg;
     }
     if (run.status === 'succeeded') {
       // A run that found nothing is recorded as succeeded (it is not a failure), but
@@ -524,6 +585,7 @@
     countCompleted: countCompleted,
     displayStatus: displayStatus,
     duration: duration,
+    candidateCount: candidateCount,
   };
 
   // Also reachable from `node --test` (tests/js/). CommonJS on purpose: the browser
@@ -538,6 +600,8 @@
       countCompleted: countCompleted,
       displayStatus: displayStatus,
       duration: duration,
+      candidateCount: candidateCount,
+      safely: safely,
     };
   }
 })(typeof window !== 'undefined' ? window : globalThis);

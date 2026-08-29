@@ -53,7 +53,8 @@
 
 <article id="run-panel" hidden style="margin-top: 1rem;">
   <header>
-    <strong>Processing run</strong>
+    {# One panel for both kinds of run this page starts. The title says which. #}
+    <strong id="run-title">Run</strong>
     <button type="button" id="cancel-btn" class="secondary outline" hidden disabled
             style="float:right;width:auto;padding:.25rem .75rem">Cancel run</button>
   </header>
@@ -67,6 +68,17 @@
   <p id="run-status" role="status" aria-live="polite" aria-atomic="true"></p>
 
   <progress id="run-bar" hidden aria-label="Processing progress"></progress>
+
+  {#
+    The queries the run is actually searching for. They arrive a couple of seconds in,
+    long before any results, and they are the first proof the run is alive and looking
+    for the right thing. Filled from the discover_queries stage detail — which is
+    model output, so it is written with textContent and nothing else.
+  #}
+  <div id="queries-panel" hidden style="margin: .5rem 0;">
+    <small><strong>Search queries</strong></small>
+    <p id="queries-text" style="margin: .15rem 0 0;"></p>
+  </div>
 
   {# aria-live="off": the summary above is what gets announced, not eleven rows. #}
   <div id="run-progress" aria-live="off"></div>
@@ -101,10 +113,16 @@ const sessionSummary = document.getElementById('session-summary');
 const totalProcessedEl = document.getElementById('total-processed');
 const totalFailedEl = document.getElementById('total-failed');
 const runPanel = document.getElementById('run-panel');
+const runTitleEl = document.getElementById('run-title');
 const runStatusEl = document.getElementById('run-status');
 const runProgressEl = document.getElementById('run-progress');
 const runBarEl = document.getElementById('run-bar');
 const cancelBtn = document.getElementById('cancel-btn');
+const discoverBtn = document.getElementById('discover-btn');
+const queriesPanel = document.getElementById('queries-panel');
+const queriesText = document.getElementById('queries-text');
+
+const RUN_TITLE = { discover: 'Discovery run', process_selected: 'Processing run' };
 
 // `status` is a REAL element now. Passing null here is what silently discarded every
 // run-level message on this page, including the reason a run failed.
@@ -115,14 +133,22 @@ const progressEls = {
   cancel: cancelBtn,
 };
 
-// Discover papers
+/**
+ * Start a discovery run.
+ *
+ * Discovery used to be one ~30-second request behind one static line of text. It is a
+ * background run now, followed by the same poller the processing phase already used,
+ * so the page can show which step it is on, what each source found, the queries it is
+ * actually searching for, and — the part that matters — which of those steps failed
+ * rather than merely came back empty.
+ */
 discoverForm.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const pillar = pillarSelect.value;
   const topics = topicsInput.value.split(',').map(t => t.trim()).filter(t => t);
 
-  statusEl.textContent = 'Discovering papers…';
+  statusEl.textContent = '';
   statusEl.style.color = '';
   resultsArea.style.display = 'none';
 
@@ -131,6 +157,15 @@ discoverForm.addEventListener('submit', async (e) => {
   attemptedIds = new Set();
   totalProcessed = 0;
   totalFailed = 0;
+  pendingSelection = null;
+
+  setDiscovering(true);
+  runPanel.hidden = false;
+  runTitleEl.textContent = RUN_TITLE.discover;
+  runStatusEl.textContent = 'Starting…';
+  runStatusEl.style.color = '';
+  queriesPanel.hidden = true;
+  runProgressEl.replaceChildren();
 
   try {
     const res = await fetch(`/api/pillars/${pillar}/discover`, {
@@ -141,22 +176,88 @@ discoverForm.addEventListener('submit', async (e) => {
 
     const data = await res.json();
 
-    if (!res.ok) {
-      throw new Error(data.detail || 'Discovery failed');
+    if (res.status === 409) {
+      // Another run owns this pillar. Show it rather than refusing silently — and ask
+      // the server which one, since a stored id may be a finished run.
+      runStatusEl.textContent = data.detail || 'A run is already in progress for this pillar.';
+      runStatusEl.style.color = 'darkorange';
+      const active = await RunProgress.findActive(pillar) || await RunProgress.findActive();
+      if (active) RunProgress.attach(active.id, progressEls, onRunFinished, onRunUpdate);
+      else setDiscovering(false);
+      return;
+    }
+    if (!res.ok || !data.run_id) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
     }
 
-    candidates = data.candidates;
-    statusEl.textContent = `Found ${candidates.length} candidates from: ${data.sources_used.join(', ')}`;
-    statusEl.style.color = 'green';
-
-    renderCandidates();
-    resultsArea.style.display = 'block';
+    RunProgress.attach(data.run_id, progressEls, onRunFinished, onRunUpdate);
 
   } catch (err) {
     statusEl.textContent = `Error: ${err.message}`;
     statusEl.style.color = 'red';
+    runStatusEl.textContent = '';
+    setDiscovering(false);
   }
 });
+
+function setDiscovering(active) {
+  discoverBtn.disabled = active;
+  discoverBtn.textContent = active ? 'Discovering…' : 'Discover Papers';
+}
+
+/**
+ * Show the queries the run generated, as soon as it has them.
+ *
+ * They live in the discover_queries stage detail rather than in a payload of their
+ * own, so they ride along on the poll that is already happening and appear a couple of
+ * seconds in — well before any result. The detail also carries the fallback notice
+ * when the model could not be reached, which is exactly when a user most needs to know
+ * that these are the pillar's own focus areas and not the agent's work.
+ *
+ * textContent, never innerHTML: this string is model output.
+ */
+function renderQueries(run) {
+  const stage = (run.stages || []).find(s => s.name === 'discover_queries');
+  if (!stage || !stage.detail) {
+    queriesPanel.hidden = true;
+    return;
+  }
+  queriesText.textContent = stage.detail;
+  queriesText.style.color = stage.status === 'failed' ? 'darkorange' : '';
+  queriesPanel.hidden = false;
+}
+
+/**
+ * Render a finished discovery run's candidates.
+ *
+ * They come off the run row (`result`), which is why a reload — or opening the
+ * ?run=<id> link again — brings the same table back instead of an empty page.
+ */
+function onDiscoveryFinished(run) {
+  setDiscovering(false);
+  const result = run.result || {};
+  candidates = Array.isArray(result.candidates) ? result.candidates : [];
+  attemptedIds = new Set();
+
+  if (!candidates.length) {
+    // Deliberately not "no papers found": the panel above says whether the sources
+    // answered or fell over, and repeating a cheerful zero here would flatten the two
+    // back together.
+    statusEl.textContent = run.status === 'succeeded'
+      ? 'No candidates matched. Try different topic hints.'
+      : 'Discovery did not finish — see the run panel above.';
+    statusEl.style.color = run.status === 'succeeded' ? '' : 'crimson';
+    resultsArea.style.display = 'none';
+    return;
+  }
+
+  const sources = (result.sources_used || []).join(', ');
+  statusEl.textContent = `Found ${candidates.length} candidates`
+    + (sources ? ` from: ${sources}` : '');
+  statusEl.style.color = 'green';
+  renderCandidates();
+  resultsArea.style.display = 'block';
+}
 
 /**
  * Build the candidates table.
@@ -285,8 +386,10 @@ processBtn.addEventListener('click', async () => {
   processBtn.disabled = true;
   processBtn.textContent = 'Processing…';
   runPanel.hidden = false;
+  runTitleEl.textContent = RUN_TITLE.process_selected;
   runStatusEl.textContent = 'Starting…';
   runStatusEl.style.color = '';
+  queriesPanel.hidden = true;
 
   try {
     // Returns 202 with a run id straight away. This used to run the whole
@@ -306,7 +409,7 @@ processBtn.addEventListener('click', async () => {
       // Ask the server which run that is. reattach() would prefer a stale
       // localStorage id and could attach to an already-finished run instead.
       const active = await RunProgress.findActive(pillar) || await RunProgress.findActive();
-      if (active) RunProgress.attach(active.id, progressEls, onRunFinished, syncPillar);
+      if (active) RunProgress.attach(active.id, progressEls, onRunFinished, onRunUpdate);
       processBtn.disabled = false;
       processBtn.textContent = 'Process Selected';
       return;
@@ -320,7 +423,7 @@ processBtn.addEventListener('click', async () => {
     // session even though nothing had been queued.
     selectedIds.forEach(id => attemptedIds.add(id));
     pendingSelection = { count: selectedIds.length };
-    RunProgress.attach(data.run_id, progressEls, onRunFinished, syncPillar);
+    RunProgress.attach(data.run_id, progressEls, onRunFinished, onRunUpdate);
     renderCandidates();
 
   } catch (err) {
@@ -336,8 +439,29 @@ processBtn.addEventListener('click', async () => {
 
 let pendingSelection = null;
 
-function syncPillar(run) {
-  if (run && run.pillar_id) pillarSelect.value = run.pillar_id;
+/**
+ * Fires on every poll. One panel serves both kinds of run this page starts, so this is
+ * where it is told which one it is looking at — including after a reload, when the
+ * page has no memory of having started anything.
+ */
+function onRunUpdate(run) {
+  if (!run) return;
+  if (run.pillar_id) pillarSelect.value = run.pillar_id;
+  runTitleEl.textContent = RUN_TITLE[run.kind] || 'Run';
+
+  const live = !RunProgress.isTerminal(run.status);
+  if (run.kind === 'discover') {
+    renderQueries(run);
+    if (live) setDiscovering(true);
+  } else {
+    queriesPanel.hidden = true;
+    if (live) {
+      // A processing run owns the pillar, so a new search cannot start under it.
+      discoverBtn.disabled = true;
+      processBtn.disabled = true;
+      processBtn.textContent = 'Processing…';
+    }
+  }
 }
 
 /**
@@ -351,11 +475,20 @@ function syncPillar(run) {
 function onRunFinished(run) {
   processBtn.disabled = false;
   processBtn.textContent = 'Process Selected';
+  setDiscovering(false);
   updateSelectedCount();
 
   if (!run) {
     // The run id was stale. Say so; do not leave the panel looking live.
     pendingSelection = null;
+    return;
+  }
+
+  if (run.kind === 'discover') {
+    // A discovery run produces candidates, not processed papers. Sending it through
+    // the counting below would add its zeros to the session summary and claim a
+    // processing run had happened.
+    onDiscoveryFinished(run);
     return;
   }
 
@@ -375,11 +508,12 @@ function onRunFinished(run) {
 // Reattach to a run still in flight after a reload, so leaving the page mid-process
 // does not lose sight of it.
 window.addEventListener('DOMContentLoaded', async () => {
-  const found = await RunProgress.reattach(progressEls, onRunFinished, syncPillar);
+  const found = await RunProgress.reattach(progressEls, onRunFinished, onRunUpdate);
   if (!found) return;
+  // Which kind of run this is, and therefore which button to disable, is not known
+  // until the first poll answers — onRunUpdate does that. Showing the panel is safe
+  // either way, and a run that turns out to be gone is cleared by onGone.
   runPanel.hidden = false;
-  processBtn.disabled = true;
-  processBtn.textContent = 'Processing…';
 });
 </script>
 {% endblock %}
