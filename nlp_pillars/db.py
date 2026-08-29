@@ -14,7 +14,7 @@ from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
     ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
-    PaperCitation, PodcastScript, PodcastOptions, SourceMaterial,
+    PaperCitation, PodcastScript, PodcastOptions, SourceMaterial, GroundPackCallRecord,
     PipelineRun, PipelineRunStage, RunStatus, StageStatus
 )
 
@@ -306,6 +306,13 @@ def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
         'word_count': script.word_count,
         'key_points': script.key_points,
         'ground_pack': script.ground_pack,
+        # Per-section model provenance. Requires
+        # docs/migrations/013_podcast_ground_pack_calls.sql on databases created
+        # before it; add_podcast_script() retries without the key and says so.
+        'ground_pack_calls': {
+            key: rec.model_dump()
+            for key, rec in script.ground_pack_calls.items()
+        },
         # What the script was written from. Requires
         # docs/migrations/011_podcast_source_material.sql on databases created
         # before it; add_podcast_script() retries without the key and says so.
@@ -329,6 +336,10 @@ def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
         word_count=row.get('word_count', 0),
         key_points=row.get('key_points', []),
         ground_pack=row.get('ground_pack', {}),
+        ground_pack_calls={
+            key: GroundPackCallRecord(**value)
+            for key, value in (row.get('ground_pack_calls') or {}).items()
+        },
         # Absent on rows written before 011, and on any row a pre-011 database
         # accepted through the fallback insert. Defaults to level="full", which
         # is what every historical row was assumed to be anyway.
@@ -895,6 +906,7 @@ def add_podcast_script(script: PodcastScript) -> str:
         for column, migration in (
             ('source_material', 'docs/migrations/011_podcast_source_material.sql'),
             ('options', 'docs/migrations/012_podcast_options.sql'),
+            ('ground_pack_calls', 'docs/migrations/013_podcast_ground_pack_calls.sql'),
         ):
             if not response['error'] or not _is_missing_column(response['error'], column):
                 continue

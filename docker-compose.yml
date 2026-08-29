@@ -186,6 +186,7 @@ services:
       # `docker compose up` is the loud version of that.
       QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
       QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
       #
       # The three database variables below ARE overridden, and all three are
       # needed. Nothing is deleted from .env — these only shadow it for this
@@ -266,6 +267,7 @@ services:
       # Sourcing both from one .env entry is what makes that impossible.
       QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
       QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
     volumes:
       # A scheduled run can ingest PDFs, so it needs the same retained uploads

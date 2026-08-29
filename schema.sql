@@ -217,6 +217,11 @@ CREATE TABLE podcast_scripts (
     -- are read back as an empty PodcastOptions.
     -- Added by docs/migrations/012_podcast_options.sql.
     options JSONB,
+    -- Per-section model provenance for the four Ground Pack calls; see
+    -- schemas.py::GroundPackCallRecord and nlp_pillars/podcast_models.py.
+    -- Nullable: pre-013 rows have no value and are read back as {}.
+    -- Added by docs/migrations/013_podcast_ground_pack_calls.sql.
+    ground_pack_calls JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 

@@ -1,11 +1,13 @@
 """
 Podcast Agent for generating educational podcast scripts from papers.
-Uses a 4-prompt Ground Pack system with Claude Sonnet 4.
+Uses a 4-prompt Ground Pack system: DeepSeek for extraction (calls 1–4),
+Claude for synthesis (call 5).
 """
 
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import NamedTuple, Optional
 
@@ -13,11 +15,13 @@ import httpx
 from anthropic import AsyncAnthropic
 
 from ..config import get_settings
+from ..podcast_models import EXTRACTION_ROUTE, SYNTHESIS_ROUTE
 from ..podcast_options import (
     PRECEDENCE_NOTE, build_variables, resolve, settings_block,
 )
 from ..schemas import (
-    PaperNote, PaperRef, PodcastOptions, PodcastScript, SourceMaterial,
+    GroundPackCallRecord, PaperNote, PaperRef, PodcastOptions, PodcastScript,
+    SourceMaterial,
 )
 from ..db import get_paper_by_id, get_notes_by_paper_id
 from .ingest_agent import IngestAgent, IngestError
@@ -66,6 +70,28 @@ class InsufficientSourceMaterialError(Exception):
     a 404, a parse failure), because the caller has to put something actionable
     in front of the person who clicked the button.
     """
+
+
+class GroundPackExtractionError(Exception):
+    """An extraction call returned truncated or empty output.
+
+    Raised when a Ground Pack section would be handed to synthesis with no
+    usable content — the silent-degradation shape PR #23 exists to prevent.
+    DeepSeek failures fall back to Claude first; this fires only when every
+    attempt for that section fails validation.
+    """
+
+
+@dataclass(frozen=True)
+class LLMCallResult:
+    """One provider response, with enough metadata to validate and record it."""
+
+    text: str
+    provider: str
+    model: str
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    finish_reason: Optional[str] = None
 
 
 class FullTextResult(NamedTuple):
@@ -310,7 +336,24 @@ class PodcastAgent:
             api_key=settings.anthropic_api_key,
             timeout=httpx.Timeout(120.0, connect=10.0)  # 2 min for long prompts
         )
-        self.model = "claude-sonnet-4-5-20250929"
+        self.synthesis_model = SYNTHESIS_ROUTE.resolved_model()
+
+        # DeepSeek for Ground Pack extraction. Missing key does not abort init —
+        # compose fails at startup via DEEPSEEK_API_KEY:? — but every extraction
+        # call falls back to Claude and records why.
+        self._deepseek_api_key = settings.deepseek_api_key
+        self._deepseek_base_url = settings.deepseek_base_url.rstrip("/")
+        self.extraction_model = EXTRACTION_ROUTE.resolved_model()
+        self._deepseek_client: Optional[httpx.AsyncClient] = None
+        if self._deepseek_api_key:
+            self._deepseek_client = httpx.AsyncClient(
+                base_url=self._deepseek_base_url,
+                headers={
+                    "Authorization": f"Bearer {self._deepseek_api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=httpx.Timeout(120.0, connect=10.0),
+            )
 
         # Used by _get_full_text to pull the paper body out of its PDF.
         self.ingest_agent = IngestAgent()
@@ -322,22 +365,41 @@ class PodcastAgent:
         self._variables = build_variables(self.options)
         self._settings_block = settings_block(self.options)
 
+    @staticmethod
+    def _validate_extraction(result: LLMCallResult) -> None:
+        """Reject truncated or empty extraction output."""
+        if not result.text.strip():
+            raise GroundPackExtractionError(
+                f"{result.provider}/{result.model} returned an empty extraction"
+            )
+        if result.finish_reason in ("length", "max_tokens"):
+            raise GroundPackExtractionError(
+                f"{result.provider}/{result.model} truncated the extraction "
+                f"(finish_reason={result.finish_reason!r})"
+            )
+
     async def _call_claude(
         self,
         system: str,
         user: str,
         max_tokens: int = 4000,
         temperature: float = TEMPERATURE_ANALYSIS,
-    ) -> str:
+        *,
+        model: Optional[str] = None,
+    ) -> LLMCallResult:
         """Make streaming API call to Claude.
 
         ``temperature`` is always passed explicitly. The API default is 1.0,
         which is not what an extraction call wants; see the constants above.
         """
+        model_id = model or self.synthesis_model
         full_text = ""
+        input_tokens: Optional[int] = None
+        output_tokens: Optional[int] = None
+        finish_reason: Optional[str] = None
 
         async with self.client.messages.stream(
-            model=self.model,
+            model=model_id,
             max_tokens=max_tokens,
             temperature=temperature,
             system=system,
@@ -346,18 +408,143 @@ class PodcastAgent:
             async for text in stream.text_stream:
                 full_text += text
 
-            # Real token counts per call. Full paper text goes to five calls, so
-            # this is how the actual bill is observed rather than estimated.
             try:
-                usage = (await stream.get_final_message()).usage
+                final = await stream.get_final_message()
+                usage = final.usage
+                input_tokens = usage.input_tokens
+                output_tokens = usage.output_tokens
+                finish_reason = final.stop_reason
                 logger.info(
-                    f"Claude call usage: input={usage.input_tokens} "
-                    f"output={usage.output_tokens} tokens"
+                    f"Claude call usage ({model_id}): input={input_tokens} "
+                    f"output={output_tokens} tokens stop={finish_reason!r}"
                 )
             except Exception as e:  # usage logging must never fail a generation
                 logger.debug(f"Could not read token usage: {e}")
 
-        return full_text
+        return LLMCallResult(
+            text=full_text,
+            provider="anthropic",
+            model=model_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            finish_reason=finish_reason,
+        )
+
+    async def _call_deepseek(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int = 4000,
+        temperature: float = TEMPERATURE_ANALYSIS,
+    ) -> LLMCallResult:
+        """OpenAI-compatible chat completion against DeepSeek."""
+        if self._deepseek_client is None:
+            raise GroundPackExtractionError("DEEPSEEK_API_KEY is not configured")
+
+        model_id = self.extraction_model
+        response = await self._deepseek_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": model_id,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+        choice = (payload.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        text = message.get("content") or ""
+        finish_reason = choice.get("finish_reason")
+
+        usage = payload.get("usage") or {}
+        input_tokens = usage.get("prompt_tokens")
+        output_tokens = usage.get("completion_tokens")
+
+        logger.info(
+            f"DeepSeek call usage ({model_id}): input={input_tokens} "
+            f"output={output_tokens} tokens finish={finish_reason!r}"
+        )
+
+        return LLMCallResult(
+            text=text,
+            provider="deepseek",
+            model=model_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            finish_reason=finish_reason,
+        )
+
+    def _record_from_result(
+        self,
+        section: str,
+        result: LLMCallResult,
+        *,
+        fallback: bool = False,
+        fallback_reason: Optional[str] = None,
+    ) -> GroundPackCallRecord:
+        return GroundPackCallRecord(
+            section=section,
+            provider=result.provider,
+            model=result.model,
+            fallback=fallback,
+            fallback_reason=fallback_reason,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            finish_reason=result.finish_reason,
+        )
+
+    async def _run_extraction_call(
+        self,
+        section: str,
+        system: str,
+        user: str,
+        temperature: float,
+        max_tokens: int = 4000,
+    ) -> tuple[str, GroundPackCallRecord]:
+        """Run one Ground Pack extraction: DeepSeek first, Claude on failure."""
+        fallback_reason: Optional[str] = None
+
+        try:
+            deepseek_result = await self._call_deepseek(
+                system, user, max_tokens=max_tokens, temperature=temperature,
+            )
+            self._validate_extraction(deepseek_result)
+            return (
+                deepseek_result.text,
+                self._record_from_result(section, deepseek_result),
+            )
+        except Exception as exc:
+            fallback_reason = str(exc)
+            logger.warning(
+                "DeepSeek extraction for %s failed (%s); falling back to Claude",
+                section,
+                fallback_reason,
+            )
+
+        claude_result = await self._call_claude(
+            system,
+            user,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model=self.synthesis_model,
+        )
+        self._validate_extraction(claude_result)
+        return (
+            claude_result.text,
+            self._record_from_result(
+                section,
+                claude_result,
+                fallback=True,
+                fallback_reason=fallback_reason,
+            ),
+        )
 
     def _ground_pack_user(self, lead_in: str, paper_content: str) -> str:
         """Assemble a Ground Pack user message.
@@ -374,19 +561,21 @@ class PodcastAgent:
             paper_content=paper_content,
         )
 
-    async def _generate_facts_outline(self, paper_content: str) -> str:
+    async def _generate_facts_outline(self, paper_content: str) -> tuple[str, GroundPackCallRecord]:
         """Generate facts-only outline (Prompt 1)."""
         logger.info("Generating facts outline...")
-        return await self._call_claude(
+        return await self._run_extraction_call(
+            "facts_outline",
             system=PROMPT_1_FACTS_OUTLINE.format(**self._variables),
             user=self._ground_pack_user("Analyze this paper:", paper_content),
             temperature=TEMPERATURE_EXTRACTION,
         )
 
-    async def _generate_core_concepts(self, paper_content: str) -> str:
+    async def _generate_core_concepts(self, paper_content: str) -> tuple[str, GroundPackCallRecord]:
         """Generate core concepts and analogies (Prompt 2)."""
         logger.info("Generating core concepts...")
-        return await self._call_claude(
+        return await self._run_extraction_call(
+            "core_concepts",
             system=PROMPT_2_CORE_CONCEPTS.format(**self._variables),
             user=self._ground_pack_user(
                 "Identify the 3 most complex or novel concepts from this paper:",
@@ -395,10 +584,11 @@ class PodcastAgent:
             temperature=TEMPERATURE_ANALYSIS,
         )
 
-    async def _generate_metrics_datasets(self, paper_content: str) -> str:
+    async def _generate_metrics_datasets(self, paper_content: str) -> tuple[str, GroundPackCallRecord]:
         """Generate metrics and datasets table (Prompt 3)."""
         logger.info("Generating metrics and datasets...")
-        return await self._call_claude(
+        return await self._run_extraction_call(
+            "metrics_datasets",
             system=PROMPT_3_METRICS_DATASETS.format(**self._variables),
             user=self._ground_pack_user(
                 "Extract all quantitative data, datasets, and benchmarks from this paper:",
@@ -407,10 +597,11 @@ class PodcastAgent:
             temperature=TEMPERATURE_EXTRACTION,
         )
 
-    async def _generate_limitations(self, paper_content: str) -> str:
+    async def _generate_limitations(self, paper_content: str) -> tuple[str, GroundPackCallRecord]:
         """Generate limitations and threats (Prompt 4)."""
         logger.info("Generating limitations...")
-        return await self._call_claude(
+        return await self._run_extraction_call(
+            "limitations",
             system=PROMPT_4_LIMITATIONS.format(**self._variables),
             user=self._ground_pack_user(
                 "Critically analyze the limitations and weaknesses of this paper:",
@@ -448,14 +639,14 @@ LIMITATIONS & THREATS:
             **self._variables,
         )
 
-        return await self._call_claude(
+        return (await self._call_claude(
             # Constant across every run: role, grounding, format, TTS. Only the
             # options, the Ground Pack and the paper are in the user message.
             system=FINAL_SYNTHESIS_SYSTEM,
             user=prompt,
             max_tokens=16000,  # Longer output for full script
             temperature=TEMPERATURE_SCRIPT,
-        )
+        )).text
 
     def _extract_key_points(self, ground_pack: dict) -> list:
         """Extract key points from the facts outline."""
@@ -667,11 +858,20 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
         logger.info(f"Paper content assembled: {len(paper_content)} chars")
 
         # Run 4 Ground Pack prompts sequentially
+        facts_outline, facts_call = await self._generate_facts_outline(paper_content)
+        core_concepts, concepts_call = await self._generate_core_concepts(paper_content)
+        metrics_datasets, metrics_call = await self._generate_metrics_datasets(paper_content)
+        limitations, limitations_call = await self._generate_limitations(paper_content)
+
         ground_pack = {
-            "facts_outline": await self._generate_facts_outline(paper_content),
-            "core_concepts": await self._generate_core_concepts(paper_content),
-            "metrics_datasets": await self._generate_metrics_datasets(paper_content),
-            "limitations": await self._generate_limitations(paper_content)
+            "facts_outline": facts_outline,
+            "core_concepts": core_concepts,
+            "metrics_datasets": metrics_datasets,
+            "limitations": limitations,
+        }
+        ground_pack_calls = {
+            rec.section: rec
+            for rec in (facts_call, concepts_call, metrics_call, limitations_call)
         }
 
         # Generate final script
@@ -686,6 +886,7 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
             word_count=len(script.split()),
             key_points=self._extract_key_points(ground_pack),
             ground_pack=ground_pack,
+            ground_pack_calls=ground_pack_calls,
             source_material=source_material,
             # Stored with the script so that when two scripts differ it is
             # answerable whether the settings or the model made the difference.
