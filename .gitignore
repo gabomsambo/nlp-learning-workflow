@@ -175,7 +175,10 @@ core.*
 *.sublime-workspace
 
 /MDFILES
-CLAUDE.md
+
+# CLAUDE.md is a two-line @AGENTS.md import pointer, not a second contract.
+# It must stay tracked so a Claude-based agent on a fresh clone is pointed at
+# AGENTS.md; edit AGENTS.md, never this pointer.
 
 # Temporary fix/debug scripts
 /fix_*.py
