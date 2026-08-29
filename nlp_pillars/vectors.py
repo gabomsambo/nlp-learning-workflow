@@ -29,6 +29,11 @@ COLLECTION_NAME = "nlp_pillars"
 # a Qdrant payload index — see _ensure_payload_indexes().
 PILLAR_ID_FIELD = "pillar_id"
 
+# Chunks per embedding request. text-embedding-3-small accepts a list, and a
+# full-length paper is hundreds of chunks — 100 keeps a request well inside the
+# model's input limits while turning 448 round trips into 5.
+EMBED_BATCH_SIZE = 100
+
 
 def get_client() -> Optional[QdrantClient]:
     """
@@ -81,14 +86,14 @@ def _get_openai_client() -> Optional[OpenAI]:
 
 def _embed(text: str) -> List[float]:
     """
-    Generate embedding vector for text using OpenAI.
-    
+    Generate embedding vector for a single text using OpenAI.
+
     Args:
         text: Text to embed
-        
+
     Returns:
         List of floats representing the embedding vector
-        
+
     Raises:
         RuntimeError: If OpenAI client is not configured or embedding fails
     """
@@ -108,6 +113,79 @@ def _embed(text: str) -> List[float]:
 
     except Exception as e:
         raise RuntimeError(f"Failed to generate embedding with model {model}: {e}")
+
+
+def _embed_batch(texts: List[str]) -> List[List[float]]:
+    """Embed several texts in one API call, in the order they were given.
+
+    ``text-embedding-3-small`` accepts a list, and upsert_text used to ignore that:
+    it embedded one chunk per request in a loop, so the captain's 448-chunk paper
+    cost 448 sequential round trips — the dominant term in a 3m20s upload.
+
+    Two things this function refuses to assume:
+
+    - **That the response comes back in request order.** Each item carries an
+      ``index`` naming the input it belongs to, and that is what places the vector.
+      Order almost certainly is preserved, but "almost certainly" applied to a
+      chunk-to-vector mapping is a silent corruption: every chunk of the paper would
+      still be present, and every one of them would answer for a different chunk.
+    - **That a short response is a partial success.** A missing or duplicated index,
+      or a count that does not match the input, raises. Writing the vectors that did
+      arrive would leave the collection quietly wrong.
+
+    Raises:
+        RuntimeError: If the OpenAI client is not configured, the call fails, or the
+            response does not map one vector onto every input.
+    """
+    if not texts:
+        return []
+
+    client = _get_openai_client()
+    if not client:
+        raise RuntimeError("OpenAI client not configured. Set OPENAI_API_KEY environment variable.")
+
+    model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
+
+    try:
+        response = client.embeddings.create(
+            model=model,
+            input=[t.strip() for t in texts],
+        )
+        data = list(response.data)
+    except Exception as e:
+        raise RuntimeError(f"Failed to generate embeddings with model {model}: {e}")
+
+    if len(data) != len(texts):
+        raise RuntimeError(
+            f"Embedding model {model} returned {len(data)} vectors for "
+            f"{len(texts)} inputs"
+        )
+
+    ordered: List[Optional[List[float]]] = [None] * len(texts)
+    for position, item in enumerate(data):
+        # `index` is what the API promises; fall back to arrival order only when a
+        # client or a test double omits the field entirely.
+        idx = getattr(item, "index", None)
+        if idx is None:
+            idx = position
+        if not isinstance(idx, int) or not 0 <= idx < len(texts):
+            raise RuntimeError(
+                f"Embedding model {model} returned an out-of-range index {idx!r} "
+                f"for a batch of {len(texts)}"
+            )
+        if ordered[idx] is not None:
+            raise RuntimeError(
+                f"Embedding model {model} returned index {idx} twice in one batch"
+            )
+        ordered[idx] = item.embedding
+
+    missing = [i for i, v in enumerate(ordered) if v is None]
+    if missing:
+        raise RuntimeError(
+            f"Embedding model {model} returned no vector for input(s) {missing}"
+        )
+
+    return [v for v in ordered if v is not None]
 
 
 def _get_vector_size() -> int:
@@ -234,7 +312,10 @@ def upsert_text(
         overlap: TOKENS of overlap between consecutive chunks
 
     Returns:
-        Number of chunks successfully upserted
+        Number of chunks upserted, which is all of them or none. Embedding is
+        all-or-nothing (see the batching loop below), so a non-zero return means
+        the paper is fully represented in the collection; 0 means nothing was
+        written and the caller should report a failed vector stage.
     """
     client = get_client()
     if client is None:
@@ -255,14 +336,21 @@ def upsert_text(
             logger.warning("No chunks generated from text")
             return 0
 
-        # Prepare points for upsert
+        # Embed in batches rather than one request per chunk. The per-chunk loop
+        # this replaced also swallowed a failed chunk and carried on, so a paper
+        # could be written to Qdrant with an arbitrary subset of itself embedded and
+        # still report a healthy-looking count. A failed batch now aborts the whole
+        # upsert: nothing is written, upsert_text returns 0, and the callers already
+        # treat 0 chunks from non-empty text as a failed VECTORS stage. Partial is
+        # the one outcome with no honest way to report it.
         points = []
-        successful_embeds = 0
 
-        for idx, chunk in enumerate(chunks):
-            try:
-                # Generate embedding
-                vector = _embed(chunk)
+        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[start:start + EMBED_BATCH_SIZE]
+            vectors_for_batch = _embed_batch(batch)
+
+            for offset, (chunk, vector) in enumerate(zip(batch, vectors_for_batch)):
+                idx = start + offset
 
                 # Create deterministic UUID from hash
                 id_string = f"{pillar_id}|{paper_id}|{idx}"
@@ -282,15 +370,17 @@ def upsert_text(
                 )
 
                 points.append(point)
-                successful_embeds += 1
 
-            except Exception as e:
-                logger.warning(f"Failed to embed chunk {idx} for paper {paper_id}: {e}")
-                continue
+        if len(points) != len(chunks):
+            # Unreachable unless the loop above is edited into inconsistency; stated
+            # as a check rather than a comment because a chunk-to-vector mismatch is
+            # invisible in the stored data.
+            raise RuntimeError(
+                f"Embedded {len(points)} vectors for {len(chunks)} chunks of "
+                f"paper {paper_id}"
+            )
 
-        if not points:
-            logger.warning("No chunks could be embedded")
-            return 0
+        successful_embeds = len(points)
 
         # Upsert points
         client.upsert(

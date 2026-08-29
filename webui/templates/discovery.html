@@ -371,12 +371,17 @@ processBtn.addEventListener('click', async () => {
 
   if (selectedIds.length === 0) return;
 
+  // These objects are the paper's permanent record, not a view of it: /select
+  // persists exactly what is sent here. So send the candidate's metadata through
+  // whole. Anything this table wants to shorten for display gets shortened where it
+  // is rendered (see renderCandidates), never on the way back to the server.
   const selectedPapers = candidates
     .filter(c => selectedIds.includes(c.paper.id))
     .map(c => ({
       id: c.paper.id,
       title: c.paper.title,
       authors: c.paper.authors || [],
+      venue: c.paper.venue,
       year: c.paper.year,
       url_pdf: c.paper.url_pdf,
       abstract: c.paper.abstract,
