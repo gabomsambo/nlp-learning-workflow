@@ -19,6 +19,16 @@ from nlp_pillars.db import (
     get_lessons,
     get_quiz_cards_for_review
 )
+from ..services.postgrest_client import CountUnavailableError, PostgrestClient
+
+# Progress-bar targets for the pillar detail page. These are display goals, not
+# limits: nothing enforces them and a pillar may sail past any of them, which is
+# why the template clamps the bar rather than letting it overflow.
+PROGRESS_GOALS = {
+    "papers": 100,
+    "lessons": 50,
+    "quiz_cards": 200,
+}
 # PillarID enum no longer used - using dynamic string IDs
 
 router = APIRouter(prefix="/pillars", tags=["pillar_pages"])
@@ -71,12 +81,23 @@ async def pillar_detail_page(request: Request, pillar_id: str) -> HTMLResponse:
             recent_lessons = []
             recent_quiz_cards = []
         
-        # Calculate stats
-        stats = {
-            'papers_count': len(recent_papers),
-            'lessons_count': len(recent_lessons),
-            'quiz_cards_count': len(recent_quiz_cards)
-        }
+        # Real per-pillar totals, counted server-side. These must not be derived
+        # from the lists above: those are capped at 5, so "Papers Processed" could
+        # never read higher than 5 no matter how many the pillar had.
+        #
+        # A failure here is NOT degraded to zero. The page renders an explicit
+        # unknown state instead, because "0 papers" and "we could not ask" are
+        # different facts and only one of them is a reason to worry.
+        try:
+            counts = await PostgrestClient().counts_for_pillar(pillar_id)
+            stats = {
+                'papers_count': counts['papers'],
+                'lessons_count': counts['lessons'],
+                'quiz_cards_count': counts['quiz_cards'],
+            }
+        except CountUnavailableError as e:
+            logger.warning(f"Progress counts unavailable for pillar {pillar_id}: {e}")
+            stats = None
         
         # Render template
         templates = request.app.state.templates
@@ -89,6 +110,7 @@ async def pillar_detail_page(request: Request, pillar_id: str) -> HTMLResponse:
                 "recent_lessons": recent_lessons,
                 "recent_quiz_cards": recent_quiz_cards,
                 "stats": stats,
+                "progress_goals": PROGRESS_GOALS,
                 "now": datetime.now(timezone.utc)
             }
         )
