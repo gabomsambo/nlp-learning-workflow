@@ -207,6 +207,10 @@ CREATE TABLE podcast_scripts (
     word_count INTEGER DEFAULT 0,
     key_points JSONB DEFAULT '[]'::jsonb,   -- List[str] of discussion points
     ground_pack JSONB DEFAULT '{}'::jsonb,  -- dict: 4 prompt outputs for reference
+    -- What the script was written from; see schemas.py::SourceMaterial.
+    -- Nullable: pre-011 rows have no value and are read back as level="full".
+    -- Added by docs/migrations/011_podcast_source_material.sql.
+    source_material JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 

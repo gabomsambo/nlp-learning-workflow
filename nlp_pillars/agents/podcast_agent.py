@@ -7,12 +7,13 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from typing import NamedTuple, Optional
 
 import httpx
 from anthropic import AsyncAnthropic
 
 from ..config import get_settings
-from ..schemas import PaperRef, PodcastScript
+from ..schemas import PaperNote, PaperRef, PodcastScript, SourceMaterial
 from ..db import get_paper_by_id, get_notes_by_paper_id
 from .ingest_agent import IngestAgent, IngestError
 
@@ -25,6 +26,36 @@ logger = logging.getLogger(__name__)
 # ~128K input tokens, so ~$0.53. Output is roughly constant; only the input
 # side scales with the paper. _call_claude logs real per-call token usage.
 MAX_FULL_TEXT_CHARS = 100000
+
+
+class InsufficientSourceMaterialError(Exception):
+    """There is nothing to write a podcast from, so nothing was spent trying.
+
+    Raised by ``generate()`` *before* the first model call when the paper body
+    could not be read AND the paper has no abstract AND there is no notes row.
+    Previously this combination produced five model calls (~$0.27) and a fluent,
+    confident script whose entire factual basis was the title, one author name
+    and the placeholder "[Full text not available...]" — with a green success
+    message and nothing in the response, the page or the stored row recording
+    that the body was absent.
+
+    The message carries the reason the body is missing (a dead ``file://`` path,
+    a 404, a parse failure), because the caller has to put something actionable
+    in front of the person who clicked the button.
+    """
+
+
+class FullTextResult(NamedTuple):
+    """What ``_get_full_text`` found, and why it found nothing.
+
+    ``_get_full_text`` used to return a bare ``""`` for every failure, which is
+    exactly as informative as an empty paper — the reason died at the ``except``
+    and the caller could not tell "this PDF 404s" from "this paper has no PDF".
+    Keeping the reason is the whole point; do not collapse this back to ``str``.
+    """
+
+    text: str
+    error: Optional[str] = None
 
 
 # Ground Pack Prompts
@@ -268,7 +299,7 @@ LIMITATIONS & THREATS:
         # Limit to top 5 key points
         return key_points[:5]
 
-    def _get_full_text(self, paper: PaperRef) -> str:
+    def _get_full_text(self, paper: PaperRef) -> FullTextResult:
         """Extract full text from paper PDF using IngestAgent.
 
         Blocking: this downloads and parses a PDF. Call it through
@@ -278,11 +309,14 @@ LIMITATIONS & THREATS:
             paper: Paper reference with url_pdf
 
         Returns:
-            Full text content or empty string on failure
+            FullTextResult: the text, or empty text plus the reason it is empty.
+            Failures are still not raised — an unreadable PDF is a legitimate
+            state for a paper that has an abstract and notes — but the reason
+            travels with the emptiness so ``generate`` can report it.
         """
         if not paper.url_pdf:
             logger.warning(f"No PDF URL for paper {paper.id}, cannot extract full text")
-            return ""
+            return FullTextResult("", "the paper has no PDF URL")
 
         try:
             start_time = time.time()
@@ -294,14 +328,80 @@ LIMITATIONS & THREATS:
             logger.info(
                 f"Extracted {len(parsed_paper.full_text)} chars from PDF in {elapsed:.1f}s"
             )
-            return parsed_paper.full_text
+            if not parsed_paper.full_text.strip():
+                return FullTextResult(
+                    "", f"no text could be extracted from {paper.url_pdf}"
+                )
+            return FullTextResult(parsed_paper.full_text)
 
         except IngestError as e:
             logger.error(f"Failed to extract text for {paper.id}: {e}")
-            return ""
+            return FullTextResult("", str(e))
         except Exception as e:
             logger.error(f"Unexpected error extracting text for {paper.id}: {e}")
-            return ""
+            return FullTextResult("", f"{type(e).__name__}: {e}")
+
+    @staticmethod
+    def _assess_source_material(
+        paper: PaperRef,
+        notes: Optional[PaperNote],
+        full_text: FullTextResult,
+    ) -> SourceMaterial:
+        """Decide whether there is enough to write a podcast from, and say so.
+
+        Three levels of honesty, not two:
+
+        - **full** — the paper body was read. The normal path.
+        - **partial** — no body, but an abstract and/or an extracted notes row.
+          This proceeds, deliberately: a notes row carries the problem, method,
+          findings and limitations that prompts 3 and 4 ask for, and an abstract
+          is real content written by the authors. Refusing here would also block
+          every paper whose PDF host is briefly unreachable. But it is recorded
+          — in the response, on the page and in the stored row — because the bug
+          being fixed is precisely that "thin" and "complete" looked identical.
+        - **nothing** — no body, no abstract, no notes. ``generate`` raises.
+
+        Raises:
+            InsufficientSourceMaterialError: level would be "nothing".
+        """
+        has_text = bool(full_text.text.strip())
+        has_abstract = bool(paper.abstract and paper.abstract.strip())
+        has_notes = notes is not None
+
+        if has_text:
+            return SourceMaterial(
+                level="full",
+                full_text_chars=len(full_text.text),
+                has_abstract=has_abstract,
+                has_notes=has_notes,
+                warnings=[],
+            )
+
+        reason = full_text.error or "the paper body could not be read"
+
+        if not has_abstract and not has_notes:
+            raise InsufficientSourceMaterialError(
+                f"Cannot generate a podcast for \"{paper.title}\": {reason}, and the "
+                f"paper has no abstract and no extracted notes. There is nothing to "
+                f"write from, so no model calls were made."
+            )
+
+        available = " and ".join(
+            part for part, present in (("its abstract", has_abstract), ("extracted notes", has_notes))
+            if present
+        )
+        return SourceMaterial(
+            level="partial",
+            full_text_chars=0,
+            has_abstract=has_abstract,
+            has_notes=has_notes,
+            warnings=[
+                f"The full text of this paper was not available ({reason}). The script "
+                f"was written from {available} only, so it covers far less of the paper "
+                f"than usual and cannot contain results, hyperparameters or numbers that "
+                f"appear only in the body."
+            ],
+        )
 
     async def generate(self, paper_id: str, pillar_id: str) -> PodcastScript:
         """
@@ -312,7 +412,14 @@ LIMITATIONS & THREATS:
             pillar_id: Associated pillar ID
 
         Returns:
-            PodcastScript with generated content
+            PodcastScript with generated content, carrying a SourceMaterial record
+            of what it was actually written from.
+
+        Raises:
+            ValueError: no such paper.
+            InsufficientSourceMaterialError: the paper body could not be read and
+                the paper has neither an abstract nor a notes row. Raised before
+                the first model call, so nothing is spent.
         """
         total_start = time.time()
         logger.info(f"Starting podcast generation for paper {paper_id}")
@@ -332,7 +439,18 @@ LIMITATIONS & THREATS:
         # to_thread because _get_full_text downloads and parses a PDF (~7s cold)
         # and generate() is awaited directly from a FastAPI route — running it
         # inline froze the event loop for every other request.
-        full_text = await asyncio.to_thread(self._get_full_text, paper)
+        full_text_result = await asyncio.to_thread(self._get_full_text, paper)
+
+        # Decide whether there is anything to write from BEFORE spending a
+        # single token. _assess_source_material raises when the body is missing
+        # and there is no abstract and no notes; five calls against a title and
+        # the string "[Full text not available...]" is $0.27 of confident
+        # fiction with a green success message on top.
+        source_material = self._assess_source_material(paper, notes, full_text_result)
+        for warning in source_material.warnings:
+            logger.warning(f"Podcast for {paper_id}: {warning}")
+
+        full_text = full_text_result.text
 
         # Truncate if too long (keep under 100K chars for Claude context safety)
         if len(full_text) > MAX_FULL_TEXT_CHARS:
@@ -388,6 +506,7 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
             word_count=len(script.split()),
             key_points=self._extract_key_points(ground_pack),
             ground_pack=ground_pack,
+            source_material=source_material,
             created_at=datetime.now()
         )
 

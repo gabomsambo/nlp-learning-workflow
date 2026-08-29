@@ -15,7 +15,9 @@ from nlp_pillars.db import (
     get_recent_notes, queue_add_candidates, queue_pop_next,
     _paper_ref_to_dict, _dict_to_paper_ref, _paper_note_to_dict, _dict_to_paper_note,
     _lesson_to_dict, _dict_to_lesson, _quiz_card_to_dict, _dict_to_quiz_card,
-    get_pillars, get_pillars_or_empty, PillarLookupError
+    get_pillars, get_pillars_or_empty, PillarLookupError,
+    add_podcast_script, get_podcast_scripts, get_podcast_script_by_id, get_all_papers,
+    PodcastScriptSaveError, PodcastScriptLookupError, PaperLookupError,
 )
 
 
@@ -855,3 +857,118 @@ class TestPillarIsRequiredToWrite:
         )
         assert row['pillar_id'] == 'ai-safety-alignment'
         assert 'venue' not in row and 'year' not in row and 'abstract' not in row
+
+
+class TestPodcastScriptPersistenceIsHonest:
+    """The podcast path must not lose a paid-for artifact, or confuse absent with broken.
+
+    Two separate lies used to live here:
+      - add_podcast_script() returned None for every failure, and the router turned
+        that into a 500 with the script discarded — four minutes and ~$0.27 gone
+        because of a transient hiccup.
+      - get_podcast_script_by_id() returned None for both "no such script" and "the
+        query failed", and both routes answered 404. Measured: a malformed id
+        produced PostgREST `400 invalid input syntax for type uuid` and reached the
+        user as "Script not found".
+    """
+
+    @pytest.fixture
+    def sample_script(self):
+        from nlp_pillars.schemas import PodcastScript
+        return PodcastScript(
+            paper_id="test.12345",
+            pillar_id="models-architectures",
+            title="Deep Dive: Test Paper",
+            script="[HOST]: Hello.",
+            word_count=2,
+        )
+
+    def test_a_failed_insert_raises_instead_of_returning_none(
+        self, mock_supabase_client, sample_script
+    ):
+        mock_supabase_client.table().insert.return_value = {
+            'data': None, 'error': {'message': 'connection refused'}
+        }
+        with pytest.raises(PodcastScriptSaveError) as excinfo:
+            add_podcast_script(sample_script)
+        # The real reason has to reach the user; "Failed to save" is not a reason.
+        assert 'connection refused' in str(excinfo.value)
+
+    def test_an_insert_that_returns_no_row_is_also_a_failure(
+        self, mock_supabase_client, sample_script
+    ):
+        """No id back means the caller cannot prove the script was stored."""
+        mock_supabase_client.table().insert.return_value = {'data': [], 'error': None}
+        with pytest.raises(PodcastScriptSaveError):
+            add_podcast_script(sample_script)
+
+    def test_a_pre_migration_database_still_saves_the_script(
+        self, mock_supabase_client, sample_script
+    ):
+        """PGRST204 on source_material drops the provenance, never the script.
+
+        Same degradation as paper_queue.url_pdf. Losing the record of what the
+        script was written from is bad; losing the script is much worse. The live
+        error string is the one PostgREST actually returns — verified against the
+        running instance on 2026-08-29.
+        """
+        attempts = []
+
+        def insert(data):
+            attempts.append(dict(data))
+            if 'source_material' in data:
+                return {'data': None, 'error': {
+                    'code': 'PGRST204', 'details': None, 'hint': None,
+                    'message': "Could not find the 'source_material' column of "
+                               "'podcast_scripts' in the schema cache",
+                }}
+            return {'data': [{'id': 'abc-123'}], 'error': None}
+
+        mock_supabase_client.table().insert.side_effect = insert
+
+        assert add_podcast_script(sample_script) == 'abc-123'
+        assert len(attempts) == 2
+        assert 'source_material' in attempts[0]
+        assert 'source_material' not in attempts[1]
+        # Everything else survives the retry.
+        assert attempts[1]['script'] == "[HOST]: Hello."
+
+    def test_a_missing_script_is_none_and_a_broken_query_raises(
+        self, mock_supabase_client
+    ):
+        mock_supabase_client.table().select().eq().execute.return_value = {
+            'data': [], 'error': None
+        }
+        assert get_podcast_script_by_id('00000000-0000-0000-0000-000000000000') is None
+
+        mock_supabase_client.table().select().eq().execute.return_value = {
+            'data': None,
+            'error': {'code': '22P02',
+                      'message': 'invalid input syntax for type uuid: "not-a-uuid"'},
+        }
+        with pytest.raises(PodcastScriptLookupError) as excinfo:
+            get_podcast_script_by_id('not-a-uuid')
+        assert 'invalid input syntax' in str(excinfo.value)
+
+    def test_no_scripts_is_empty_and_a_dead_database_raises(self, mock_supabase_client):
+        mock_supabase_client.table().select().order().limit().execute.return_value = {
+            'data': [], 'error': None
+        }
+        assert get_podcast_scripts() == []
+
+        mock_supabase_client.table().select().order().limit().execute.return_value = {
+            'data': None, 'error': {'message': 'Connection refused'}
+        }
+        with pytest.raises(PodcastScriptLookupError):
+            get_podcast_scripts()
+
+    def test_no_papers_is_empty_and_a_dead_database_raises(self, mock_supabase_client):
+        """An empty paper dropdown must not be what an unreachable database looks like."""
+        mock_supabase_client.table().select().order().limit().execute.return_value = {
+            'data': [], 'error': None
+        }
+        assert get_all_papers() == []
+
+        mock_supabase_client.table.side_effect = RuntimeError('socket is closed')
+        with pytest.raises(PaperLookupError):
+            get_all_papers()

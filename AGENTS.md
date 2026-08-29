@@ -141,6 +141,10 @@ Apply one with:
 There is no migration-tracking table. The only way to know what a database has is to look:
 compare `information_schema.columns` against `schema.sql`. Both 008 and 009 were applied to
 the captain's volume on 2026-08-29, which brought it level with `schema.sql`'s 13 tables.
+**011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
+PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
+`add_podcast_script()` detects exactly that and retries without the key, so podcasts still
+save; only the record of what they were written from is lost until it is run.
 
 ## Uploaded PDFs are retained, and are the only copy
 
@@ -700,6 +704,43 @@ running the PDF ingest inline froze the event loop for every other request. Meas
 0 co-running requests served inline vs 13/13 through `to_thread`. One podcast is five
 Claude calls that each carry the full paper text; measured end to end on a 5-page paper at
 37.8K input + 9.6K output tokens ≈ **$0.26**.
+
+### Podcast generation refuses rather than inventing, and never destroys a script
+
+Three contracts, each of which replaced a measured lie. Do not soften any of them.
+
+- **No source material is a hard failure, raised before the first model call.**
+  `generate()` calls `_assess_source_material()` right after the paper/notes/full-text
+  reads. No body **and** no abstract **and** no notes raises
+  `InsufficientSourceMaterialError`; the route answers **422** with the reason. Before
+  this, `_get_full_text`'s `except: return ""` became the placeholder
+  `[Full text not available…]` and all five calls ran — ~$0.27 of fluent, confident
+  script whose entire factual basis was the title, reported as a green success. Paper
+  `file:2dd76e910fbc` in the captain's database is exactly that case and is the fixture:
+  reproduce with the model calls stubbed, never live.
+- **Partial material proceeds and is recorded.** A body-less paper with an abstract
+  and/or a notes row still generates — a notes row carries the problem, method and
+  limitations prompts 3 and 4 ask for — but `SourceMaterial` (level, warnings) rides on
+  `PodcastScript`, into the response, onto the page and into
+  `podcast_scripts.source_material` (JSONB, `docs/migrations/011_…`, hand-applied).
+  "Thin" and "complete" looking identical is the bug; equating them one level up is the
+  same bug.
+- **A failed insert must not destroy the script.** `add_podcast_script()` raises
+  `PodcastScriptSaveError`; the route answers **200 with `saved: false`** and the full
+  script in the body, and the page renders it under a "NOT saved" banner with a
+  client-side download. A 5xx here sends a paid-for artifact into generic error handling
+  and loses it. `_get_full_text` returns `FullTextResult(text, error)` so the reason a
+  body is missing survives the `except` — do not collapse it back to `str`.
+
+`get_podcast_script_by_id()` / `get_podcast_scripts()` / `get_all_papers()` **raise** on
+read failure (`PodcastScriptLookupError`, `PaperLookupError`); `None` and `[]` mean
+genuinely absent. Same precedent as `PillarLookupError`. Routes map the error to **503**,
+never 404 — a malformed id used to produce PostgREST `400 invalid input syntax for type
+uuid` and reach the user as "Script not found". The `/podcast` page renders an explicit
+banner instead of an empty dropdown plus "No podcast scripts generated yet".
+
+Still deliberately unfixed on this path: the fake progress bar and "30-60 seconds" label
+(the real time is ~238s), and the `innerHTML` sink that renders the script body.
 
 `discovery_agent` became a real LLM agent on 2026-08-16; before that it was a stub that
 pasted stopword-stripped pillar goals into three fixed templates and never called a model.
