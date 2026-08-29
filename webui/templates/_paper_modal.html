@@ -1,0 +1,200 @@
+{#
+  The shared paper-detail modal: dialog markup, its styles, and the module that fills it.
+
+  Included by papers.html and pillar_detail.html. Both pages need the identical surface —
+  the same endpoint, the same sections, the same quiz-answer toggle — so there is one copy
+  of it here rather than two that drift. Include this inside the content block and then
+  call PaperModal.init(); see either page for the two-line usage.
+
+  Every rule below is scoped under #paper-details-modal on purpose: `.quiz-card`,
+  `.quiz-question` and `.quiz-answer` are also used by quiz.html with its own styling, and
+  an unscoped rule here would silently restyle the real review page.
+#}
+<dialog id="paper-details-modal">
+  <article>
+    <header>
+      <button aria-label="Close" rel="prev" id="close-modal"></button>
+      <p><strong id="modal-paper-title">Loading…</strong></p>
+    </header>
+    <div id="modal-content"></div>
+  </article>
+</dialog>
+
+<style>
+#paper-details-modal article {
+  max-width: 80vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+#paper-details-modal .paper-section {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--pico-muted-border-color, var(--muted-border-color));
+  border-radius: 0.5rem;
+}
+
+#paper-details-modal .paper-section h4 {
+  margin-top: 0;
+  color: var(--pico-primary, var(--primary));
+  border-bottom: 1px solid var(--pico-muted-border-color, var(--muted-border-color));
+  padding-bottom: 0.5rem;
+}
+
+#paper-details-modal .modal-card {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--pico-card-sectioning-background-color, var(--secondary-background));
+  border-radius: 0.5rem;
+}
+
+#paper-details-modal .modal-field {
+  margin-bottom: 1rem;
+}
+
+#paper-details-modal .modal-field > p {
+  margin-bottom: 0;
+}
+
+#paper-details-modal .modal-message {
+  text-align: center;
+  padding: 2rem;
+}
+
+#paper-details-modal .modal-muted {
+  color: var(--pico-muted-color, var(--muted-color));
+}
+
+/* Quiz answers: one control for the whole section, sitting beside its heading. */
+#paper-details-modal .quiz-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--pico-muted-border-color, var(--muted-border-color));
+}
+
+#paper-details-modal .quiz-section-header h4 {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 0.5rem;
+}
+
+#paper-details-modal .quiz-answers-toggle {
+  width: auto;
+  margin-bottom: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+  background: transparent;
+  color: var(--pico-primary, var(--primary));
+  border: 1px solid var(--pico-primary, var(--primary));
+  border-radius: 1rem;
+  cursor: pointer;
+}
+
+#paper-details-modal .quiz-card {
+  background: var(--pico-card-sectioning-background-color, var(--secondary-background));
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 0.5rem;
+  border-left: 4px solid var(--pico-primary, var(--primary));
+}
+
+#paper-details-modal .quiz-question {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+#paper-details-modal .quiz-answer {
+  color: var(--pico-muted-color, var(--muted-color));
+  margin-left: 1rem;
+}
+
+#paper-details-modal .metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+#paper-details-modal .metadata-item {
+  background: var(--pico-card-sectioning-background-color, var(--secondary-background));
+  padding: 0.75rem;
+  border-radius: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+#paper-details-modal .metadata-label {
+  font-weight: 600;
+  color: var(--pico-primary, var(--primary));
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+#paper-details-modal .json-list {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 0;
+}
+
+#paper-details-modal .json-list li {
+  background: var(--pico-card-sectioning-background-color, var(--secondary-background));
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-radius: 0.25rem;
+  border-left: 3px solid var(--pico-primary, var(--primary));
+}
+
+#paper-details-modal .lesson-tldr {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--pico-primary, var(--primary));
+  color: var(--pico-primary-inverse, #fff);
+  border-radius: 0.5rem;
+}
+
+#paper-details-modal .term-list {
+  margin-top: 0.5rem;
+}
+
+#paper-details-modal .term-chip {
+  display: inline-block;
+  background: var(--pico-primary, var(--primary));
+  color: var(--pico-primary-inverse, #fff);
+  padding: 0.25rem 0.5rem;
+  margin: 0.125rem;
+  border-radius: 1rem;
+  font-size: 0.8rem;
+}
+
+#paper-details-modal .modal-badge-row {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+#paper-details-modal .difficulty-badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 1rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+#paper-details-modal .difficulty-1 { background: #d4edda; color: #155724; }
+#paper-details-modal .difficulty-2 { background: #fff3cd; color: #856404; }
+#paper-details-modal .difficulty-3 { background: #f8d7da; color: #721c24; }
+
+#paper-details-modal .time-badge {
+  background: var(--pico-muted-border-color, var(--muted-border-color));
+  color: var(--pico-color, var(--color));
+  padding: 0.25rem 0.5rem;
+  border-radius: 1rem;
+  font-size: 0.8rem;
+}
+</style>
+
+<script src="/static/paper-modal.js"></script>

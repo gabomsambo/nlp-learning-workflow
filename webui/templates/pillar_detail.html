@@ -3,6 +3,31 @@
 {% block title %}{{ pillar.name }} - Pillar Details{% endblock %}
 
 {% block content %}
+
+{#
+  One Recent Activity row. All three tabs use it so the click target, the markup and the
+  affordance cannot drift apart. Papers key the modal by their own `id`; lessons and quiz
+  cards by their `paper_id` — one endpoint, one modal, three tabs.
+
+  A row with no paper id (possible only if the row predates the column) degrades to the
+  old inert <div> rather than rendering a link that would 404 the fetch.
+#}
+{% macro activity_item(icon, paper_id, title, subtitle, meta) %}
+  {% if paper_id %}
+  <a class="activity-item activity-item-link" href="#" data-paper-id="{{ paper_id }}">
+  {% else %}
+  <div class="activity-item">
+  {% endif %}
+    <div class="activity-icon" aria-hidden="true">{{ icon }}</div>
+    <div class="activity-content">
+      <h4>{{ title }}</h4>
+      {% if subtitle %}<p>{{ subtitle }}</p>{% endif %}
+      <small>{{ meta }}</small>
+    </div>
+    {% if paper_id %}<span class="activity-open" aria-hidden="true">View details →</span>{% endif %}
+  {% if paper_id %}</a>{% else %}</div>{% endif %}
+{% endmacro %}
+
 <div class="container">
     <!-- Breadcrumb -->
     <nav aria-label="breadcrumb" class="breadcrumb">
@@ -112,14 +137,13 @@
                 {% if recent_papers %}
                 <div class="activity-list">
                     {% for paper in recent_papers %}
-                    <div class="activity-item">
-                        <div class="activity-icon">📄</div>
-                        <div class="activity-content">
-                            <h4>{{ paper.title }}</h4>
-                            <p>{{ paper.authors[:2]|join(', ') }}{% if paper.authors|length > 2 %} et al.{% endif %}</p>
-                            <small>{{ paper.year if paper.year else 'Unknown date' }}</small>
-                        </div>
-                    </div>
+                    {{ activity_item(
+                        '📄',
+                        paper.id,
+                        paper.title,
+                        (paper.authors or [])[:2]|join(', ') ~ (' et al.' if (paper.authors or [])|length > 2 else ''),
+                        paper.year if paper.year else 'Unknown date'
+                    ) }}
                     {% endfor %}
                 </div>
                 {% else %}
@@ -134,14 +158,13 @@
                 {% if recent_lessons %}
                 <div class="activity-list">
                     {% for lesson in recent_lessons %}
-                    <div class="activity-item">
-                        <div class="activity-icon">💡</div>
-                        <div class="activity-content">
-                            <h4>{{ lesson.tl_dr[:100] }}{% if lesson.tl_dr|length > 100 %}...{% endif %}</h4>
-                            <p>{{ lesson.takeaways[:2]|join(', ') }}{% if lesson.takeaways|length > 2 %} et al.{% endif %}</p>
-                            <small>{{ lesson.created_at.strftime('%b %d, %Y') if lesson.created_at else 'Unknown date' }}</small>
-                        </div>
-                    </div>
+                    {{ activity_item(
+                        '💡',
+                        lesson.paper_id,
+                        lesson.tl_dr[:100] ~ ('...' if lesson.tl_dr|length > 100 else ''),
+                        (lesson.takeaways or [])[:2]|join(', ') ~ (' et al.' if (lesson.takeaways or [])|length > 2 else ''),
+                        lesson.created_at.strftime('%b %d, %Y') if lesson.created_at else 'Unknown date'
+                    ) }}
                     {% endfor %}
                 </div>
                 {% else %}
@@ -154,16 +177,25 @@
             <!-- Quiz cards tab -->
             <div id="quiz-tab" class="tab-pane">
                 {% if recent_quiz_cards %}
+                {#
+                  Secondary action. Clicking a card opens the detail modal, which is for
+                  reading; the real review flow — the one that records a rating and
+                  reschedules the card — lives at /quiz.
+                #}
+                <div class="activity-actions">
+                    <a role="button" class="outline secondary" href="/quiz?pillar={{ pillar.id }}">
+                        📚 Study these
+                    </a>
+                </div>
                 <div class="activity-list">
                     {% for card in recent_quiz_cards %}
-                    <div class="activity-item">
-                        <div class="activity-icon">❓</div>
-                        <div class="activity-content">
-                            <h4>{{ card.question[:100] }}{% if card.question|length > 100 %}...{% endif %}</h4>
-                            <p>Difficulty: {{ card.difficulty }}/3</p>
-                            <small>Due {{ card.due_date.strftime('%b %d, %Y') if card.due_date else 'Unknown date' }}</small>
-                        </div>
-                    </div>
+                    {{ activity_item(
+                        '❓',
+                        card.paper_id,
+                        card.question[:100] ~ ('...' if card.question|length > 100 else ''),
+                        'Difficulty: ' ~ card.difficulty|int ~ '/3',
+                        'Due ' ~ (card.due_date.strftime('%b %d, %Y') if card.due_date else 'Unknown date')
+                    ) }}
                     {% endfor %}
                 </div>
                 {% else %}
@@ -542,6 +574,55 @@
 .activity-icon {
     font-size: 1.5rem;
     flex-shrink: 0;
+}
+
+/*
+ * The whole row is the link, not just the title. The <a> wraps the row's flow content,
+ * which HTML5 allows as long as it contains no other interactive element — so keep the
+ * "Study these" button outside the list, where it already is.
+ */
+.activity-item-link {
+    color: inherit;
+    text-decoration: none;
+    align-items: center;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.activity-item-link:hover,
+.activity-item-link:focus-visible {
+    border-color: var(--pico-primary, var(--primary));
+    text-decoration: none;
+}
+
+.activity-item-link .activity-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.activity-item-link .activity-content h4 {
+    color: var(--pico-primary, var(--primary));
+}
+
+.activity-open {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: var(--muted-color);
+    white-space: nowrap;
+}
+
+.activity-item-link:hover .activity-open,
+.activity-item-link:focus-visible .activity-open {
+    color: var(--pico-primary, var(--primary));
+}
+
+.activity-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+}
+
+.activity-actions a[role="button"] {
+    width: auto;
 }
 
 .activity-content h4 {
@@ -1066,6 +1147,8 @@
 }
 </style>
 
+{% include "_paper_modal.html" %}
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Tab switching
@@ -1085,6 +1168,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
+    // Recent Activity rows open the shared paper-detail modal.
+    //
+    // The selector is deliberately narrow: the search tab's enqueue buttons also carry
+    // data-paper-id, and a generic [data-paper-id] trigger would swallow their clicks.
+    PaperModal.init({ triggerSelector: '.activity-item-link' });
+
     // Edit button
     document.querySelector('.btn-edit').addEventListener('click', (e) => {
         const pillarId = e.target.dataset.pillarId;
