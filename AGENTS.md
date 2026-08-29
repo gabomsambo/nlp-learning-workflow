@@ -4,6 +4,30 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 
+## How to implement changes (plan first)
+
+Plan non-trivial changes before writing code. This applies to any agent working here.
+
+1. **Research first** — read the code you are about to change and the sections of this
+   file that cover it.
+2. **Write the plan** to `PRPs/<feature>.md`: goal, context (files, patterns, gotchas),
+   dependency-ordered tasks, and the validation gates each task must pass.
+   `/prp:generate-prp` produces this shape. `/PRPs` is gitignored — plans stay local.
+3. **Implement the tasks in order**, passing the gates as you go.
+
+**One plan should be one reviewable change.** If the task list spans unrelated subsystems,
+split it and ship the pieces separately. This is a cost argument, not a style preference:
+review cost scales with diff size and is the most expensive validation step there is.
+Measured on a sibling project running the same no-mistakes pipeline, review averaged
+18.6 minutes against ~4,100-line diffs, and one oversized task took three pipeline runs
+and roughly 3.7 hours to land.
+
+**Delivery is not part of implementation.** Do not decide on your own to run `no-mistakes`
+or open a PR. Whoever dispatched the work owns delivery: a firstmate crewmate follows its
+brief's *Definition of done* — `direct-PR` means you push and open the PR yourself, while
+`no-mistakes` means the pipeline owns review, tests, documentation, push, PR and CI, and
+you must not stack your own review or PR steps on top of it.
+
 ## Running the stack
 
 `docker compose up -d --build` starts **five** services: `webui` (FastAPI on :8000),
