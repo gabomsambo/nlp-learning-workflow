@@ -441,6 +441,38 @@ It covers the pure helpers only. The polling loop, `AbortController` teardown an
 browser download, both rejected. Do not read that job's green tick as "the frontend is
 tested".
 
+### Counts on the pillar page are totals, and a failed count is not zero
+
+`PostgrestClient.counts_for_pillar()` reads real per-pillar totals from
+`Content-Range` under `Prefer: count=exact` (the client sets that header on every
+request), one `select=id&limit=1` per table. Use it rather than lengthening a list:
+`/pillars/{id}` used to derive "Papers Processed" from `len(get_papers(limit=5))`,
+so the number could never exceed 5.
+
+It **raises `CountUnavailableError`** where its neighbours `get_quick_stats()` and
+`counts_by_pillar()` degrade to `0`, and `_require_count_from_content_range()` raises
+where `_parse_count_from_content_range()` answers `0` for a missing header. That
+split is the point: an empty pillar and an unreachable database are different facts,
+and the pillar page renders the second as an explicit unknown (`—`, "Count
+unavailable"), never as `0`. Do not "simplify" the raising pair into the lenient one.
+
+"Quiz Cards" there counts **all** cards for the pillar, not the due subset —
+`get_quiz_cards_for_review()` is a due query and belongs on the review page. The
+progress-bar denominators are display goals (`PROGRESS_GOALS` in
+`webui/routers/pillars.py`), nothing enforces them, and the bar is clamped to 100%.
+
+### Pico v2 namespaces its CSS variables, so most of the templates' colours do nothing
+
+`base.html` loads `@picocss/pico@2`, whose custom properties are all `--pico-`
+prefixed. Every bare `var(--primary)`, `var(--muted-color)`, `var(--border-color)`,
+`var(--card-background-color)` and `var(--secondary-background)` in
+`webui/templates/` is therefore undefined: the declaration is dropped at computed-value
+time and the element falls back to inherited or transparent. Measured on
+`pillar_detail.html` — the Progress Overview bars rendered as nothing at all, and the
+"cards" have no background or border. `webui/static/styles.css` defines no variables of
+its own. The fix per declaration is `var(--primary, var(--pico-primary))`; only the
+progress-bar rules carry it so far. Repointing the rest is a separate change.
+
 ## Sharp edges
 
 `schema.sql` now covers all 11 tables, but it was **reconstructed from application code**,

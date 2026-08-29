@@ -21,6 +21,16 @@ from nlp_pillars.pillar_utils import get_all_pillar_ids
 logger = logging.getLogger(__name__)
 
 
+class CountUnavailableError(Exception):
+    """A requested count could not be obtained.
+
+    Raised instead of returning 0. A count of zero and a database that could not
+    answer are different facts, and a UI that renders both as "0" tells the user
+    a pillar is empty when the truth is that nothing is known about it. Callers
+    are expected to surface an explicit unknown state.
+    """
+
+
 class QuickStats(BaseModel):
     """Aggregated counts for dashboard quick stats."""
 
@@ -88,6 +98,67 @@ class PostgrestClient:
             return int(total)
         except Exception:
             return 0
+
+    @staticmethod
+    def _require_count_from_content_range(resp: httpx.Response) -> int:
+        """Extract the total from Content-Range, or raise.
+
+        The lenient sibling above answers 0 for a missing or unparseable header,
+        which is indistinguishable from an empty table. PostgREST only emits the
+        header when `Prefer: count=exact` was honoured, so its absence means the
+        request did not do what we asked and the number is not knowable.
+        """
+        cr = resp.headers.get("Content-Range")
+        if not cr:
+            raise CountUnavailableError(
+                "PostgREST returned no Content-Range header; count=exact was not honoured"
+            )
+        # Example: "0-0/123", or "*/0" for an empty result set.
+        total = cr.split("/")[-1]
+        try:
+            return int(total)
+        except ValueError as e:
+            raise CountUnavailableError(
+                f"Unparseable Content-Range from PostgREST: {cr!r}"
+            ) from e
+
+    async def counts_for_pillar(self, pillar_id: str) -> Dict[str, int]:
+        """Total papers, lessons and quiz cards belonging to one pillar.
+
+        These are true totals, read from `Content-Range` under `Prefer: count=exact`
+        (already set on every request by this client), so each table costs one row
+        on the wire rather than the whole result set.
+
+        Quiz cards are counted in full, not filtered to the ones due for review:
+        the pillar page shows this beside "Papers Processed" and "Lessons Generated"
+        under a "Progress Overview" heading, where the honest reading of "Quiz Cards"
+        is every card the pillar has. Due-for-review is a different metric and lives
+        on the review page.
+
+        Raises:
+            CountUnavailableError: if any of the three counts could not be read.
+                Deliberately not degraded to 0 — see the class docstring.
+        """
+        tables = (("papers", "papers"), ("lessons", "lessons"), ("quiz_cards", "quiz_cards"))
+
+        async def count(table: str) -> int:
+            _, resp = await self._get(
+                table, params={"select": "id", "pillar_id": f"eq.{pillar_id}", "limit": 1}
+            )
+            return self._require_count_from_content_range(resp)
+
+        results = await asyncio.gather(
+            *(count(table) for table, _ in tables), return_exceptions=True
+        )
+
+        counts: Dict[str, int] = {}
+        for (table, key), value in zip(tables, results):
+            if isinstance(value, BaseException):
+                raise CountUnavailableError(
+                    f"Could not count {table} for pillar {pillar_id!r}: {value}"
+                ) from value
+            counts[key] = value
+        return counts
 
     async def get_quick_stats(self) -> QuickStats:
         """Return counts for papers, lessons, and quiz_cards.

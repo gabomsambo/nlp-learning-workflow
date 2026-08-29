@@ -65,32 +65,44 @@
     {% endif %}
 
     <!-- Progress overview -->
+    {#
+      Counts are pillar-wide totals from the router (Prefer: count=exact), NOT the
+      length of the capped Recent Activity lists below. `stats` is None when the
+      counts could not be read; that renders an explicit unknown state, never 0.
+      The bar is clamped so a total past its goal fills it rather than overflowing.
+    #}
     <section class="progress-section">
         <h2>📊 Progress Overview</h2>
+        {% if stats is none %}
+        <p class="progress-unavailable" role="status">
+            Progress counts are unavailable right now — the database could not be reached.
+            This is not a count of zero.
+        </p>
+        {% endif %}
         <div class="progress-grid">
+            {% for card in [
+                ('Papers Processed', 'papers_count', progress_goals.papers, 'papers'),
+                ('Lessons Generated', 'lessons_count', progress_goals.lessons, 'lessons'),
+                ('Quiz Cards', 'quiz_cards_count', progress_goals.quiz_cards, 'cards')
+            ] %}
+            {% set count = stats[card[1]] if stats is not none else None %}
             <div class="progress-card">
-                <h3>Papers Processed</h3>
-                <p class="progress-value">{{ stats.papers_count or 0 }}</p>
+                <h3>{{ card[0] }}</h3>
+                {% if count is none %}
+                <p class="progress-value progress-value-unknown" title="Count unavailable">&mdash;</p>
+                <p class="progress-goal">Count unavailable</p>
                 <div class="progress-bar">
-                    <div class="progress-fill" style="width: {{ (stats.papers_count or 0) / 100 * 100 }}%"></div>
+                    <div class="progress-fill" style="width: 0%"></div>
                 </div>
-            </div>
-            
-            <div class="progress-card">
-                <h3>Lessons Generated</h3>
-                <p class="progress-value">{{ stats.lessons_count or 0 }}</p>
+                {% else %}
+                <p class="progress-value">{{ count }}</p>
+                <p class="progress-goal">Goal: {{ card[2] }} {{ card[3] }}</p>
                 <div class="progress-bar">
-                    <div class="progress-fill" style="width: {{ (stats.lessons_count or 0) / 50 * 100 }}%"></div>
+                    <div class="progress-fill" style="width: {{ [count / card[2] * 100, 100] | min | round(1) }}%"></div>
                 </div>
+                {% endif %}
             </div>
-            
-            <div class="progress-card">
-                <h3>Quiz Cards</h3>
-                <p class="progress-value">{{ stats.quiz_cards_count or 0 }}</p>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: {{ (stats.quiz_cards_count or 0) / 200 * 100 }}%"></div>
-                </div>
-            </div>
+            {% endfor %}
         </div>
     </section>
 
@@ -473,19 +485,40 @@
 .progress-value {
     font-size: 2rem;
     font-weight: bold;
-    margin: 0 0 0.5rem 0;
+    margin: 0 0 0.25rem 0;
     color: var(--primary);
 }
 
+/* Pico v2 namespaces every variable as --pico-*, so the bare var(--muted-color)
+   used throughout this template resolves to nothing and the declaration is
+   dropped. Fall back to Pico's own names here so the bar and its goal label are
+   actually visible; the rest of the page's colours have the same latent problem
+   and are left for a separate change. */
+.progress-value-unknown {
+    color: var(--muted-color, var(--pico-muted-color));
+}
+
+.progress-goal {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.75rem;
+    color: var(--muted-color, var(--pico-muted-color));
+}
+
+.progress-unavailable {
+    margin: 0.75rem 0 0 0;
+    font-size: 0.85rem;
+    color: var(--muted-color, var(--pico-muted-color));
+}
+
 .progress-bar {
-    background: var(--secondary-background);
+    background: var(--secondary-background, var(--pico-secondary-background));
     height: 8px;
     border-radius: 4px;
     overflow: hidden;
 }
 
 .progress-fill {
-    background: var(--primary);
+    background: var(--primary, var(--pico-primary));
     height: 100%;
     transition: width 0.3s ease;
 }
