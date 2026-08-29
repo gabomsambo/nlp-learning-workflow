@@ -1,0 +1,44 @@
+# no-mistakes gate configuration for nlp-learning-workflow.
+#
+# Read ONLY from the default branch at a pinned SHA, never from a pushed
+# branch, so a feature branch cannot change what executes here.
+
+commands:
+  # The two cheap, stdlib-only checks from .github/workflows/tests.yml, which
+  # both finish in well under a second and need no dependency install. The
+  # pipeline runs in a fresh worktree with no environment, so these are the
+  # only gates that are honest AND affordable here.
+  #
+  # check_bare_slugs.py is not tidiness: 73 unquoted pillar slugs survived
+  # thirteen merged PRs because nothing could collect those test files. See
+  # "The test suite runs in CI, and it is green" in AGENTS.md.
+  #
+  # node is not on every PATH on this machine (it lives in ~/.local/bin), so a
+  # missing node SKIPS the JS helpers rather than failing the step -- but a
+  # real JS test failure still fails, and is never swallowed.
+  test: |
+    python3 scripts/check_bare_slugs.py || exit 1
+    if command -v node >/dev/null 2>&1; then
+      node --test tests/js/*.test.js || exit 1
+    else
+      echo "node not found on PATH; skipped JS helper tests"
+    fi
+
+  # The full pytest suite is deliberately NOT wired in. It is hermetic and
+  # green (353/353 as of PR #16) and it is the right gate -- but running it
+  # needs requirements.lock.txt, which pulls torch and is several GB. CI has a
+  # pip cache for that; a fresh pipeline worktree does not, so the install
+  # would cost far more per run than the gate is worth. CI owns it on every PR.
+
+  # lint is deliberately UNSET. `ruff check .` reports 2,338 pre-existing
+  # errors against the [tool.ruff] select list in pyproject.toml (the D
+  # docstring rules alone flood it), measured 2026-08-29. Wiring it in would
+  # fail the lint step on every run and burn three auto-fix rounds on
+  # pre-existing debt unrelated to the change.
+  #
+  # Before setting any command here, run it on a clean checkout of the default
+  # branch and confirm it exits 0. A command that fails on main turns every
+  # run into three wasted fix rounds.
+
+ignore_patterns:
+  - requirements.lock.txt
