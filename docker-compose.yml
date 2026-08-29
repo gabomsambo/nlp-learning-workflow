@@ -93,11 +93,29 @@ services:
     restart: unless-stopped
 
   # ============================================
-  # Qdrant Vector Database (Local)
+  # Qdrant Vector Database (Local) — DEFINED BUT NOT STARTED BY DEFAULT
+  #
+  # As of 2026-08-29 the app talks to Qdrant Cloud again (see the QDRANT block
+  # on `webui`), so this service has no consumer. It is kept rather than
+  # deleted because it is the offline option and because `nlp_qdrant_data`
+  # still holds vectors from earlier local runs.
+  #
+  # The `profiles:` key is what makes "unused" structurally true instead of
+  # merely documented: a service with a profile is skipped by a plain
+  # `docker compose up -d`, so an idle container cannot sit there holding
+  # 6333/6334 and looking like the thing the app is using. Nothing silently
+  # depends on it — the `depends_on: qdrant` entries on webui and scheduler
+  # were removed in the same change.
+  #
+  # To run it (offline work, or inspecting the old local vectors):
+  #     docker compose --profile local-vectors up -d qdrant
+  # Pointing the app back at it means changing QDRANT_URL/QDRANT_API_KEY in
+  # .env for BOTH webui and scheduler and restoring both depends_on entries.
   # ============================================
   qdrant:
     image: qdrant/qdrant:latest
     container_name: nlp_qdrant
+    profiles: ["local-vectors"]
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -139,31 +157,35 @@ services:
       # Overrides for Docker networking. Values set here beat anything in the
       # env_file above, which matters for POSTGREST_URL in particular.
       #
-      # QDRANT_URL IS overridden, as of 2026-08-16. This reverses the earlier
-      # note here, and the reason is external: the managed Qdrant Cloud cluster
-      # whose URL is in .env was suspended on the free tier and no longer exists.
-      # The regional ingress still resolves and still terminates TLS, so the
-      # failure does NOT look like a dead host —
-      # every path, `/` and `/healthz` included, returns a plain-text
-      # `404 page not found` instead of Qdrant's JSON. Do not read that 404 as
-      # "wrong endpoint"; it means no cluster is routed behind that UUID.
+      # QDRANT: back on Qdrant Cloud as of 2026-08-29. This reverses the
+      # 2026-08-16 note that used to live here, which said the cloud cluster
+      # "no longer exists" and hardcoded `http://qdrant:6333` on both services.
+      # That was wrong: the free-tier cluster had been SUSPENDED for inactivity,
+      # not deleted. Unsuspending it took 20 seconds and the `nlp_pillars`
+      # collection came back intact — 170 points, status green, pillar_id
+      # payload index present.
       #
-      # So the local `qdrant` service — kept all along as the offline option —
-      # is now the one the app uses. It starts empty: vectors written to the
-      # cloud cluster are not here, and re-ingesting papers is what repopulates
-      # it. ensure_collections() creates the collection and the pillar_id
-      # payload index on first use, so nothing needs seeding by hand.
+      # A suspended cluster does not fail like a dead host, which is why it read
+      # as gone: DNS still resolves, the regional ingress still terminates TLS,
+      # and EVERY path — `/`, `/healthz`, `/collections` alike — answers a
+      # plain-text `404 page not found`. A live cluster answers `/` with a JSON
+      # banner. Read that 404 as "no cluster routed behind this UUID", never as
+      # "wrong endpoint".
       #
-      # QDRANT_API_KEY is blanked deliberately. .env still holds the cloud key,
-      # and local Qdrant runs with no API key configured — it ignores the header
-      # today, but leaving a live credential pointed at a different server is
-      # how it ends up sent somewhere it should not be.
+      # These are interpolated from .env rather than hardcoded, and that is the
+      # point: `webui` and `scheduler` share one Qdrant collection and must
+      # never disagree about which server holds it. One value in one file makes
+      # them identical by construction; two hardcoded copies only look identical
+      # until someone edits one of them. The API key is a live credential and
+      # must never be written into this file.
       #
-      # To go back to a hosted cluster: delete these two lines and restore
-      # QDRANT_URL / QDRANT_API_KEY in .env. Nothing else here depends on which
-      # Qdrant answers.
-      QDRANT_URL: "http://qdrant:6333"
-      QDRANT_API_KEY: ""
+      # `:?` (required-variable) rather than a default, because the failure mode
+      # of an unset QDRANT_URL is silent: nlp_pillars/vectors.py:45-47 logs a
+      # WARNING and disables vector operations, so a daily run would complete,
+      # report success, and write no embeddings at all. Failing at
+      # `docker compose up` is the loud version of that.
+      QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
+      QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
       #
       # The three database variables below ARE overridden, and all three are
       # needed. Nothing is deleted from .env — these only shadow it for this
@@ -198,10 +220,9 @@ services:
       - uploads_data:/app/data
     depends_on:
       # Map form (not the list form used before) so postgrest can carry a
-      # condition. `qdrant` was cosmetic while the app talked to Qdrant Cloud;
-      # since the QDRANT_URL override above it is load-bearing again.
-      qdrant:
-        condition: service_started
+      # condition. `qdrant` is deliberately NOT listed: the app talks to Qdrant
+      # Cloud (see the QDRANT block above), so a depends_on here would start a
+      # container nothing reads and imply a dependency that does not exist.
       postgrest:
         condition: service_started
     restart: unless-stopped
@@ -238,8 +259,13 @@ services:
       SEARXNG_URL: "http://searxng:8080"
       POSTGREST_URL: "http://postgrest:3000"
       SUPABASE_URL: "http://postgrest:3000"
-      QDRANT_URL: "http://qdrant:6333"
-      QDRANT_API_KEY: ""
+      # Qdrant Cloud, from the same two .env values webui uses — see the long
+      # comment on that service. This is not a convenience: the two containers
+      # share ONE collection, so if they ever resolve QDRANT_URL differently the
+      # scheduler's nightly embeddings land somewhere the UI never reads.
+      # Sourcing both from one .env entry is what makes that impossible.
+      QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
+      QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
     volumes:
       # A scheduled run can ingest PDFs, so it needs the same retained uploads
@@ -250,10 +276,8 @@ services:
         condition: service_started
       searxng:
         condition: service_started
-      # Added with the QDRANT_URL override above: an ingest during a scheduled
-      # run writes vectors, so local Qdrant has to be up for it too.
-      qdrant:
-        condition: service_started
+      # No `qdrant` entry, same reason as on webui: vectors go to Qdrant Cloud,
+      # which is not a service in this file and cannot be waited on here.
     # The Dockerfile's HEALTHCHECK curls http://localhost:8000/health, which only
     # exists in the webui container. Inherited here it can never pass, so this
     # service would sit permanently "unhealthy" while working perfectly. There is
@@ -271,6 +295,10 @@ services:
 # Named Volumes (Docker-managed)
 # ============================================
 volumes:
+  # Storage for the `local-vectors` profile's qdrant service only — the app
+  # writes to Qdrant Cloud. Kept because it still holds vectors from the period
+  # when the app did use local Qdrant, and because it is shared with any other
+  # worktree running this compose file. Never remove it to "clean up".
   qdrant_data:
     name: nlp_qdrant_data
   # Application database. Named so `docker compose down` (without -v) keeps it.

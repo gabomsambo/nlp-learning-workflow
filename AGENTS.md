@@ -6,10 +6,29 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## Running the stack
 
-`docker compose up -d --build` brings up six containers: `webui` (FastAPI on :8000),
-`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080), a local
-`qdrant` (:6333) and `scheduler` (no ports). The build is slow and the image is large —
-`requirements.txt` pulls torch and layoutparser.
+`docker compose up -d --build` starts **five** services: `webui` (FastAPI on :8000),
+`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080) and
+`scheduler` (no ports). The build is slow and the image is large — `requirements.txt`
+pulls torch and layoutparser.
+
+A sixth service, the local `qdrant`, is defined but sits behind the `local-vectors`
+compose profile and is **not** started: the app writes vectors to Qdrant Cloud. See
+"Which Qdrant the app talks to".
+
+Two of those five look wrong in `docker compose ps` and are not:
+
+- **`scheduler` shows `Exited (0)`** whenever `SCHEDULE_ENABLED=false`, which is the
+  committed default. `scheduler.py::main()` returns 0 immediately in that case, and the
+  service is `restart: on-failure` (not `unless-stopped`) precisely so the disabled state
+  stays visible instead of being restarted forever. "The scheduler container is not
+  running" is therefore the expected state, not drift. To check the scheduler itself
+  still works without enabling anything, run it as a throwaway:
+  `docker compose run --rm --no-deps -e SCHEDULE_ENABLED=true scheduler` — it registers
+  four APScheduler jobs and blocks; Ctrl-C it. Turning `SCHEDULE_ENABLED` on for real is
+  a separate decision.
+- **`postgrest` and `searxng` are often not recreated** by `up -d` after a rebuild. Only
+  services whose config hash or image changed are replaced, and those two pin an image and
+  take no code from this repo. PostgREST reconnects on its own when `db` is recreated.
 
 The database is published on host 5434, not the usual 5432, because a developer machine
 tends to have Postgres already. Only the *host* side moved: inside the compose network
@@ -17,6 +36,13 @@ postgrest still dials `db:5432`, and the container-side port must stay 5432. Rea
 `psql -h 127.0.0.1 -p 5434`. When a port conflict is suspected, do not trust `lsof -iTCP`
 — run as your own user it silently omits listeners owned by another user and will report a
 busy port free. `netstat -an | grep <port>` or a throwaway `socket.bind()` tells the truth.
+
+5434 has been the committed value since PR #14 (2026-08-16). A container still publishing
+**5432** is a container older than that PR, not a compose/doc disagreement — recreating it
+is the whole fix. Measured 2026-08-29: the two rival servers that originally motivated the
+move (another Docker project on 5432, a native host Postgres on 5433) were both down, so a
+bind test finds 5433 and 5434 free and 5432 held by `nlp_postgres` itself. 5434 stays
+regardless; the point of the choice is that it survives those servers coming back.
 
 You do not need the image to run the app locally. `uvicorn webui.app:app` from a host
 virtualenv works against the compose services, starts instantly, and skips the multi-GB
@@ -65,6 +91,33 @@ Editing `schema.sql` does nothing to an existing volume; migrate by hand or recr
 `nlp_pg_data`. Never `docker compose down -v` casually — that volume is the real data, and
 `qdrant_data` is shared with any other worktree running this compose file.
 
+### `docs/migrations/` splits in two, and only the second half applies here
+
+`nlp_pg_data`'s baseline is **`schema.sql`**, not a replay of the numbered migrations.
+That makes 001-007 and 008+ two different things, and treating them as one chain wastes an
+afternoon:
+
+- **001-007 are Supabase-era history and must not be run against this database.** They
+  describe the reaped hosted project's evolution, not this volume's. 001 creates `progress`
+  and `daily_sessions`, which exist in neither `schema.sql` nor any live call site; 007 does
+  `ALTER COLUMN host_cs DROP NOT NULL` on `podcast_scripts`, and no `host_cs`/`host_ling`
+  column has ever existed here (the only surviving mention is `docker/init-db/01_init_schema.sql`,
+  a legacy file nothing mounts). They are kept as history. Applying them would error or
+  create dead tables.
+- **008 onward are written against `schema.sql` and are the ones to apply by hand.** Each
+  is idempotent (`IF NOT EXISTS`) and ends with `NOTIFY pgrst, 'reload schema'`, without
+  which PostgREST keeps answering `PGRST204`/404 for the new column or table. 009 also
+  carries its own explicit `GRANT`s — the `ALTER DEFAULT PRIVILEGES` in `db/init/03-grants.sql`
+  is per-grantor and does not cover objects a later hand-applied migration creates.
+
+Apply one with:
+
+    docker exec -i nlp_postgres psql -U nlp -d nlp -v ON_ERROR_STOP=1 -f - < docs/migrations/00N_*.sql
+
+There is no migration-tracking table. The only way to know what a database has is to look:
+compare `information_schema.columns` against `schema.sql`. Both 008 and 009 were applied to
+the captain's volume on 2026-08-29, which brought it level with `schema.sql`'s 13 tables.
+
 ## Uploaded PDFs are retained, and are the only copy
 
 A file upload stores `papers.url_pdf = file:///app/data/uploads/<hash>.pdf` and the podcast
@@ -80,26 +133,55 @@ only the file-upload path depends on this.
 
 ## Which Qdrant the app talks to
 
-The **local** `qdrant` service, as of 2026-08-16. This reverses the previous entry here,
-which said the app used a managed Qdrant Cloud cluster and told you not to override
-`QDRANT_URL`: that free-tier cluster was suspended and no longer exists. `docker-compose.yml`
-now sets `QDRANT_URL: http://qdrant:6333` on **both** `webui` and `scheduler` (they share a
-collection — never point one at a different Qdrant than the other) and blanks
-`QDRANT_API_KEY`. `depends_on: qdrant` is load-bearing again rather than cosmetic.
+**Qdrant Cloud**, as of 2026-08-29 — cluster `nlp-learning-workflow-retry`, aws
+eu-west-1, free/cost-optimised tier.
 
-A suspended cloud cluster does not fail like a dead host. Its DNS still resolves and the
-regional ingress still terminates TLS, so you get a plain-text `404 page not found` on
-**every** path — `/`, `/healthz`, `/collections` alike — where a live Qdrant answers `/`
-with a JSON banner. Read that 404 as "no cluster behind this UUID", not as a wrong URL.
+This reverses the 2026-08-16 entry that used to be here, and the reversal matters more
+than the destination: that entry said the cloud cluster "was suspended and no longer
+exists", and the second half was simply wrong. **A free-tier cluster suspended for
+inactivity is not deleted.** Unsuspending this one took 20 seconds, and the `nlp_pillars`
+collection came back whole — 170 points, status green, `pillar_id` payload index intact.
+Nothing had to be rebuilt. Before concluding a cluster is gone, try to resume it.
 
-The `nlp_qdrant_data` volume survived all of this and still holds vectors from earlier
-runs. They are largely **orphaned**: the papers they describe were rows in the reaped
+The reason it read as gone is worth keeping, because it will happen again: **a suspended
+cluster does not fail like a dead host.** DNS still resolves, the regional ingress still
+terminates TLS, and **every** path — `/`, `/healthz`, `/collections` alike — answers a
+plain-text `404 page not found`. A live cluster answers `/` with a JSON banner naming the
+version. Read that 404 as "no cluster routed behind this UUID"; it is neither a wrong URL
+nor proof of deletion.
+
+`QDRANT_URL` and `QDRANT_API_KEY` are set on **both** `webui` and `scheduler`, and both
+are interpolated from the single `.env` entry rather than hardcoded per service. That is
+deliberate: the two containers share one collection and must never disagree about which
+server holds it, and one value in one file makes them identical by construction where two
+copies only look identical until someone edits one. Both use compose's required-variable
+form (`${QDRANT_URL:?...}`) because the failure mode of an unset value is silent —
+`vectors.py:45-47` logs a WARNING and disables vector operations, so a nightly run would
+finish, report success, and write no embeddings at all. Failing at `docker compose up` is
+the loud version of that. The API key is a live credential: it lives in `.env`, never in
+`docker-compose.yml`.
+
+The local `qdrant` service is still defined, still backed by `nlp_qdrant_data`, and is
+now behind the **`local-vectors` compose profile**, so a plain `up -d` skips it. Keeping
+it costs nothing and it is the offline option; leaving it *running* would have meant an
+idle container holding 6333/6334 and looking like the thing the app uses. The
+`depends_on: qdrant` entries on `webui` and `scheduler` were removed in the same change —
+a dependency on a service the app no longer reads is worse than no dependency at all.
+Start it deliberately with `docker compose --profile local-vectors up -d qdrant`.
+
+Both stores hold **orphaned** points: the papers they describe were rows in the reaped
 Supabase database, and `GET /api/pillars/{id}/search` drops any vector hit whose
 `paper_id` is missing from the `papers` table (`if not paper: continue` in
 `webui/routers/api/pillars.py`). So the points are real, count toward the collection
-total, and are invisible in the UI until those papers are re-ingested. A low
-`points_count` after a fresh ingest is not evidence the write failed — scroll the
-collection and group by `paper_id` before concluding anything.
+total, and are invisible in the UI until those papers are re-ingested. A low visible
+result count is not evidence a write failed — scroll the collection and group by
+`paper_id` before concluding anything. Do not delete them to tidy up.
+
+**Free-tier clusters get suspended for inactivity, and this project has already lost one
+cluster outright and had a second suspended.** Nothing currently notices: the app finds
+out at the next ingest, as a stage failure. Making it loud is cheap and unbuilt — the
+distinction above (plain-text 404 on every path vs. a JSON banner on `/`) is a two-line
+check, and `/health` is the obvious place for it.
 
 `nlp_pillars/vectors.py::ensure_collections()` creates the single `nlp_pillars` collection
 (1536-dim, cosine) **and** the `pillar_id` keyword payload index. It runs from
@@ -579,9 +661,18 @@ stack up or with a real key present, you have reintroduced the problem.
 To check a change the way CI sees it, run without `.env` and against dead ports — that is
 all the runner is:
 
-    OPENAI_API_KEY=test-key-not-real DEFAULT_MODEL=gpt-4o-mini \
-    POSTGREST_URL=http://127.0.0.1:9 SUPABASE_URL=http://127.0.0.1:9 \
-    QDRANT_URL=http://127.0.0.1:9 pytest tests/ -q
+    OPENAI_API_KEY=test-key-not-real ANTHROPIC_API_KEY=test-key-not-real \
+    DEFAULT_MODEL=gpt-4o-mini \
+    SUPABASE_URL=http://localhost:3000 SUPABASE_KEY=test-token-not-real \
+    POSTGREST_URL=http://localhost:3000 \
+    QDRANT_URL=http://localhost:6333 QDRANT_API_KEY="" \
+    SEARXNG_URL=http://localhost:8080 pytest tests/ -q
+
+Copy that list from `.github/workflows/tests.yml` rather than trimming it. An earlier,
+shorter version of this recipe omitted `SEARXNG_URL`, and the omission fails exactly one
+test — `test_discovery_and_search.py::TestSearXNGTool::test_init`, where
+`SearXNGTool.base_url` falls back to `settings.searxng_url` and is `None`. Green in CI,
+red locally, for a reason that has nothing to do with the code under test.
 
 …from a copy of the tree with no `.env` in it, since `find_dotenv()` walks up from
 `config.py` and will find the repo's own regardless of your cwd.
