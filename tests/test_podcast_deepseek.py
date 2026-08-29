@@ -183,6 +183,8 @@ class TestExtractionRouting:
                 "metrics_datasets", "sys", "user", TEMPERATURE_EXTRACTION, max_tokens=1,
             )
 
+    @pytest.mark.asyncio
+    async def test_generate_records_ground_pack_calls(self, agent, mock_ground_pack):
         from nlp_pillars.agents.podcast_agent import FullTextResult
         from nlp_pillars.schemas import PaperRef
 
