@@ -67,11 +67,11 @@ class Settings(BaseSettings):
 
     # IndexTTS on the host GPU — see nlp_pillars/tts/indextts_client.py
     indextts_url: str = Field(
-        "http://host.docker.internal:7861",
+        "http://host.docker.internal:7860",
         env="INDEXTTS_URL",
     )
     indextts_start_command: str = Field(
-        "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7861",
+        "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860",
         env="INDEXTTS_START_COMMAND",
     )
     voices_dir: str = Field("/voices", env="VOICES_DIR")

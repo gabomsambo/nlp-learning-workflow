@@ -214,8 +214,8 @@ services:
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
       # IndexTTS runs on the host GPU — never started from the container.
       # host.docker.internal reaches the captain's machine from inside Docker.
-      INDEXTTS_URL: "${INDEXTTS_URL:-http://host.docker.internal:7861}"
-      INDEXTTS_START_COMMAND: "${INDEXTTS_START_COMMAND:-cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7861}"
+      INDEXTTS_URL: "${INDEXTTS_URL:-http://host.docker.internal:7860}"
+      INDEXTTS_START_COMMAND: "${INDEXTTS_START_COMMAND:-cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860}"
       VOICES_DIR: "/voices"
       PODCAST_AUDIO_DIR: "/app/data/podcast_audio"
       TTS_DOWNLOAD_DIR: "/app/data/tts-downloads"

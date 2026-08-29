@@ -52,3 +52,14 @@ def test_long_reference_marked_unusable(voice_tree: Path):
 def test_short_reference_marked_unusable(voice_tree: Path):
     entries = {e.relative_path: e for e in scan_voice_library(voice_tree)}
     assert entries["tiny.wav"].usability == VoiceUsability.UNUSABLE
+
+
+def test_non_wav_without_ffprobe_is_unusable(tmp_path: Path, monkeypatch):
+    fake_mp3 = tmp_path / "clip.mp3"
+    fake_mp3.write_bytes(b"not really mp3")
+    monkeypatch.setattr("nlp_pillars.tts.voice_library.shutil.which", lambda name: None)
+
+    entries = scan_voice_library(tmp_path)
+    assert len(entries) == 1
+    assert entries[0].usability == VoiceUsability.UNUSABLE
+    assert "ffprobe" in entries[0].reason

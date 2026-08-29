@@ -48,7 +48,7 @@ GEN_SINGLE_PARAMS: List[str] = [
 ]
 
 DEFAULT_START_COMMAND = (
-    "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7861"
+    "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860"
 )
 
 _PROGRESS_RE = re.compile(r"speech synthesis\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
@@ -202,9 +202,25 @@ class IndexTtsClient:
             time.sleep(poll_interval)
 
         result = job.result()
-        if not result:
-            raise RuntimeError("IndexTTS returned no audio file")
-        return str(result)
+        path = self._normalize_output_path(result)
+        if not path:
+            raise RuntimeError(f"IndexTTS returned no audio file: {result!r}")
+        return path
+
+    @staticmethod
+    def _normalize_output_path(result) -> Optional[str]:
+        """Accept a filepath string or Gradio FileData/update dict."""
+        if isinstance(result, str):
+            return result
+        if isinstance(result, dict):
+            value = result.get("value")
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict) and isinstance(value.get("path"), str):
+                return value["path"]
+            if isinstance(result.get("path"), str):
+                return result["path"]
+        return None
 
     @staticmethod
     def _parse_progress(progress_data) -> Optional[SynthesisProgress]:

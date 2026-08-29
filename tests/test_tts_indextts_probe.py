@@ -60,3 +60,12 @@ def test_ready_when_contract_matches(tmp_path, monkeypatch):
     client = IndexTtsClient("http://127.0.0.1:7861", tmp_path)
     info = client.check_status()
     assert info.status.value == "ready"
+
+
+def test_normalize_output_path_from_gradio_update_dict():
+    raw = {
+        "visible": True,
+        "value": "/tmp/spk_123.wav",
+        "__type__": "update",
+    }
+    assert IndexTtsClient._normalize_output_path(raw) == "/tmp/spk_123.wav"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import wave
 from dataclasses import dataclass
@@ -58,8 +59,20 @@ def iter_voice_files(root: Path) -> Iterator[Path]:
             yield path
 
 
-def _probe_duration_seconds(path: Path) -> Optional[float]:
-    """Duration via ffprobe when available, else wave for PCM WAV."""
+def _wav_duration_seconds(path: Path) -> Optional[float]:
+    try:
+        with wave.open(str(path), "rb") as wf:
+            rate = wf.getframerate()
+            if rate <= 0:
+                return None
+            return wf.getnframes() / float(rate)
+    except wave.Error:
+        return None
+
+
+def _ffprobe_duration_seconds(path: Path) -> Optional[float]:
+    if not shutil.which("ffprobe"):
+        return None
     try:
         proc = subprocess.run(
             [
@@ -79,22 +92,29 @@ def _probe_duration_seconds(path: Path) -> Optional[float]:
         )
         if proc.returncode == 0:
             data = json.loads(proc.stdout)
-            duration = float(data["format"]["duration"])
-            return duration
-    except (subprocess.SubprocessError, KeyError, ValueError, json.JSONDecodeError):
-        pass
-
-    if path.suffix.lower() == ".wav":
-        try:
-            with wave.open(str(path), "rb") as wf:
-                return wf.getnframes() / float(wf.getframerate())
-        except wave.Error:
-            return None
+            return float(data["format"]["duration"])
+    except (subprocess.SubprocessError, KeyError, ValueError, json.JSONDecodeError, FileNotFoundError):
+        return None
     return None
+
+
+def _probe_duration_seconds(path: Path) -> Optional[float]:
+    """Duration from the WAV header when possible; ffprobe only for other formats."""
+    if path.suffix.lower() == ".wav":
+        return _wav_duration_seconds(path)
+    return _ffprobe_duration_seconds(path)
 
 
 def _classify(path: Path, duration: Optional[float]) -> tuple[VoiceUsability, str]:
     if duration is None:
+        if path.suffix.lower() == ".wav":
+            return VoiceUsability.UNUSABLE, "Could not read WAV header — file may be corrupt."
+        if not shutil.which("ffprobe"):
+            ext = path.suffix.lower() or "this format"
+            return (
+                VoiceUsability.UNUSABLE,
+                f"Cannot inspect {ext} without ffprobe — use a WAV reference or install ffmpeg.",
+            )
         return VoiceUsability.UNUSABLE, "Could not read audio — file may be corrupt."
 
     if duration < MIN_REFERENCE_SECONDS:
