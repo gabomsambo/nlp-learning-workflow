@@ -388,3 +388,51 @@ def test_arxiv_search_still_builds_pillar_scoped_queries(mocked, paper):
     assert [q.query for q in sent] == ["mamba", "rwkv"]  # still capped at two
     assert all(isinstance(q, SearchQuery) and q.pillar_id == PILLAR for q in sent)
     assert outcome.failures == []
+
+
+# ---------------------------------------------------------------------------
+# Display helpers: what the user is actually shown when something fails.
+# ---------------------------------------------------------------------------
+
+
+def test_first_line_drops_instructors_dangling_open_tag():
+    """instructor opens an XML block on line one and puts the attempts below it.
+
+    Keeping only the first line — which is what a stage detail has room for — used
+    to leave "Instructor completion failed: <failed_attempts>" on screen, whose
+    dangling tag reads as truncated output rather than as a reason.
+    """
+    from nlp_pillars.orchestrator import _first_line
+
+    got = _first_line(Exception("Instructor completion failed: <failed_attempts>"))
+
+    assert got == "Instructor completion failed"
+
+
+def test_first_line_keeps_the_status_and_drops_the_url():
+    from nlp_pillars.orchestrator import _first_line
+
+    got = _first_line(
+        Exception("Client error '403 Forbidden' for url https://api.example.org/x?y=1")
+    )
+
+    assert got == "Client error '403 Forbidden'"
+
+
+def test_first_line_falls_back_to_the_class_when_stripping_empties_it():
+    """The cleanup must never turn a real failure into a blank stage detail."""
+    from nlp_pillars.orchestrator import _first_line
+
+    class WeirdError(Exception):
+        pass
+
+    assert _first_line(WeirdError("<attempts>")) == "WeirdError"
+
+
+def test_rate_limiting_is_named_rather_than_shown_as_a_status_code():
+    """The one failure with an obvious remedy says what the remedy is."""
+    from nlp_pillars.orchestrator import _friendly_source_error
+
+    got = _friendly_source_error(Exception("HTTP 429 Too Many Requests"))
+
+    assert "rate-limited" in got and "try again" in got

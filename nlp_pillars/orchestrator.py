@@ -6,6 +6,7 @@ through the complete learning workflow with strict pillar isolation.
 """
 
 import logging
+import re
 import threading
 import time
 from typing import Callable, List, NamedTuple, Optional, Tuple
@@ -99,6 +100,11 @@ def _first_line(e: Exception) -> str:
     # " for url ". The status is the part a reader can act on; the URL is 300
     # characters that push it off the row.
     line = line.split(" for url ")[0].strip()
+    # instructor's retry exception opens an XML-ish block on the first line
+    # ("Instructor completion failed: <failed_attempts>") and puts the attempts
+    # themselves on the lines we just dropped. Left in, that dangling opening tag
+    # reads as truncated output rather than as a reason.
+    line = re.sub(r"\s*<[^<>\s]*>\s*$", "", line).strip().rstrip(":").strip()
     return (line or e.__class__.__name__)[:160]
 
 
