@@ -306,10 +306,19 @@ inside the request handler — `/pipeline/run` by shelling out to
 `process_selected_papers` directly — so the browser sat on "Running..." for minutes and
 the single uvicorn process was frozen for every other request, `/health` included.
 
-`POST /api/pillars/{id}/discover` still answers synchronously, because the user needs
-those candidates in front of them to choose from, but its blocking call is now behind
-`asyncio.to_thread`. Measured after the change: the call takes ~30s and `/health`
-answers in 5ms during it.
+`POST /api/pillars/{id}/discover` is a background job too, as of 2026-08-29. It used to
+answer synchronously — deliberately, because the user needs the candidates in front of
+them to choose from — with its blocking call behind `asyncio.to_thread`. That reasoning
+was sound and was still reversed: ~30 seconds behind one static "Discovering papers…"
+line cost more than the early return bought, and moving it onto `pipeline_runs` also
+bought reload-survival and a cancel button. The candidate list now comes back in
+`pipeline_runs.result` on the poll the browser already makes, so finishing a run costs
+no extra round trip and `?run=<id>` re-renders the candidates after a reload.
+
+`docs/migrations/010_discovery_runs.sql` must be run **by hand**: `kind` and
+`trigger_source` are CHECK-constrained, so `discover`/`ui_discover` are rejected until it
+is applied, and `result` does not exist. It is `result`'s only home — JSONB on the run row
+rather than a child table, because unlike stages it is written exactly once, at the end.
 
 Run state lives in `pipeline_runs` + `pipeline_run_stages`, **not** in memory. The
 `scheduler` container is a separate process against the same database, so a webui-local
@@ -402,6 +411,25 @@ told the user:
 `upsert_text()` returning 0 is ambiguous — empty text and a dead Qdrant look identical —
 so `_process_paper` marks VECTORS **failed** when it gets 0 chunks from non-empty text.
 Non-fatal: the lesson and quiz are already written.
+
+Discovery has the same ambiguity in three places, and resolves it the same way: **a
+discovery step that says "0 found" means genuinely zero results, never "this failed".**
+Each source therefore returns a `SourceResult(candidates, failures)` rather than a bare
+list — do not "simplify" it back, the second field is the entire point. The three that
+used to be invisible, all of which arrived as a plausible zero:
+
+- **Query generation fell back.** `run_discovery_with_selection` catches anything from
+  `DiscoveryAgent.run` and uses `_fallback_queries`. The stage is marked failed and says
+  so, rather than presenting the pillar's focus areas as if the model wrote them.
+- **A source errored.** `_friendly_source_error` names rate limiting specifically — it is
+  the common one and the only one with an obvious remedy (see the SearXNG section: a
+  suspended engine still answers HTTP 200 with an empty `results`).
+- **The vector store was unreachable.** `VectorSearchTool.search_similar_papers` lets
+  `search_similar()`'s `RuntimeError` propagate instead of degrading to `[]`.
+
+Exception text is put on screen through `_first_line`, which trims the parts that are not
+a reason: tenacity's `RetryError[<Future …>]` wrapper (via `_unwrap_retry`), httpx's
+` for url …` tail, and instructor's dangling `<failed_attempts>` open tag.
 
 ### The browser side, and why it is not just a status line
 
