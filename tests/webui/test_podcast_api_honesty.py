@@ -88,7 +88,13 @@ def _stub_generate(monkeypatch, script=None, raises=None):
             raise raises
         return script
 
-    monkeypatch.setattr(PodcastAgent, "__init__", lambda self: None)
+    # The route now constructs the agent with the resolved options, so the stub
+    # __init__ has to accept them — and record them, so a test can check the
+    # request's options actually reached the agent.
+    def init(self, options=None):
+        self.options = options
+
+    monkeypatch.setattr(PodcastAgent, "__init__", init)
     monkeypatch.setattr(PodcastAgent, "generate", generate)
 
 
@@ -260,6 +266,110 @@ def test_the_page_says_the_database_is_unreadable_rather_than_showing_nothing(
     assert "The paper list could not be loaded" in body
     # The false reassurance must be gone.
     assert "No podcast scripts generated yet" not in body
+
+
+# ------------------------------------------------------- D: chosen options
+
+
+def test_options_from_the_request_reach_the_agent(api_client, monkeypatch):
+    """A dropdown that does not change the prompt is worse than no dropdown."""
+    from nlp_pillars.agents.podcast_agent import PodcastAgent
+
+    _stub_generate(monkeypatch, script=_script())
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.add_podcast_script", lambda script: "script-1"
+    )
+    seen = {}
+
+    original = PodcastAgent.__init__
+
+    def spy(self, options=None):
+        seen["options"] = options
+        original(self, options)
+
+    monkeypatch.setattr(PodcastAgent, "__init__", spy)
+
+    res = api_client.post(
+        "/api/podcast/generate",
+        json={
+            "paper_id": "p1",
+            "pillar_id": "ignored",
+            "options": {"field": "biology", "length": "45"},
+        },
+    )
+
+    assert res.status_code == 200
+    assert seen["options"].choices["field"].preset == "biology"
+    assert seen["options"].choices["length"].label == "~45 minutes"
+
+
+def test_omitting_options_still_works_and_means_the_defaults(api_client, monkeypatch):
+    """The pre-change request body must keep working unchanged."""
+    from nlp_pillars.agents.podcast_agent import DEFAULT_OPTIONS, PodcastAgent
+
+    _stub_generate(monkeypatch, script=_script())
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.add_podcast_script", lambda script: "script-1"
+    )
+    seen = {}
+    original = PodcastAgent.__init__
+
+    def spy(self, options=None):
+        seen["options"] = options
+        original(self, options)
+
+    monkeypatch.setattr(PodcastAgent, "__init__", spy)
+
+    res = api_client.post(
+        "/api/podcast/generate", json={"paper_id": "p1", "pillar_id": "ignored"}
+    )
+
+    assert res.status_code == 200
+    assert seen["options"] == DEFAULT_OPTIONS
+
+
+def test_an_unknown_option_is_refused_before_anything_is_spent(api_client, monkeypatch):
+    """400 with the valid choices named, not four minutes of the wrong podcast."""
+    calls = []
+
+    def generate(self, paper_id, pillar_id):
+        calls.append(paper_id)
+
+    from nlp_pillars.agents.podcast_agent import PodcastAgent
+
+    monkeypatch.setattr(PodcastAgent, "generate", generate)
+
+    res = api_client.post(
+        "/api/podcast/generate",
+        json={
+            "paper_id": "p1",
+            "pillar_id": "ignored",
+            "options": {"field": "astrology-but-quantum"},
+        },
+    )
+
+    assert res.status_code == 400
+    assert "Unknown Field / domain option" in res.json()["detail"]
+    # The valid choices are named, so the message is actionable.
+    assert "biology" in res.json()["detail"]
+    assert calls == []
+
+
+def test_the_response_says_what_the_script_was_aimed_at(api_client, monkeypatch):
+    from nlp_pillars.podcast_options import resolve
+
+    script = _script()
+    script.options = resolve({"field": "physics"})
+    _stub_generate(monkeypatch, script=script)
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.add_podcast_script", lambda s: "script-1"
+    )
+
+    body = api_client.post(
+        "/api/podcast/generate", json={"paper_id": "p1", "pillar_id": "x"}
+    ).json()
+
+    assert body["options"]["choices"]["field"]["label"] == "Physics / engineering"
 
 
 def test_a_genuinely_empty_account_still_reads_as_empty(page_client, monkeypatch):

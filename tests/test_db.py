@@ -933,6 +933,65 @@ class TestPodcastScriptPersistenceIsHonest:
         # Everything else survives the retry.
         assert attempts[1]['script'] == "[HOST]: Hello."
 
+    def test_a_database_behind_by_two_migrations_still_saves_the_script(
+        self, mock_supabase_client, sample_script
+    ):
+        """011 and 012 both added a nullable JSONB column, and a database can be
+        behind by both. One retry per column would report the second PGRST204 as
+        a real save failure and throw the script away."""
+        attempts = []
+
+        def insert(data):
+            attempts.append(dict(data))
+            for column in ('source_material', 'options'):
+                if column in data:
+                    return {'data': None, 'error': {
+                        'code': 'PGRST204',
+                        'message': f"Could not find the '{column}' column of "
+                                   f"'podcast_scripts' in the schema cache",
+                    }}
+            return {'data': [{'id': 'abc-123'}], 'error': None}
+
+        mock_supabase_client.table().insert.side_effect = insert
+
+        assert add_podcast_script(sample_script) == 'abc-123'
+        assert len(attempts) == 3
+        assert 'options' not in attempts[-1]
+        assert 'source_material' not in attempts[-1]
+        assert attempts[-1]['script'] == "[HOST]: Hello."
+
+    def test_options_are_written_and_read_back(self, mock_supabase_client):
+        """What a script was aimed at has to survive the round trip, or two
+        scripts that differ give no way to tell settings from model."""
+        from nlp_pillars.db import _dict_to_podcast_script, _podcast_script_to_dict
+        from nlp_pillars.podcast_options import CUSTOM_VALUE, resolve
+        from nlp_pillars.schemas import PodcastScript
+
+        options = resolve({
+            "field": CUSTOM_VALUE, "field_custom": "molecular biology",
+            "length": "45",
+        })
+        row = _podcast_script_to_dict(PodcastScript(
+            paper_id="test.1", pillar_id="p", title="t", script="s",
+            options=options,
+        ))
+        assert row['options']['choices']['field']['custom'] == "molecular biology"
+
+        row.update(id='abc', created_at=None)
+        restored = _dict_to_podcast_script(row)
+        assert restored.options == options
+
+    def test_a_pre_012_row_reads_back_as_no_options(self):
+        """Those scripts were generated when nothing was choosable, so empty is
+        the honest reading — not a fabricated set of defaults they never had."""
+        from nlp_pillars.db import _dict_to_podcast_script
+
+        restored = _dict_to_podcast_script({
+            'id': 'abc', 'paper_id': 'test.1', 'pillar_id': 'p',
+            'title': 't', 'script': 's',
+        })
+        assert restored.options.choices == {}
+
     def test_a_missing_script_is_none_and_a_broken_query_raises(
         self, mock_supabase_client
     ):

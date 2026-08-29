@@ -11,6 +11,7 @@ from nlp_pillars.db import (
     get_pillars_or_empty, get_all_papers, get_podcast_scripts,
     PaperLookupError, PodcastScriptLookupError,
 )
+from nlp_pillars.podcast_options import CUSTOM_VALUE, OPTION_SPECS
 
 logger = logging.getLogger(__name__)
 
@@ -56,5 +57,9 @@ async def podcast_home(request: Request) -> HTMLResponse:
             "papers": papers,
             "scripts": scripts,
             "load_errors": load_errors,
+            # The generation controls are rendered from the registry, so adding
+            # a fifth option needs no template change either.
+            "option_specs": OPTION_SPECS,
+            "custom_value": CUSTOM_VALUE,
         }
     )

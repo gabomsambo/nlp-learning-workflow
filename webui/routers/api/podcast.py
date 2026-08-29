@@ -3,7 +3,7 @@ API Router for podcast script generation and management.
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from nlp_pillars.agents.podcast_agent import (
     InsufficientSourceMaterialError, PodcastAgent
 )
+from nlp_pillars.podcast_options import PodcastOptionError, resolve
 from nlp_pillars.db import (
     add_podcast_script, get_podcast_scripts, get_podcast_script_by_id,
     get_paper_by_id, PodcastScriptLookupError, PodcastScriptSaveError
@@ -24,9 +25,22 @@ router = APIRouter(prefix="/api/podcast", tags=["podcast"])
 
 # Request/Response models
 class PodcastGenerateRequest(BaseModel):
-    """Request to generate a podcast script."""
+    """Request to generate a podcast script.
+
+    ``options`` is the flat shape the form posts::
+
+        {"field": "nlp", "audience": "graduate", "length": "30",
+         "tone": "__custom__", "tone_custom": "dry and sceptical"}
+
+    Omitted entirely (which is what every pre-existing caller sends) means every
+    default, and the defaults reproduce the aiming the prompts hardcoded before
+    they were configurable. Validation lives in nlp_pillars/podcast_options.py
+    rather than in a pydantic model, so adding a fifth option stays a data
+    change here too.
+    """
     paper_id: str
     pillar_id: str
+    options: Optional[Dict[str, str]] = None
 
 
 class PodcastGenerateResponse(BaseModel):
@@ -50,6 +64,9 @@ class PodcastGenerateResponse(BaseModel):
     saved: bool = True
     source_material_level: str = "full"
     warnings: List[str] = []
+    # What the script was aimed at, echoed back so the page can show the
+    # settings that produced it without a second request.
+    options: Dict[str, Any] = {}
     # Only populated when the script could not be stored; there is no other copy.
     script: Optional[str] = None
     key_points: List[str] = []
@@ -68,6 +85,11 @@ async def generate_podcast(request: PodcastGenerateRequest):
     """
     try:
         logger.info(f"Generating podcast for paper {request.paper_id}")
+
+        # Resolve the chosen options BEFORE anything expensive happens. An
+        # unknown option or preset is a 400, never a guess: four minutes and
+        # ~$0.27 of the wrong podcast is worse than a rejected request.
+        options = resolve(request.options)
 
         # Get the paper's actual pillar_id from the database
         from nlp_pillars.db import get_client
@@ -88,7 +110,7 @@ async def generate_podcast(request: PodcastGenerateRequest):
         logger.info(f"Using pillar_id from paper: {actual_pillar_id}")
 
         # Create agent and generate script
-        agent = PodcastAgent()
+        agent = PodcastAgent(options=options)
         script = await agent.generate(request.paper_id, actual_pillar_id)
 
         warnings = list(script.source_material.warnings)
@@ -116,6 +138,7 @@ async def generate_podcast(request: PodcastGenerateRequest):
                 ],
                 script=script.script,
                 key_points=script.key_points,
+                options=script.options.model_dump(),
                 message=(
                     f"Generated a {script.word_count}-word script, but saving it "
                     f"failed. The script is in this response and has not been stored."
@@ -134,6 +157,7 @@ async def generate_podcast(request: PodcastGenerateRequest):
             saved=True,
             source_material_level=script.source_material.level,
             warnings=warnings,
+            options=script.options.model_dump(),
             message=f"Successfully generated podcast script with {script.word_count} words"
         )
 
@@ -146,6 +170,12 @@ async def generate_podcast(request: PodcastGenerateRequest):
         # spent — this is raised before the first model call.
         logger.warning(f"Refused to generate a podcast for {request.paper_id}: {e}")
         raise HTTPException(status_code=422, detail=str(e))
+
+    except PodcastOptionError as e:
+        # A ValueError subclass, so this must stay above the ValueError branch
+        # to keep its specific message (which names the valid choices).
+        logger.warning(f"Rejected podcast options for {request.paper_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
     except ValueError as e:
         logger.error(f"Validation error: {e}")
@@ -239,6 +269,10 @@ async def get_podcast(script_id: str):
                 # So a stored script written from partial material still says so
                 # when it is re-opened, not only on the run that produced it.
                 "source_material": script.source_material.model_dump(),
+                # So a stored script still says what it was aimed at when it is
+                # re-opened; without it, two scripts for the same paper differ
+                # for no visible reason.
+                "options": script.options.model_dump(),
                 "created_at": script.created_at.isoformat() if script.created_at else None
             }
         })

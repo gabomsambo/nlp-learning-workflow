@@ -256,6 +256,36 @@ class SourceMaterial(BaseModel):
     )
 
 
+class OptionChoice(BaseModel):
+    """One podcast option as it was actually chosen.
+
+    Both halves are kept: ``preset`` (or ``custom``) is what to re-apply, and
+    ``label`` is what was put in front of the model. Storing the label as well
+    means a row from a year ago still says what it was aimed at even if the
+    preset list has moved on since.
+    """
+    key: str = Field(..., description="Option key, e.g. 'field'")
+    preset: Optional[str] = Field(None, description="Preset value, or None when custom")
+    custom: Optional[str] = Field(None, description="Sanitized free text, or None when a preset")
+    label: str = Field(..., description="What was shown to the user and sent to the model")
+
+
+class PodcastOptions(BaseModel):
+    """What a podcast script was aimed at: field, audience, length, tone.
+
+    Keyed by option key rather than given four named fields, so adding a fifth
+    option is a data change in ``nlp_pillars/podcast_options.py`` and nothing
+    else — no schema edit, no migration, and old rows stay readable.
+
+    An empty ``choices`` means the defaults, which are the aiming the prompts
+    hardcoded before they were configurable.
+    """
+    choices: Dict[str, OptionChoice] = Field(
+        default_factory=dict,
+        description="Chosen options by key; see nlp_pillars/podcast_options.py",
+    )
+
+
 class PodcastScript(BaseIOSchema):
     """Generated podcast script from a paper - single host format."""
     id: Optional[str] = Field(None, description="Unique script ID")
@@ -269,6 +299,10 @@ class PodcastScript(BaseIOSchema):
     source_material: SourceMaterial = Field(
         default_factory=SourceMaterial,
         description="What the script was written from; see SourceMaterial",
+    )
+    options: PodcastOptions = Field(
+        default_factory=PodcastOptions,
+        description="What the script was aimed at; see PodcastOptions",
     )
     created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the script was created")
 
