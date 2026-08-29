@@ -23,8 +23,25 @@ class Settings(BaseSettings):
     # Semantic Scholar API (optional, for higher rate limits)
     semantic_scholar_api_key: Optional[str] = Field(None, env="SEMANTIC_SCHOLAR_API_KEY")
 
-    # Anthropic API for podcast generation
+    # Anthropic API for podcast synthesis (call 5)
     anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+
+    # DeepSeek API for Ground Pack extraction (calls 1–4)
+    deepseek_api_key: Optional[str] = Field(None, env="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        "https://api.deepseek.com",
+        env="DEEPSEEK_BASE_URL",
+    )
+
+    # Podcast model routing — see nlp_pillars/podcast_models.py
+    podcast_extraction_model: str = Field(
+        "deepseek-v4-flash",
+        env="PODCAST_EXTRACTION_MODEL",
+    )
+    podcast_synthesis_model: str = Field(
+        "claude-sonnet-4-5-20250929",
+        env="PODCAST_SYNTHESIS_MODEL",
+    )
 
     # Discovery settings
     discovery_candidate_count: int = Field(10, env="DISCOVERY_CANDIDATE_COUNT")

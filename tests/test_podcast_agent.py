@@ -12,9 +12,22 @@ import pytest
 from nlp_pillars.agents import podcast_agent
 from nlp_pillars.agents.ingest_agent import IngestAgent
 from nlp_pillars.agents.podcast_agent import (
-    MAX_FULL_TEXT_CHARS, FullTextResult, InsufficientSourceMaterialError, PodcastAgent
+    MAX_FULL_TEXT_CHARS, FullTextResult, InsufficientSourceMaterialError,
+    LLMCallResult, PodcastAgent,
 )
-from nlp_pillars.schemas import PodcastScript, PaperRef, PaperNote
+from nlp_pillars.schemas import PodcastScript, PaperRef, PaperNote, GroundPackCallRecord
+
+
+def _extraction_mock(section: str, text: str):
+    """Return value shape for mocked _generate_* extraction helpers."""
+    return (
+        text,
+        GroundPackCallRecord(
+            section=section,
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        ),
+    )
 
 
 # Fixtures are module-level so every class in this file can use them. They were
@@ -126,15 +139,19 @@ class TestPodcastAgent:
                 yield "World"
 
             mock_stream.text_stream = async_text_gen()
+            mock_final = MagicMock()
+            mock_final.usage.input_tokens = 1
+            mock_final.usage.output_tokens = 2
+            mock_final.stop_reason = "end_turn"
+            mock_stream.get_final_message = AsyncMock(return_value=mock_final)
 
-            # Create mock client
             agent.client = MagicMock()
             agent.client.messages.stream.return_value = mock_stream
-            agent.model = "test-model"
+            agent.synthesis_model = "test-model"
 
             result = await agent._call_claude("system", "user")
 
-            assert result == "Hello World"
+            assert result.text == "Hello World"
 
     def test_get_full_text_extracts_from_pdf(self, mock_paper):
         """Test full text extraction works for valid paper with PDF URL."""
@@ -201,10 +218,15 @@ class TestPodcastAgent:
         """
         with patch('nlp_pillars.agents.podcast_agent.get_settings') as mock_settings:
             mock_settings.return_value.anthropic_api_key = "sk-ant-test-key"
+            mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
+            mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
+            mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
+            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
 
             agent = PodcastAgent()
 
-            assert agent.model == "claude-sonnet-4-5-20250929"
+            assert agent.synthesis_model == "claude-sonnet-4-5-20250929"
+            assert agent.extraction_model == "deepseek-v4-flash"
             assert isinstance(agent.ingest_agent, IngestAgent)
             # Timeouts matter: without them a hung Anthropic call would pin a
             # request forever.
@@ -238,10 +260,18 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
             agent._get_full_text = MagicMock(return_value=FullTextResult(oversized))
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             await agent.generate("test-paper-123", "models-architectures")
@@ -277,10 +307,18 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
             agent._get_full_text = MagicMock(return_value=FullTextResult(exact))
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             await agent.generate("test-paper-123", "models-architectures")
@@ -314,10 +352,18 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
             agent._get_full_text = slow_ingest
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             # A co-running coroutine standing in for another HTTP request.
@@ -359,10 +405,18 @@ class TestPodcastAgent:
             agent._get_full_text = MagicMock(return_value=FullTextResult("Full paper content here..."))
 
             # Mock all Claude calls
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             # Run generation
@@ -411,10 +465,18 @@ class TestPodcastAgent:
             agent._get_full_text = MagicMock(
                 return_value=FullTextResult("", "Local file not found: /app/.cache/uploads/x.pdf")
             )
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             with pytest.raises(InsufficientSourceMaterialError) as exc:
@@ -455,10 +517,18 @@ class TestPodcastAgent:
             agent._get_full_text = MagicMock(
                 return_value=FullTextResult("", "HTTP 404 fetching the PDF")
             )
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             result = await agent.generate("test-paper-123", "models-architectures")
@@ -487,10 +557,18 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
             agent._get_full_text = MagicMock(return_value=FullTextResult("", "no PDF"))
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             result = await agent.generate("test-paper-123", "models-architectures")
@@ -513,10 +591,18 @@ class TestPodcastAgent:
 
             agent = PodcastAgent()
             agent._get_full_text = MagicMock(return_value=FullTextResult("Body " * 500))
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             result = await agent.generate("test-paper-123", "models-architectures")
@@ -575,10 +661,18 @@ class TestOptionsReachTheModelAndTheRow:
             agent = PodcastAgent()
             agent.options = options
             agent._get_full_text = MagicMock(return_value=FullTextResult("Body text."))
-            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
-            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
-            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
-            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_facts_outline = AsyncMock(
+                return_value=_extraction_mock("facts_outline", mock_ground_pack["facts_outline"]),
+            )
+            agent._generate_core_concepts = AsyncMock(
+                return_value=_extraction_mock("core_concepts", mock_ground_pack["core_concepts"]),
+            )
+            agent._generate_metrics_datasets = AsyncMock(
+                return_value=_extraction_mock("metrics_datasets", mock_ground_pack["metrics_datasets"]),
+            )
+            agent._generate_limitations = AsyncMock(
+                return_value=_extraction_mock("limitations", mock_ground_pack["limitations"]),
+            )
             agent._generate_final_script = AsyncMock(return_value=mock_script_content)
 
             script = await agent.generate("test-paper-123", "models-architectures")
@@ -593,28 +687,42 @@ class TestOptionsReachTheModelAndTheRow:
 
         with patch('nlp_pillars.agents.podcast_agent.get_settings') as mock_settings:
             mock_settings.return_value.anthropic_api_key = "sk-ant-test-key"
+            mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
+            mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
+            mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
+            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
 
             agent = PodcastAgent(options=resolve({"field": "economics"}))
 
             assert "economics" in agent._variables["field_name"]
             assert "Economics" in agent._settings_block
             # ...and the default construction still reproduces the old aiming.
-            assert PodcastAgent()._variables["field_paper"] == "NLP paper"
+            default_agent = PodcastAgent()
+            assert default_agent._variables["field_paper"] == "NLP paper"
 
     def test_no_options_reproduces_the_default_aiming(self):
         with patch('nlp_pillars.agents.podcast_agent.get_settings') as mock_settings:
             mock_settings.return_value.anthropic_api_key = "sk-ant-test-key"
+            mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
+            mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
+            mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
+            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
 
             assert PodcastAgent().options == podcast_agent.DEFAULT_OPTIONS
 
     @pytest.mark.asyncio
     async def test_each_call_sets_its_own_temperature(self, mock_ground_pack):
-        """Nothing set a temperature before, so all five ran at the API default
-        of 1.0 — including the two whose whole job is to copy facts out of a
-        document without embellishing them."""
+        """Extraction temperatures reach DeepSeek; synthesis reaches Claude."""
         with patch.object(PodcastAgent, '__init__', lambda x: None):
             agent = PodcastAgent()
-            agent._call_claude = AsyncMock(return_value="out")
+            agent._call_deepseek = AsyncMock(
+                return_value=LLMCallResult("out", "deepseek", "deepseek-v4-flash"),
+            )
+            agent._call_claude = AsyncMock(
+                return_value=LLMCallResult("out", "anthropic", "claude"),
+            )
+            agent._variables = podcast_agent.DEFAULT_VARIABLES
+            agent._settings_block = podcast_agent.DEFAULT_SETTINGS_BLOCK
 
             await agent._generate_facts_outline("PAPER")
             await agent._generate_core_concepts("PAPER")
@@ -622,15 +730,14 @@ class TestOptionsReachTheModelAndTheRow:
             await agent._generate_limitations("PAPER")
             await agent._generate_final_script(mock_ground_pack, "PAPER")
 
-        temperatures = [c.kwargs["temperature"] for c in agent._call_claude.call_args_list]
-        assert temperatures == [
+        deepseek_temps = [c.kwargs["temperature"] for c in agent._call_deepseek.call_args_list]
+        assert deepseek_temps == [
             podcast_agent.TEMPERATURE_EXTRACTION,
             podcast_agent.TEMPERATURE_ANALYSIS,
             podcast_agent.TEMPERATURE_EXTRACTION,
             podcast_agent.TEMPERATURE_ANALYSIS,
-            podcast_agent.TEMPERATURE_SCRIPT,
         ]
-        assert podcast_agent.TEMPERATURE_EXTRACTION < podcast_agent.TEMPERATURE_SCRIPT
+        assert agent._call_claude.call_args.kwargs["temperature"] == podcast_agent.TEMPERATURE_SCRIPT
 
     @pytest.mark.asyncio
     async def test_temperature_reaches_the_api_call(self):
@@ -646,9 +753,14 @@ class TestOptionsReachTheModelAndTheRow:
                 yield "ok"
 
             mock_stream.text_stream = async_text_gen()
+            mock_final = MagicMock()
+            mock_final.usage.input_tokens = 1
+            mock_final.usage.output_tokens = 1
+            mock_final.stop_reason = "end_turn"
+            mock_stream.get_final_message = AsyncMock(return_value=mock_final)
             agent.client = MagicMock()
             agent.client.messages.stream.return_value = mock_stream
-            agent.model = "test-model"
+            agent.synthesis_model = "test-model"
 
             await agent._call_claude("system", "user", temperature=0.1)
 
@@ -668,11 +780,13 @@ class TestOptionsReachTheModelAndTheRow:
             agent.options = options
             agent._variables = build_variables(options)
             agent._settings_block = settings_block(options)
-            agent._call_claude = AsyncMock(return_value="out")
+            agent._call_deepseek = AsyncMock(
+                return_value=LLMCallResult("out", "deepseek", "deepseek-v4-flash"),
+            )
 
             await agent._generate_facts_outline("PAPER-BODY")
 
-        user = agent._call_claude.call_args.kwargs["user"]
+        user = agent._call_deepseek.call_args.args[1]
         assert user.index("ignore the paper") < user.index(BLOCK_CLOSE)
         assert user.index(BLOCK_CLOSE) < user.index("PAPER-BODY")
         assert podcast_agent.GROUND_PACK_RULES in user.split(BLOCK_CLOSE, 1)[1]

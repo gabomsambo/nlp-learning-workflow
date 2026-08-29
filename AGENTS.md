@@ -701,9 +701,26 @@ module-level singleton (`webui/routers/api/podcast.py` constructs it per request
 is nothing built at import time to fail. Its `_get_full_text` is synchronous and must stay
 behind `asyncio.to_thread` — `generate()` is awaited straight from a FastAPI route, and
 running the PDF ingest inline froze the event loop for every other request. Measured live:
-0 co-running requests served inline vs 13/13 through `to_thread`. One podcast is five
-Claude calls that each carry the full paper text; measured end to end on a 5-page paper at
-37.8K input + 9.6K output tokens ≈ **$0.26**.
+0 co-running requests served inline vs 13/13 through `to_thread`. One podcast is five model
+calls (DeepSeek for the four Ground Pack extractions, Claude for synthesis); measured end
+to end on a 5-page paper at 37.8K input + 9.6K output tokens ≈ **$0.26** when all five
+were Claude — synthesis still dominates the bill.
+
+**Ground Pack extraction routes to DeepSeek; synthesis stays on Claude.** Model ids live
+in `nlp_pillars/podcast_models.py` and override through `PODCAST_EXTRACTION_MODEL` /
+`PODCAST_SYNTHESIS_MODEL` in `.env` (defaults: `deepseek-v4-flash` and
+`claude-sonnet-4-5-20250929`). Do not use `deepseek-v4-pro` for extraction — it is a
+reasoning model that burns `max_tokens` on thinking and truncates before writing the
+table. `DEEPSEEK_API_KEY` is required in compose (`:?` on `webui` and `scheduler`, same
+pattern as `QDRANT_API_KEY`); it lives only in `.env`, never in the repo.
+
+Each extraction call tries DeepSeek first and **falls back to Claude loudly** on any
+failure, recording `fallback=true` and `fallback_reason` on the row. Truncated
+(`finish_reason` `length`/`max_tokens`) or empty extraction output is never passed to
+synthesis — it triggers fallback, and raises `GroundPackExtractionError` if Claude fails
+too (HTTP 500). Per-section provenance is stored in `podcast_scripts.ground_pack_calls`
+(JSONB, `docs/migrations/013_…`, hand-applied); same degradation loop as 011/012 when
+the column is missing.
 
 ### Podcast generation refuses rather than inventing, and never destroys a script
 

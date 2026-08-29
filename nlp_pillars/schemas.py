@@ -286,6 +286,26 @@ class PodcastOptions(BaseModel):
     )
 
 
+class GroundPackCallRecord(BaseModel):
+    """Which model produced one Ground Pack section.
+
+    Stored per section so a quality shift is attributable to provider or
+    prompt, not guessed from logs later. ``fallback`` is True when DeepSeek
+    failed and Claude answered that call instead.
+    """
+    section: str = Field(..., description="facts_outline | core_concepts | metrics_datasets | limitations")
+    provider: str = Field(..., description="deepseek or anthropic")
+    model: str = Field(..., description="Model id that produced the section")
+    fallback: bool = Field(default=False, description="True when Claude replaced a failed DeepSeek call")
+    fallback_reason: Optional[str] = Field(
+        None,
+        description="Why DeepSeek was skipped, when fallback is True",
+    )
+    input_tokens: Optional[int] = Field(None, description="Prompt tokens, when reported by the provider")
+    output_tokens: Optional[int] = Field(None, description="Completion tokens, when reported by the provider")
+    finish_reason: Optional[str] = Field(None, description="Provider stop reason, e.g. stop or length")
+
+
 class PodcastScript(BaseIOSchema):
     """Generated podcast script from a paper - single host format."""
     id: Optional[str] = Field(None, description="Unique script ID")
@@ -296,6 +316,10 @@ class PodcastScript(BaseIOSchema):
     word_count: int = Field(default=0, description="Script word count")
     key_points: List[str] = Field(default_factory=list, description="Main discussion points")
     ground_pack: dict = Field(default_factory=dict, description="4 prompt outputs for reference")
+    ground_pack_calls: Dict[str, GroundPackCallRecord] = Field(
+        default_factory=dict,
+        description="Per-section model provenance; see GroundPackCallRecord",
+    )
     source_material: SourceMaterial = Field(
         default_factory=SourceMaterial,
         description="What the script was written from; see SourceMaterial",

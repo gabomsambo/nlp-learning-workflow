@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from nlp_pillars.agents.podcast_agent import (
-    InsufficientSourceMaterialError, PodcastAgent
+    InsufficientSourceMaterialError, GroundPackExtractionError, PodcastAgent
 )
 from nlp_pillars.podcast_options import PodcastOptionError, resolve
 from nlp_pillars.db import (
@@ -170,6 +170,13 @@ async def generate_podcast(request: PodcastGenerateRequest):
         # spent — this is raised before the first model call.
         logger.warning(f"Refused to generate a podcast for {request.paper_id}: {e}")
         raise HTTPException(status_code=422, detail=str(e))
+
+    except GroundPackExtractionError as e:
+        # Extraction returned truncated or empty output after every attempt for
+        # at least one section. Surface it — do not hand a broken Ground Pack
+        # to synthesis.
+        logger.error(f"Ground Pack extraction failed for {request.paper_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
     except PodcastOptionError as e:
         # A ValueError subclass, so this must stay above the ValueError branch
