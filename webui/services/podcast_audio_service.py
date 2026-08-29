@@ -16,7 +16,7 @@ from nlp_pillars.schemas import AudioMetadata, StageStatus
 from nlp_pillars.orchestrator import RunCancelledError
 from nlp_pillars.tts.audio_assembler import encode_mp3, wav_duration_seconds
 from nlp_pillars.tts.cue_parser import parse_podcast_script, plan_synthesis_chunks
-from nlp_pillars.tts.engine import TtsEngineStatus
+from nlp_pillars.tts.engine import TtsEngineStatus, ChunkSynthesisError
 from nlp_pillars.tts.indextts_client import IndexTtsClient
 from nlp_pillars.tts.voice_library import (
     VoiceUsability,
@@ -162,11 +162,18 @@ def run_podcast_audio_job(
                 f"chunk {idx}/{total} — {progress.description}",
             )
 
-        wav_path = client.synthesize(
-            plan.text,
-            str(voice_source),
-            on_progress=_progress_cb,
-        )
+        try:
+            wav_path = client.synthesize(
+                plan.text,
+                str(voice_source),
+                on_progress=_progress_cb,
+            )
+        except Exception as exc:
+            reason = str(exc).strip() or type(exc).__name__
+            detail = f"chunk {index}/{len(plans)} failed: {reason}"
+            on_stage("tts_synthesize", StageStatus.FAILED.value, detail)
+            raise ChunkSynthesisError(index, len(plans), reason) from exc
+
         chunk_paths.append(wav_path)
         on_stage(
             "tts_synthesize",

@@ -14,7 +14,14 @@ import requests
 from nlp_pillars.tts.engine import (
     SynthesisProgress,
     TtsEngineStatus,
+    TtsSegmentError,
     TtsStatusInfo,
+)
+from nlp_pillars.tts.text_prep import (
+    DEFAULT_MAX_TOKENS_PER_SEGMENT,
+    describe_degenerate_segment,
+    find_degenerate_segments,
+    prepare_text_for_indextts,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +150,43 @@ class IndexTtsClient:
             base_url=self.base_url,
         )
 
+    def preview_segments(
+        self,
+        text: str,
+        *,
+        max_text_tokens_per_segment: int = DEFAULT_MAX_TOKENS_PER_SEGMENT,
+    ) -> List[tuple[int, str, int]]:
+        """Mirror IndexTTS /on_input_text_change — index, content, token count."""
+        from gradio_client import Client
+
+        client = Client(self.base_url)
+        result = client.predict(
+            text,
+            max_text_tokens_per_segment,
+            api_name="/on_input_text_change",
+        )
+        rows = (result or {}).get("value", {}).get("data") or []
+        return [(int(row[0]), str(row[1]), int(row[2])) for row in rows]
+
+    def validate_segments(
+        self,
+        text: str,
+        *,
+        max_text_tokens_per_segment: int = DEFAULT_MAX_TOKENS_PER_SEGMENT,
+    ) -> None:
+        """Raise TtsSegmentError before Gradio if a segment would crash IndexTTS."""
+        prepared = prepare_text_for_indextts(text)
+        segments = self.preview_segments(
+            prepared,
+            max_text_tokens_per_segment=max_text_tokens_per_segment,
+        )
+        bad = find_degenerate_segments(segments)
+        if bad:
+            index, content, token_count = bad[0]
+            raise TtsSegmentError(
+                describe_degenerate_segment(index, content, token_count)
+            )
+
     def synthesize(
         self,
         text: str,
@@ -151,15 +195,20 @@ class IndexTtsClient:
         on_progress: Optional[Callable[[SynthesisProgress], None]] = None,
         poll_interval: float = 0.5,
         job_timeout: float = 3600.0,
+        max_text_tokens_per_segment: int = DEFAULT_MAX_TOKENS_PER_SEGMENT,
     ) -> str:
         """Submit one synthesis job and return the downloaded WAV path."""
         from gradio_client import Client, handle_file
+
+        prepared = prepare_text_for_indextts(text)
+        if not prepared.strip():
+            raise TtsSegmentError("text is empty after IndexTTS preparation")
 
         client = Client(self.base_url, download_files=str(self.download_dir))
         job = client.submit(
             "Same as the voice reference",
             handle_file(voice_path),
-            text,
+            prepared,
             None,
             0.65,
             0.0,
@@ -172,7 +221,7 @@ class IndexTtsClient:
             0.0,
             "",
             False,
-            120,
+            max_text_tokens_per_segment,
             True,
             0.8,
             30,
@@ -201,11 +250,29 @@ class IndexTtsClient:
                     on_progress(progress)
             time.sleep(poll_interval)
 
-        result = job.result()
+        try:
+            result = job.result()
+        except Exception as exc:
+            raise RuntimeError(self._friendly_synthesis_error(exc, prepared)) from exc
         path = self._normalize_output_path(result)
         if not path:
             raise RuntimeError(f"IndexTTS returned no audio file: {result!r}")
         return path
+
+    @staticmethod
+    def _friendly_synthesis_error(exc: Exception, text: str) -> str:
+        message = str(exc).strip()
+        if "verbose error reporting" in message.lower():
+            preview = text.replace("\n", " ")
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            return (
+                "IndexTTS raised an internal error during synthesis "
+                f"(text starts: {preview!r}). "
+                "This often means a punctuation-only segment after splitting — "
+                "check em-dashes and trailing quotes."
+            )
+        return f"IndexTTS synthesis failed: {message}"
 
     @staticmethod
     def _normalize_output_path(result) -> Optional[str]:

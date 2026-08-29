@@ -7,6 +7,20 @@ from enum import Enum
 from typing import Callable, Optional, Protocol
 
 
+class ChunkSynthesisError(RuntimeError):
+    """One planned synthesis chunk failed; carries chunk index for the run UI."""
+
+    def __init__(self, chunk_index: int, chunk_total: int, reason: str) -> None:
+        self.chunk_index = chunk_index
+        self.chunk_total = chunk_total
+        self.reason = reason
+        super().__init__(f"chunk {chunk_index}/{chunk_total} failed: {reason}")
+
+
+class TtsSegmentError(ValueError):
+    """Text would split into a segment IndexTTS cannot synthesize."""
+
+
 class TtsEngineStatus(str, Enum):
     """Distinct user-facing states for the IndexTTS service."""
 
