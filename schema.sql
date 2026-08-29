@@ -211,6 +211,12 @@ CREATE TABLE podcast_scripts (
     -- Nullable: pre-011 rows have no value and are read back as level="full".
     -- Added by docs/migrations/011_podcast_source_material.sql.
     source_material JSONB,
+    -- What the script was aimed at: field/audience/length/tone; see
+    -- schemas.py::PodcastOptions and nlp_pillars/podcast_options.py.
+    -- Nullable: pre-012 rows were generated when nothing was configurable and
+    -- are read back as an empty PodcastOptions.
+    -- Added by docs/migrations/012_podcast_options.sql.
+    options JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 

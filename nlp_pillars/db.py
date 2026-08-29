@@ -14,7 +14,7 @@ from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
     ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
-    PaperCitation, PodcastScript, SourceMaterial,
+    PaperCitation, PodcastScript, PodcastOptions, SourceMaterial,
     PipelineRun, PipelineRunStage, RunStatus, StageStatus
 )
 
@@ -310,6 +310,10 @@ def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
         # docs/migrations/011_podcast_source_material.sql on databases created
         # before it; add_podcast_script() retries without the key and says so.
         'source_material': script.source_material.model_dump(),
+        # What the script was aimed at. Requires
+        # docs/migrations/012_podcast_options.sql on databases created before
+        # it; add_podcast_script() retries without the key and says so.
+        'options': script.options.model_dump(),
         'created_at': script.created_at.isoformat() if script.created_at else None
     }
 
@@ -329,6 +333,10 @@ def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
         # accepted through the fallback insert. Defaults to level="full", which
         # is what every historical row was assumed to be anyway.
         source_material=SourceMaterial(**(row.get('source_material') or {})),
+        # Absent on rows written before 012, and on any row a pre-012 database
+        # accepted through the fallback insert. An empty PodcastOptions is the
+        # honest reading: those scripts were made when nothing was choosable.
+        options=PodcastOptions(**(row.get('options') or {})),
         created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
     )
 
@@ -878,17 +886,23 @@ def add_podcast_script(script: PodcastScript) -> str:
 
         response = client.table('podcast_scripts').insert(data)
 
-        if response['error'] and _is_missing_column(response['error'], 'source_material'):
-            # Same degradation as paper_queue.url_pdf: keep the write working on
-            # a database that has not had the migration applied, and say loudly
-            # what was dropped. Losing the provenance record is much better than
-            # losing the script.
+        # Same degradation as paper_queue.url_pdf: keep the write working on a
+        # database that has not had a hand-applied migration run against it, and
+        # say loudly what was dropped. Losing a provenance record is much better
+        # than losing the script. Looped because a database can be behind by
+        # more than one migration, and one retry per column would leave the
+        # second failure looking like a real error.
+        for column, migration in (
+            ('source_material', 'docs/migrations/011_podcast_source_material.sql'),
+            ('options', 'docs/migrations/012_podcast_options.sql'),
+        ):
+            if not response['error'] or not _is_missing_column(response['error'], column):
+                continue
             logger.error(
-                "podcast_scripts has no source_material column — run "
-                "docs/migrations/011_podcast_source_material.sql. Saving the "
-                "script without its source-material record."
+                f"podcast_scripts has no {column} column — run {migration}. "
+                f"Saving the script without it."
             )
-            data.pop('source_material')
+            data.pop(column, None)
             response = client.table('podcast_scripts').insert(data)
 
         if response['error']:

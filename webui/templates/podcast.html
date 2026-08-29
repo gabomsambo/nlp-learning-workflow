@@ -36,6 +36,40 @@
       </select>
     </label>
   </div>
+
+  {# The four aiming options, rendered from nlp_pillars/podcast_options.py.
+     Preset dropdown plus a free-text escape, not a wall of empty boxes; the
+     defaults are pre-selected, so someone who touches nothing gets exactly the
+     behaviour the prompts hardcoded before they were configurable. #}
+  <details id="episode-options" open>
+    <summary><strong>Episode settings</strong></summary>
+    <div class="grid">
+      {% for spec in option_specs %}
+      <label for="option-{{ spec.key }}">
+        {{ spec.label }}
+        <select name="{{ spec.key }}" id="option-{{ spec.key }}"
+                class="podcast-option" data-option-key="{{ spec.key }}">
+          {% for preset in spec.presets %}
+          <option value="{{ preset.value }}" {% if preset.value == spec.default %}selected{% endif %}>{{ preset.label }}</option>
+          {% endfor %}
+          {% if spec.free_text %}
+          <option value="{{ custom_value }}">Something else…</option>
+          {% endif %}
+        </select>
+        {% if spec.free_text %}
+        <input type="text" id="option-{{ spec.key }}-custom" name="{{ spec.key }}_custom"
+               class="podcast-option-custom" data-option-key="{{ spec.key }}"
+               placeholder="{{ spec.free_text_placeholder }}" maxlength="120" hidden
+               aria-label="{{ spec.label }} (custom)">
+        {% endif %}
+        <small>{{ spec.help }}</small>
+      </label>
+      {% endfor %}
+    </div>
+    <small>Settings choose what the episode is aimed at. They never change what it
+      is allowed to say: the script is still written only from the paper.</small>
+  </details>
+
   <button type="submit" id="generate-btn">Generate Podcast Script</button>
 </form>
 
@@ -55,6 +89,9 @@
     <button type="button" id="download-btn" class="secondary">Download .txt</button>
   </div>
   <p><small>Word count: <span id="word-count">0</span></small></p>
+  {# What this script was aimed at. Without it, two scripts for the same paper
+     differ for no visible reason. #}
+  <p id="script-settings" hidden><small>Settings: <span id="script-settings-text"></span></small></p>
 
   <div id="key-points" style="margin-bottom: 1rem;">
     <strong>Key Points:</strong>
@@ -117,6 +154,45 @@ const keyPointsList = document.getElementById('key-points-list');
 const scriptContent = document.getElementById('script-content');
 const downloadBtn = document.getElementById('download-btn');
 const warningsEl = document.getElementById('script-warnings');
+const settingsEl = document.getElementById('script-settings');
+const settingsTextEl = document.getElementById('script-settings-text');
+
+// "Something else…" reveals that option's free-text box. The value posted is
+// the sentinel plus "<key>_custom"; the server sanitizes and validates it.
+const CUSTOM_VALUE = {{ custom_value | tojson }};
+
+document.querySelectorAll('.podcast-option').forEach(select => {
+  const custom = document.getElementById(`option-${select.dataset.optionKey}-custom`);
+  if (!custom) return;
+  const sync = () => {
+    custom.hidden = select.value !== CUSTOM_VALUE;
+    custom.required = !custom.hidden;
+  };
+  select.addEventListener('change', sync);
+  sync();
+});
+
+// Collect the flat {key: value, key_custom: text} shape the API expects.
+function collectOptions() {
+  const options = {};
+  document.querySelectorAll('.podcast-option').forEach(select => {
+    options[select.dataset.optionKey] = select.value;
+    if (select.value === CUSTOM_VALUE) {
+      const custom = document.getElementById(`option-${select.dataset.optionKey}-custom`);
+      options[`${select.dataset.optionKey}_custom`] = custom ? custom.value : '';
+    }
+  });
+  return options;
+}
+
+// Render the settings a script was generated with. textContent throughout: one
+// of these labels is free text the user typed.
+function showSettings(options) {
+  const choices = (options && options.choices) || {};
+  const parts = Object.values(choices).map(c => c && c.label).filter(Boolean);
+  settingsTextEl.textContent = parts.join(' · ');
+  settingsEl.hidden = parts.length === 0;
+}
 
 // Holds a script the server generated but could NOT store. There is no other
 // copy of it anywhere, so the download button falls back to this.
@@ -180,7 +256,11 @@ generateForm.addEventListener('submit', async (e) => {
   }
 
   // Update UI for loading state
-  statusEl.textContent = 'Generating podcast script... This may take 30-60 seconds.';
+  // Measured end to end on a 5-page paper: 238 seconds for the five Claude
+  // calls. The old "30-60 seconds" was wrong by 4x and made a working run look
+  // wedged. (The progress bar below is still not connected to those calls —
+  // that is tracked separately as nlp-podcast-progress.)
+  statusEl.textContent = 'Generating podcast script... This usually takes about 4 minutes.';
   statusEl.style.color = '';
   showWarnings([]);
   unsavedScript = null;
@@ -201,7 +281,11 @@ generateForm.addEventListener('submit', async (e) => {
     const res = await fetch('/api/podcast/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paper_id: paperId, pillar_id: pillarId || 'models-architectures' })
+      body: JSON.stringify({
+        paper_id: paperId,
+        pillar_id: pillarId || 'models-architectures',
+        options: collectOptions()
+      })
     });
 
     const data = await res.json();
@@ -222,6 +306,7 @@ generateForm.addEventListener('submit', async (e) => {
       statusEl.textContent = `Script generated (${data.word_count} words) but NOT saved.`;
       statusEl.style.color = 'red';
       showWarnings(data.warnings, { unsaved: true });
+      showSettings(data.options);
       renderScript({
         title: data.title,
         script: data.script,
@@ -295,6 +380,7 @@ async function loadScript(scriptId) {
     // re-opened, not only on the run that produced it.
     const stored = script.source_material || {};
     showWarnings(stored.warnings, { unsaved: false });
+    showSettings(script.options);
 
     renderScript(script);
 

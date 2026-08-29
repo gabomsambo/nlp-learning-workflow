@@ -739,8 +739,51 @@ never 404 — a malformed id used to produce PostgREST `400 invalid input syntax
 uuid` and reach the user as "Script not found". The `/podcast` page renders an explicit
 banner instead of an empty dropdown plus "No podcast scripts generated yet".
 
-Still deliberately unfixed on this path: the fake progress bar and "30-60 seconds" label
-(the real time is ~238s), and the `innerHTML` sink that renders the script body.
+Still deliberately unfixed on this path: the fake progress bar (tracked as
+`nlp-podcast-progress`) and the `innerHTML` sink that renders the script body. The
+"30-60 seconds" label is fixed — it says ~4 minutes, which is what 238s rounds to.
+
+### What a podcast is aimed at is configurable; what it may say is not
+
+`nlp_pillars/podcast_options.py` owns four knobs — **field/domain, audience, episode
+length, tone** — as a registry of `OptionSpec`s. **Adding a fifth is a data change:**
+append a spec, reference its variables from a prompt template in `podcast_agent.py`.
+No signature change, no schema change (`PodcastOptions.choices` is keyed by option
+key), no migration.
+
+Every default reproduces the aiming the prompts hardcoded before this existed — an NLP
+paper for a graduate student, ~30 minutes, the "TWIML/Neutral/Lex vibe" tone — so
+`PodcastAgent()` with no options behaves as it always did. `tests/test_podcast_options.py`
+pins the pre-change fragments verbatim; `scripts/render_podcast_prompts.py` prints all
+five prompts for any option set without calling a model, which is how a prompt change is
+reviewed as a diff rather than by spending $0.27.
+
+Three rules hold this together, and each of them is asserted:
+
+- **Trusted text is interpolated; user text is not.** A preset's `vars` are written in
+  that file and go straight into instruction sentences. Free text is sanitized to one
+  short line and appears ONLY inside the delimited `=== EPISODE SETTINGS ===` block in
+  the *user* message, followed by the precedence note, then the rules. A custom *field*
+  therefore contributes a pointer ("the field named in the EPISODE SETTINGS block"), not
+  its own words — otherwise it reaches instruction slots through the audience templates,
+  which name the field. That leak was found by the tests, not by review.
+- **The grounding rules and output format are not options.** "Use ONLY information found
+  in the provided paper", the `[VERIFY]:` marker, "no external facts",
+  numbers-only-if-present, the `[HOST]:` line format and the `[MUSIC]/[SFX]/[PAUSE]/
+  [TRANSITION]` cue vocabulary are fixed, restated after the settings block, and tested
+  against hostile free text. Do not make any of them configurable.
+- **Call 5's system prompt is constant and interpolates nothing.** Role, grounding,
+  format and TTS live there; the options, Ground Pack and paper are in the user message.
+  That is deliberate — a constant system prefix is the prerequisite for the prompt
+  caching that would take ~22% off every podcast.
+
+Temperatures are set per call and were previously unset (so all five ran at the API
+default of 1.0): extraction 0.1 (calls 1 and 3), analysis 0.4 (calls 2 and 4), script 0.8.
+
+`docs/migrations/012_podcast_options.sql` adds `podcast_scripts.options` and **must be
+run by hand**; until it is, `add_podcast_script()` drops the key, logs it and still saves
+the script — the same degradation 011 has, now looped so a database behind by both
+migrations still saves.
 
 `discovery_agent` became a real LLM agent on 2026-08-16; before that it was a stub that
 pasted stopword-stripped pillar goals into three fixed templates and never called a model.
