@@ -65,6 +65,20 @@ class Settings(BaseSettings):
     # one knob controls the whole run's API spend.
     papers_per_day: int = Field(1, env="PAPERS_PER_DAY", ge=1)
 
+    # IndexTTS on the host GPU — see nlp_pillars/tts/indextts_client.py
+    indextts_url: str = Field(
+        "http://host.docker.internal:7860",
+        env="INDEXTTS_URL",
+    )
+    indextts_start_command: str = Field(
+        "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860",
+        env="INDEXTTS_START_COMMAND",
+    )
+    voices_dir: str = Field("/voices", env="VOICES_DIR")
+    podcast_audio_dir: str = Field("/app/data/podcast_audio", env="PODCAST_AUDIO_DIR")
+    tts_download_dir: str = Field("/app/data/tts-downloads", env="TTS_DOWNLOAD_DIR")
+    tts_preview_dir: str = Field("/app/data/tts-previews", env="TTS_PREVIEW_DIR")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

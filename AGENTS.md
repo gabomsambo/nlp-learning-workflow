@@ -920,6 +920,24 @@ slugs throughout. Re-pointing them at five of the current eight pillars would be
 invention rather than a migration, which is the same reasoning `config.py` gives for
 leaving `LEGACY_TO_SLUG` alone. Retiring those ids from the tests is a separate job.
 
+## Podcast episode audio (IndexTTS v1)
+
+IndexTTS runs on the **host GPU**, never in Docker. The webui calls it via
+`gradio_client` at `INDEXTTS_URL` (default `http://host.docker.internal:7861`).
+Liveness is **not** a port check — probe `/gradio_api/info` for `/gen_single` with
+the exact 24-parameter contract in `nlp_pillars/tts/indextts_client.py`.
+
+Voice references come from the captain's folder, mounted read-only at `/voices`
+(`VOICES_DIR`). Scanning and preflight live in `nlp_pillars/tts/voice_library.py`.
+All podcast cues (`[HOST]:`, `[PAUSE]`, `[MUSIC]`, etc.) are stripped in
+`nlp_pillars/tts/cue_parser.py` before any text reaches the model.
+
+Audio generation is a fourth `pipeline_runs` kind (`podcast_audio` /
+`ui_podcast_audio`). MP3s land in `/app/data/podcast_audio/` on the `nlp_uploads`
+volume; metadata is `podcast_scripts.audio_metadata` (migration 014, hand-applied).
+Rebuild the webui image after compose changes — it adds `ffmpeg`, `gradio_client`,
+`extra_hosts`, and the voices mount.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

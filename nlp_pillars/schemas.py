@@ -306,6 +306,26 @@ class GroundPackCallRecord(BaseModel):
     finish_reason: Optional[str] = Field(None, description="Provider stop reason, e.g. stop or length")
 
 
+class AudioMetadata(BaseModel):
+    """One generated MP3 and how it was produced.
+
+    Follows the same JSONB-on-podcast_scripts pattern as source_material,
+    options, and ground_pack_calls.
+    """
+    engine: Optional[str] = Field(None, description="TTS engine id, e.g. indextts")
+    voice_path: Optional[str] = Field(None, description="Library-relative voice file")
+    voice_label: Optional[str] = Field(None, description="Display label for the voice")
+    file_name: Optional[str] = Field(None, description="MP3 filename under podcast_audio/")
+    file_path: Optional[str] = Field(None, description="Absolute path inside the container")
+    duration_seconds: Optional[float] = Field(None, description="Final audio duration")
+    generated_at: Optional[datetime] = Field(None, description="When audio was generated")
+    chunk_count: Optional[int] = Field(None, description="Number of synthesis chunks")
+
+    @property
+    def has_audio(self) -> bool:
+        return bool(self.file_name)
+
+
 class PodcastScript(BaseIOSchema):
     """Generated podcast script from a paper - single host format."""
     id: Optional[str] = Field(None, description="Unique script ID")
@@ -327,6 +347,10 @@ class PodcastScript(BaseIOSchema):
     options: PodcastOptions = Field(
         default_factory=PodcastOptions,
         description="What the script was aimed at; see PodcastOptions",
+    )
+    audio_metadata: AudioMetadata = Field(
+        default_factory=AudioMetadata,
+        description="Generated episode audio; see AudioMetadata",
     )
     created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the script was created")
 
@@ -618,6 +642,13 @@ class StageName(str, Enum):
     DISCOVER_CITATIONS = "discover_citations"      # _search_citations (conditional)
     DISCOVER_RANK = "discover_rank"                # _rank_and_dedupe
 
+    # podcast audio generation (IndexTTS), in execution order.
+    TTS_PREPARE = "tts_prepare"
+    TTS_SYNTHESIZE = "tts_synthesize"
+    TTS_ASSEMBLE = "tts_assemble"
+    TTS_ENCODE = "tts_encode"
+    TTS_SAVE = "tts_save"
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
 #:
@@ -666,6 +697,14 @@ DISCOVER_STAGES: List[StageName] = [
     StageName.DISCOVER_S2,
     StageName.DISCOVER_CITATIONS,
     StageName.DISCOVER_RANK,
+]
+
+PODCAST_AUDIO_STAGES: List[StageName] = [
+    StageName.TTS_PREPARE,
+    StageName.TTS_SYNTHESIZE,
+    StageName.TTS_ASSEMBLE,
+    StageName.TTS_ENCODE,
+    StageName.TTS_SAVE,
 ]
 
 

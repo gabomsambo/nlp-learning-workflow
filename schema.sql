@@ -222,6 +222,9 @@ CREATE TABLE podcast_scripts (
     -- Nullable: pre-013 rows have no value and are read back as {}.
     -- Added by docs/migrations/013_podcast_ground_pack_calls.sql.
     ground_pack_calls JSONB,
+    -- Generated episode audio metadata; see schemas.py::AudioMetadata.
+    -- Added by docs/migrations/014_podcast_audio.sql.
+    audio_metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
@@ -378,10 +381,11 @@ CREATE TABLE pipeline_runs (
     trigger_source   TEXT NOT NULL
         CONSTRAINT pipeline_runs_trigger_source_check
         CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'ui_discover',
-                                  'scheduler')),
+                                  'scheduler', 'ui_podcast_audio')),
     kind             TEXT NOT NULL
         CONSTRAINT pipeline_runs_kind_check
-        CHECK (kind IN ('run_daily', 'process_selected', 'discover')),
+        CHECK (kind IN ('run_daily', 'process_selected', 'discover',
+                        'podcast_audio')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".

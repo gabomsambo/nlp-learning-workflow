@@ -76,6 +76,7 @@ arxiv==4.0.1
 beautifulsoup4==4.15.0
 requests==2.34.2
 aiohttp==3.14.3
+gradio_client==1.7.2  # IndexTTS host Gradio API from Docker
 
 # CLI & Scheduling
 typer==0.27.1

@@ -36,6 +36,7 @@ from nlp_pillars import db
 from nlp_pillars.orchestrator import Orchestrator, RunCancelledError
 from nlp_pillars.schemas import (
     DISCOVER_STAGES,
+    PODCAST_AUDIO_STAGES,
     PROCESS_SELECTED_STAGES,
     RUN_DAILY_STAGES,
     PaperRef,
@@ -43,17 +44,20 @@ from nlp_pillars.schemas import (
     StageStatus,
 )
 from webui.services.discovery_results import candidates_payload
+from webui.services import podcast_audio_service
 
 logger = logging.getLogger(__name__)
 
 KIND_RUN_DAILY = "run_daily"
 KIND_PROCESS_SELECTED = "process_selected"
 KIND_DISCOVER = "discover"
+KIND_PODCAST_AUDIO = podcast_audio_service.KIND_PODCAST_AUDIO
 
 _STAGES_FOR_KIND = {
     KIND_RUN_DAILY: RUN_DAILY_STAGES,
     KIND_PROCESS_SELECTED: PROCESS_SELECTED_STAGES,
     KIND_DISCOVER: DISCOVER_STAGES,
+    KIND_PODCAST_AUDIO: PODCAST_AUDIO_STAGES,
 }
 
 
@@ -154,6 +158,8 @@ def execute_run(
 
         if kind == KIND_DISCOVER:
             _finish_discovery(run_id, orchestrator, pillar_id, kwargs)
+        elif kind == KIND_PODCAST_AUDIO:
+            _finish_podcast_audio(run_id, pillar_id, cancel_event, kwargs, on_stage)
         elif kind == KIND_RUN_DAILY:
             _finish_pipeline(
                 run_id,
@@ -243,6 +249,47 @@ def _finish_discovery(
     )
 
 
+def _finish_podcast_audio(
+    run_id: str,
+    pillar_id: str,
+    cancel_event: threading.Event,
+    kwargs: Dict[str, Any],
+    on_stage,
+) -> None:
+    script_id = kwargs.get("script_id")
+    voice_path = kwargs.get("voice_path")
+    if not script_id or not voice_path:
+        raise ValueError("podcast_audio run requires script_id and voice_path")
+
+    podcast_audio_service.run_podcast_audio_job(
+        run_id,
+        script_id,
+        voice_path,
+        on_stage,
+        cancel_event,
+    )
+    script = db.get_podcast_script_by_id(script_id)
+    meta = script.audio_metadata if script else None
+    result_payload: Optional[Dict[str, Any]] = None
+    if meta and meta.file_name:
+        result_payload = {
+            "script_id": script_id,
+            "audio_url": f"/api/podcast/audio/{meta.file_name}",
+            "file_name": meta.file_name,
+            "duration_seconds": meta.duration_seconds,
+            "voice_path": meta.voice_path,
+            "engine": meta.engine,
+        }
+    db.finish_pipeline_run(
+        run_id,
+        RunStatus.SUCCEEDED.value,
+        papers_processed=0,
+        papers_failed=0,
+        result=result_payload,
+    )
+    logger.info("Run %s finished podcast audio for script %s", run_id, script_id)
+
+
 def _join_problems(problems: List[str]) -> Optional[str]:
     """One run-level line for the degradations a discovery run survived.
 
@@ -298,7 +345,12 @@ def on_job_error(event) -> None:
 #: Trigger sources this process owns. The scheduler container runs the same pipeline
 #: against the same database, so the startup sweep must not touch its runs — see
 #: db.sweep_interrupted_runs.
-WEBUI_TRIGGER_SOURCES = ["ui_pipeline", "ui_select", "ui_discover"]
+WEBUI_TRIGGER_SOURCES = [
+    "ui_pipeline",
+    "ui_select",
+    "ui_discover",
+    podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
+]
 
 
 def sweep_interrupted_runs_on_startup() -> int:
