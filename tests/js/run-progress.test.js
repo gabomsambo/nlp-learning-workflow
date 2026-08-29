@@ -25,6 +25,7 @@ const {
   displayStatus,
   duration,
   candidateCount,
+  safely,
 } = require('../../webui/static/run-progress.js');
 
 /** Eleven stages, the first `done` of them completed. */
@@ -246,4 +247,38 @@ test('durations over a minute are shown as minutes and seconds', () => {
 test('an unfinished stage measures against now', () => {
   const started = new Date(Date.now() - 5000).toISOString();
   assert.match(duration({ started_at: started, finished_at: null }), /^[45]\.\ds$/);
+});
+
+
+/*
+ * safely(): a rendering handler must not be able to break the poll.
+ *
+ * Before this, handlers ran inside tick()'s try, so a TypeError in a page's render
+ * was caught by the *transport* catch and announced as "Lost contact with the
+ * server — retrying" while the throw skipped the isTerminal check, leaving the page
+ * polling a finished run. Measured against a discovery run whose stored candidates
+ * were the wrong shape.
+ */
+test('a throwing handler is contained rather than propagated', () => {
+  const errors = [];
+  const realError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    assert.doesNotThrow(() => safely(() => { throw new TypeError('boom'); }, {}, 'onDone'));
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(errors.length, 1, 'the failure is logged, not swallowed silently');
+  assert.match(String(errors[0][0]), /onDone/);
+});
+
+test('a handler that works is called with its argument, once', () => {
+  const seen = [];
+  safely((run) => seen.push(run), { id: 'r1' }, 'onUpdate');
+  assert.deepEqual(seen, [{ id: 'r1' }]);
+});
+
+test('a missing handler is not an error', () => {
+  assert.doesNotThrow(() => safely(undefined, {}, 'onGone'));
+  assert.doesNotThrow(() => safely(null, {}, 'onGone'));
 });

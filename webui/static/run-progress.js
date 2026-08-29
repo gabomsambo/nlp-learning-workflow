@@ -47,6 +47,34 @@
 
   /* ---------------------------------------------------------------- polling */
 
+  /**
+   * Call a caller's handler without letting it break the poll.
+   *
+   * The handlers render; the poll is transport. Running them inside tick()'s try
+   * meant any rendering bug was caught by the transport catch and reported as
+   * "Lost contact with the server — retrying", which is a lie, and — because the
+   * throw jumped over the isTerminal check — left the page polling a finished run
+   * for as long as it stayed open. Measured on a discovery run whose stored
+   * candidates were the wrong shape: a TypeError in the candidates table produced
+   * exactly that, with no console error to say otherwise.
+   *
+   * Same reasoning as the orchestrator's on_stage sink (AGENTS.md, "Long runs are
+   * background jobs"): losing the progress display is bad, losing the run with it
+   * is worse. Logged rather than swallowed — a render bug should still be findable.
+   */
+  function safely(fn, arg, what) {
+    if (!fn) return;
+    try {
+      fn(arg);
+    } catch (err) {
+      // `global` is the IIFE's parameter (window in a browser, globalThis under
+      // node --test), not a bare `window` — which would itself throw in node.
+      if (global.console && global.console.error) {
+        global.console.error('run-progress: ' + what + ' handler failed', err);
+      }
+    }
+  }
+
   function pollRun(runId, handlers) {
     var delay = POLL_MS;
     var stopped = false;
@@ -72,24 +100,24 @@
           // forever. Note this is now ONLY sent for a real absence: a database
           // failure answers 503 and falls through to the retry path below.
           stop();
-          if (handlers.onGone) handlers.onGone(runId);
+          safely(handlers.onGone, runId, 'onGone');
           return;
         }
         if (!res.ok) throw new Error('HTTP ' + res.status);
 
         var run = await res.json();
-        if (handlers.onUpdate) handlers.onUpdate(run);
+        safely(handlers.onUpdate, run, 'onUpdate');
 
         if (isTerminal(run.status)) {
           stop();
-          if (handlers.onDone) handlers.onDone(run);
+          safely(handlers.onDone, run, 'onDone');
           return;
         }
         delay = POLL_MS; // healthy: back to a fast poll
       } catch (err) {
         if (err.name === 'AbortError') return; // deliberate stop, not a failure
         delay = Math.min(delay * 2, MAX_BACKOFF_MS);
-        if (handlers.onError) handlers.onError(err);
+        safely(handlers.onError, err, 'onError');
       }
       timer = setTimeout(tick, delay); // scheduled AFTER the response, never before
     }
@@ -573,6 +601,7 @@
       displayStatus: displayStatus,
       duration: duration,
       candidateCount: candidateCount,
+      safely: safely,
     };
   }
 })(typeof window !== 'undefined' ? window : globalThis);
