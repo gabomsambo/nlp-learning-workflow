@@ -160,6 +160,33 @@ retention or cleanup policy yet — retained PDFs accumulate at ~1-5 MB/paper.
 Papers added by URL keep the http URL in `url_pdf` and are re-downloaded on demand, so
 only the file-upload path depends on this.
 
+### An upload reports two facts, and the checkboxes default on
+
+`UploadResponse.success` means the paper reached `papers`; `pipeline_ok` /
+`pipeline_errors` report the follow-on processing separately. They used to be one fact:
+`_run_full_pipeline` wrapped its whole body in `except Exception`, appended
+`pipeline_error: {e}` to `actions_triggered` as a pseudo-action, and the route still
+answered `success=True` — so the page printed "uploaded successfully! Triggered:
+pipeline_error: ...". Each stage now fails independently into `PipelineOutcome.errors`
+(a failed lesson no longer takes the quiz with it), and `upsert_text` returning 0 for a
+non-empty paper is recorded as a failure, matching `Orchestrator._process_paper`. A
+failed pipeline is **not** an upload error: the paper is in the library and re-uploading
+is the wrong remedy, which is what the page's `#upload-result` banner says.
+
+`run_summarizer` and `generate_quiz` default **True** now, matching discovery's hardcoded
+`enable_quiz=True` at `run_service.py`. The quiz genuinely needs the summarizer — it is
+built from its `PaperNote` — so the two checkboxes move together in the UI and the
+combination is reported rather than silently ignored server-side. An unchecked box is
+absent from `FormData`, so `pillar_detail.html` sends both flags explicitly; omitting them
+would now mean the *opposite* of what the user chose.
+
+`_create_paper_ref_from_url` parses the PDF only when nothing else can name the paper.
+An arXiv id in the URL skips it, because `_enrich_from_arxiv` overwrites the guessed title
+unconditionally and the real ingest parses the file again anyway — 8.4 seconds thrown away
+per arXiv upload, measured on the captain's 4.71 MB PDF. The fallback still runs for
+non-arXiv URLs (and before the S2 lookup, which searches by title) and when an arXiv
+lookup was expected but failed.
+
 ## Which Qdrant the app talks to
 
 **Qdrant Cloud**, as of 2026-08-29 — cluster `nlp-learning-workflow-retry`, aws
@@ -240,9 +267,42 @@ Mock the client with `Mock(spec=QdrantClient)` in tests. A bare `Mock()` answers
 attribute, so `tests/test_vectors.py` passed green for months against a read path calling
 a method the installed library no longer had.
 
+`upsert_text()` embeds in **batches of `EMBED_BATCH_SIZE` (100)**, not one request per
+chunk — the captain's 448-chunk paper cost 448 sequential OpenAI round trips and was the
+dominant term in a 3m20s upload. Two contracts hold it together and neither is optional:
+`_embed_batch()` places each vector by the response item's `index` rather than trusting
+arrival order (a reshuffle is invisible in the stored data — payloads carry no chunk
+text), and any batch failure abandons the **whole** upsert. The per-chunk loop it
+replaced logged a warning and `continue`d, so a paper could be written with an arbitrary
+subset of itself embedded and still return a plausible count. `upsert_text` is therefore
+all-or-nothing: a non-zero return means the paper is fully represented, 0 means nothing
+was written.
+
 Stored payloads carry only `pillar_id`, `paper_id`, `chunk_index` and `len` — **no chunk
 text**. `search_similar()` is a paper-level discovery API, not a snippet API; recovering
 the text of a hit means re-chunking the source with the same parameters.
+
+## The discovery candidate payload is the paper's permanent record
+
+`webui/services/discovery_results.py` looks like a view-model and is not one. The dicts
+it builds are stored in `pipeline_runs.result`, rendered by `discovery.html`, and then
+**posted back to `/select` unchanged**, which persists them via `run_service._to_paper_refs`
+-> `orchestrator` -> `db.upsert_paper`. Anything shortened there is shortened in `papers`
+forever. It used to cap abstracts at 300 characters and author lists at 3, commented as
+display caps — for two fields the candidates table does not render at all. Measured on the
+captain's library: `2403.05525` carries 3 authors and a 303-character abstract cut
+mid-sentence; a URL-uploaded paper in the same pillar carries all 319 authors and 1538
+characters, because that path never went through this serialiser.
+
+**Truncate at render time in the template, never in the serialiser.** Adding a field means
+touching three places or it is silently dropped: the serialiser, `PaperData` in
+`webui/routers/api/discovery.py` (FastAPI discards undeclared keys — that is why `venue`
+was NULL on every discovered paper), and the `selectedPapers` map in `discovery.html`.
+`tests/webui/test_discovery_metadata_roundtrip.py` walks all three and greps the template
+for the JS link no Python test can otherwise reach.
+
+Fixed forward only. Rows written before this still carry the truncation; re-resolving them
+is a separate captain decision.
 
 ## There are eight pillars, and three places must agree
 

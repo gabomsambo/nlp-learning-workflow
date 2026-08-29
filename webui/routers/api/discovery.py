@@ -39,10 +39,18 @@ class DiscoverResponse(BaseModel):
 
 
 class PaperData(BaseModel):
-    """Paper data for selection."""
+    """Paper data for selection.
+
+    This is the record that gets persisted, not a view of it: /select hands these
+    straight to run_service -> orchestrator -> db.upsert_paper. Every field the
+    discovery payload carries must have a home here or it is dropped on the way to
+    `papers`, which is how `venue` came to be NULL on every discovery-ingested paper.
+    Nothing on this path may shorten a value — see webui/services/discovery_results.py.
+    """
     id: str
     title: str
     authors: List[str] = Field(default_factory=list)
+    venue: Optional[str] = None
     year: Optional[int] = None
     url_pdf: Optional[str] = None
     abstract: Optional[str] = None
@@ -162,6 +170,7 @@ async def select_papers(pillar_id: str, request: SelectRequest, http_request: Re
                 "id": p.id,
                 "title": p.title,
                 "authors": p.authors,
+                "venue": p.venue,
                 "year": p.year,
                 "url_pdf": p.url_pdf,
                 "abstract": p.abstract,

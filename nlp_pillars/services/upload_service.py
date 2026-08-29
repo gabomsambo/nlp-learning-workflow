@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -47,6 +48,24 @@ class UploadError(Exception):
     """Custom exception for upload operations."""
 
     pass
+
+
+@dataclass
+class PipelineOutcome:
+    """What the post-upload pipeline actually did, and what it failed to do.
+
+    Two lists, never one. The old return value was a single list of action names
+    onto which a crash was appended as ``pipeline_error: {e}``, which meant the only
+    way to tell success from failure was to string-match the entries — and nothing
+    did, so the route answered ``success=True`` either way.
+    """
+
+    actions_triggered: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
 
 
 class UploadService:
@@ -129,7 +148,7 @@ class UploadService:
             status.message = "Processing paper through pipeline..."
 
             # Always run text extraction, conditionally run summarizer/quiz
-            actions_triggered = await self._run_full_pipeline(
+            outcome = await self._run_full_pipeline(
                 paper=paper,
                 pillar_id=pillar_id,
                 status=status,
@@ -137,18 +156,12 @@ class UploadService:
                 generate_quiz=request.generate_quiz
             )
 
-            # Complete
-            status.progress = 100
-            status.status = "completed"
-            status.message = "Upload completed successfully"
-
-            logger.info(f"Uploaded {paper.id} from URL: {request.url}")
-
-            return UploadResponse(
-                success=True,
+            return self._upload_response(
                 paper=paper,
-                message="Paper uploaded successfully from URL",
-                actions_triggered=actions_triggered
+                status=status,
+                outcome=outcome,
+                source_description=f"from URL: {request.url}",
+                added_message="Paper uploaded successfully from URL",
             )
 
         except (PDFDownloadError, PDFParseError, IngestError) as e:
@@ -234,7 +247,7 @@ class UploadService:
             status.message = "Processing paper through pipeline..."
 
             # Always run text extraction, conditionally run summarizer/quiz
-            actions_triggered = await self._run_full_pipeline(
+            outcome = await self._run_full_pipeline(
                 paper=paper,
                 pillar_id=pillar_id,
                 status=status,
@@ -242,18 +255,12 @@ class UploadService:
                 generate_quiz=request.generate_quiz
             )
 
-            # Complete
-            status.progress = 100
-            status.status = "completed"
-            status.message = "Upload completed successfully"
-
-            logger.info(f"Uploaded {paper.id} from file: {file.filename}")
-
-            return UploadResponse(
-                success=True,
+            return self._upload_response(
                 paper=paper,
-                message="Paper uploaded successfully from file",
-                actions_triggered=actions_triggered
+                status=status,
+                outcome=outcome,
+                source_description=f"from file: {file.filename}",
+                added_message="Paper uploaded successfully from file",
             )
 
         except Exception as e:
@@ -279,6 +286,52 @@ class UploadService:
                     logger.info(f"Discarded upload for failed request: {saved_path}")
                 except Exception as e:
                     logger.warning(f"Failed to clean up file {saved_path}: {e}")
+
+    @staticmethod
+    def _upload_response(
+        paper: PaperRef,
+        status: UploadStatus,
+        outcome: "PipelineOutcome",
+        source_description: str,
+        added_message: str,
+    ) -> UploadResponse:
+        """Turn a finished pipeline into a response that says what happened.
+
+        The paper is in the library either way — that is what ``success`` reports,
+        and it is why a failed pipeline is not raised as an upload error. What the
+        pipeline did or failed to do is reported alongside it, so the page can say
+        "added, but the summary failed" instead of the "uploaded successfully!
+        Triggered: pipeline_error: ..." it used to print.
+        """
+        status.progress = 100
+
+        if outcome.ok:
+            status.status = "completed"
+            status.message = "Upload completed successfully"
+            logger.info(f"Uploaded {paper.id} {source_description}")
+            message = added_message
+        else:
+            # Not "failed": the paper was added. Anything that reads this back must
+            # not conclude the upload has to be retried from scratch.
+            status.status = "completed_with_errors"
+            status.message = "Paper added, but post-upload processing failed"
+            logger.error(
+                f"Uploaded {paper.id} {source_description}, but the pipeline "
+                f"reported: {'; '.join(outcome.errors)}"
+            )
+            message = (
+                "Paper added to the library, but post-upload processing did not "
+                "finish"
+            )
+
+        return UploadResponse(
+            success=True,
+            paper=paper,
+            message=message,
+            actions_triggered=outcome.actions_triggered,
+            pipeline_ok=outcome.ok,
+            pipeline_errors=outcome.errors,
+        )
 
     def get_upload_status(self, upload_id: str) -> Optional[UploadStatus]:
         """Get upload status by ID."""
@@ -320,28 +373,42 @@ class UploadService:
         title_override: Optional[str],
         authors_override: Optional[List[str]]
     ) -> PaperRef:
-        """Create PaperRef from URL with automatic metadata enrichment."""
+        """Create PaperRef from URL with automatic metadata enrichment.
+
+        The PDF is parsed here only when nothing else can name the paper. It used
+        to be parsed unconditionally, to guess a title from the first plausible
+        line — and then ``_enrich_from_arxiv`` overwrote that title (along with the
+        authors, year, abstract and venue) a few lines later, because for an arXiv
+        paper the API is authoritative. The guess was thrown away every time, and
+        ``_run_full_pipeline`` then parsed the same PDF a second time for the real
+        ingest. Measured on a 4.71 MB arXiv PDF inside the container: 8.4 seconds
+        per upload, spent to produce a string that was immediately discarded.
+
+        So an arXiv id in the URL skips the guess. The fallback is deliberately
+        kept for everything else, and kept *before* the Semantic Scholar lookup:
+        S2 searches by title when it has no id to look up, so handing it the
+        ``Paper from <host>`` placeholder instead of the extracted title would
+        trade 8.4 seconds for worse metadata on exactly the non-arXiv papers that
+        need enrichment most. It also still runs when an arXiv lookup was expected
+        but failed (paper withdrawn, API down), which is the case that would
+        otherwise leave a paper permanently titled after its hostname.
+        """
         # Generate paper ID from URL
         paper_id = self._generate_paper_id_from_url(url)
 
-        # Extract title if not provided
-        title = title_override
         default_title = f"Paper from {urlparse(url).netloc}"
-        if not title:
-            try:
-                # Try to extract title from PDF text
-                text = extract_text(pdf_path)
-                title = self._extract_title_from_text(text) or default_title
-            except Exception as e:
-                logger.warning(f"Failed to extract title from PDF: {e}")
-                title = default_title
+        arxiv_id = self._extract_arxiv_id(url)
+
+        title = title_override
+        if not title and not arxiv_id:
+            title = self._guess_title_from_pdf(pdf_path, default_title)
 
         # Use provided authors or empty list
         authors = authors_override or []
 
         paper = PaperRef(
             id=paper_id,
-            title=title,
+            title=title or default_title,
             authors=authors,
             url_pdf=url,
             venue=None,
@@ -354,11 +421,27 @@ class UploadService:
         logger.info(f"Attempting metadata enrichment for URL: {url}")
         paper = self._enrich_from_arxiv(paper, url)
 
+        # The arXiv lookup was supposed to supply the title and did not (not found,
+        # or the API was unreachable). Pay for the parse now rather than record the
+        # hostname as the paper's title forever.
+        if not title_override and paper.title == default_title:
+            paper.title = self._guess_title_from_pdf(pdf_path, default_title)
+
         # Fallback to Semantic Scholar if still missing metadata
         if not paper.authors or not paper.year or not paper.abstract:
             paper = self._enrich_from_semantic_scholar(paper)
 
         return paper
+
+    def _guess_title_from_pdf(self, pdf_path: str, default_title: str) -> str:
+        """Best-effort title from the PDF body. Costs a full extraction — call it
+        only when no metadata source can name the paper (see the caller)."""
+        try:
+            text = extract_text(pdf_path)
+            return self._extract_title_from_text(text) or default_title
+        except Exception as e:
+            logger.warning(f"Failed to extract title from PDF: {e}")
+            return default_title
 
     async def _create_paper_ref_from_file(
         self,
@@ -442,16 +525,37 @@ class UploadService:
         paper: PaperRef,
         pillar_id: str,
         status: UploadStatus,
-        run_summarizer: bool = False,
-        generate_quiz: bool = False
-    ) -> List[str]:
+        run_summarizer: bool = True,
+        generate_quiz: bool = True
+    ) -> "PipelineOutcome":
         """Run the full processing pipeline on an uploaded paper.
 
         This replicates the logic from Orchestrator._process_paper to ensure
         uploaded papers get the same rich processing as discovered papers.
-        """
-        actions_triggered = []
 
+        Returns a PipelineOutcome rather than a bare list of action names. The list
+        alone could not distinguish "did the work" from "tried and failed", and the
+        previous version resolved that by appending ``pipeline_error: {e}`` to it as
+        though a crash were a fifth kind of action. Whatever went wrong here does not
+        remove the paper — it is already in the database, and deleting it would be
+        worse — so the caller reports the two facts separately.
+        """
+        actions_triggered: List[str] = []
+        errors: List[str] = []
+
+        # Requested but impossible: the quiz is generated from the summarizer's
+        # PaperNote, so there is nothing to build it from without one. This used to
+        # be a silent no-op — the quiz block sat inside `if run_summarizer:`, so
+        # asking for cards without a summary produced none and said nothing. The
+        # constraint is real; being quiet about it is what was wrong.
+        if generate_quiz and not run_summarizer:
+            errors.append(
+                "quiz_generation: skipped because quiz cards are generated from the "
+                "summarizer's notes and 'Run Summarizer' was off"
+            )
+            generate_quiz = False
+
+        parsed_paper = None
         try:
             # Step 5a: Ingest paper (extract full text and metadata)
             status.message = "Extracting text and metadata..."
@@ -460,9 +564,17 @@ class UploadService:
 
             parsed_paper = self.ingest_agent.ingest(paper_ref=paper)
             actions_triggered.append("text_extraction")
+        except Exception as e:
+            # Everything downstream reads parsed_paper, so this one is terminal for
+            # the pipeline. The paper row stays; the user is told it is bare.
+            logger.error(f"Text extraction failed for {paper.id}: {e}")
+            errors.append(f"text_extraction: {e}")
+            return PipelineOutcome(actions_triggered=actions_triggered, errors=errors)
 
-            # Step 5b: Summarize paper (if requested)
-            if run_summarizer:
+        paper_note = None
+        if run_summarizer:
+            try:
+                # Step 5b: Summarize paper
                 status.message = "Generating summary and notes..."
                 status.progress = 60
                 logger.info(f"Step 5b: Summarizing {paper.id} for {pillar_id}")
@@ -486,7 +598,12 @@ class UploadService:
                 # Persist the paper note
                 db.insert_note(paper_note)
                 actions_triggered.append("summarizer")
+            except Exception as e:
+                logger.error(f"Summarizer failed for {paper.id}: {e}")
+                errors.append(f"summarizer: {e}")
 
+        if paper_note is not None:
+            try:
                 # Step 5c: Synthesize lesson
                 status.message = "Synthesizing lesson..."
                 status.progress = 70
@@ -506,9 +623,20 @@ class UploadService:
                 # Persist the lesson
                 db.insert_lesson(lesson)
                 actions_triggered.append("lesson_synthesis")
+            except Exception as e:
+                # A failed lesson must not take the quiz down with it: both are built
+                # from the note, not from each other.
+                logger.error(f"Lesson synthesis failed for {paper.id}: {e}")
+                errors.append(f"lesson_synthesis: {e}")
 
-                # Step 5d: Generate quiz (if requested)
-                if generate_quiz:
+        if generate_quiz:
+            if paper_note is None:
+                errors.append(
+                    "quiz_generation: skipped because the summarizer produced no notes"
+                )
+            else:
+                try:
+                    # Step 5d: Generate quiz
                     status.message = "Generating quiz cards..."
                     status.progress = 85
                     logger.info(f"Step 5d: Generating quiz for {paper.id}")
@@ -524,9 +652,14 @@ class UploadService:
                     # Persist quiz cards
                     if quiz_cards:
                         db.insert_quiz_cards(quiz_cards)
+                        actions_triggered.append("quiz_generation")
+                    else:
+                        errors.append("quiz_generation: the model returned no cards")
+                except Exception as e:
+                    logger.error(f"Quiz generation failed for {paper.id}: {e}")
+                    errors.append(f"quiz_generation: {e}")
 
-                    actions_triggered.append("quiz_generation")
-
+        try:
             # Step 5e: Update paper with enhanced metadata from processing
             status.message = "Persisting to database..."
             status.progress = 92
@@ -544,34 +677,54 @@ class UploadService:
 
             # Update the paper in the database with enhanced metadata
             db.upsert_paper(pillar_id, paper)
-
-            # Step 5f: Store in vector database for semantic search
-            try:
-                status.message = "Storing vectors for search..."
-                status.progress = 98
-                logger.info(f"Step 5f: Upserting vectors for {paper.id}")
-                vectors.ensure_collections()
-                vectors.upsert_text(pillar_id, paper.id, parsed_paper.full_text)
-                actions_triggered.append("vector_storage")
-            except Exception as e:
-                # Non-fatal - log warning and continue
-                logger.warning(f"Failed to store vectors for {paper.id}: {e}")
-
         except Exception as e:
-            logger.error(f"Error in full pipeline processing for {paper.id}: {e}")
-            # Don't fail the entire upload, just log the error
-            actions_triggered.append(f"pipeline_error: {str(e)}")
+            logger.error(f"Metadata persistence failed for {paper.id}: {e}")
+            errors.append(f"metadata_persistence: {e}")
 
-        return actions_triggered
+        # Step 5f: Store in vector database for semantic search
+        try:
+            status.message = "Storing vectors for search..."
+            status.progress = 98
+            logger.info(f"Step 5f: Upserting vectors for {paper.id}")
+            vectors.ensure_collections()
+            chunks = vectors.upsert_text(pillar_id, paper.id, parsed_paper.full_text)
+            if chunks:
+                actions_triggered.append("vector_storage")
+            elif parsed_paper.full_text and parsed_paper.full_text.strip():
+                # upsert_text returns 0 for an empty document and for a dead Qdrant
+                # alike, and it swallows its own exceptions to get there. Non-empty
+                # text in and nothing out is the second case. Same call the
+                # orchestrator makes and the same conclusion it draws — see
+                # Orchestrator._process_paper.
+                errors.append(
+                    "vector_storage: no chunks were written for a non-empty paper; "
+                    "the paper will not appear in semantic search"
+                )
+        except Exception as e:
+            logger.error(f"Vector storage failed for {paper.id}: {e}")
+            errors.append(f"vector_storage: {e}")
+
+        return PipelineOutcome(actions_triggered=actions_triggered, errors=errors)
+
+    @staticmethod
+    def _extract_arxiv_id(url_or_filename: str) -> Optional[str]:
+        """The arXiv id in a URL or filename, or None.
+
+        One definition, used both by the enrichment below and by the caller that
+        decides whether a PDF parse is worth doing. Two copies of this regex would
+        drift, and the failure would be silent in the expensive direction: a URL the
+        skip recognised but the enrichment did not would leave the paper with no
+        title and no parse to recover one from.
+        """
+        match = re.search(r'(\d{4}\.\d{4,5})', url_or_filename)
+        return match.group(1) if match else None
 
     def _enrich_from_arxiv(self, paper: PaperRef, url_or_filename: str) -> PaperRef:
         """Enrich paper metadata from arXiv API if arXiv ID detected."""
-        # Extract arXiv ID using regex
-        match = re.search(r'(\d{4}\.\d{4,5})', url_or_filename)
-        if not match:
+        arxiv_id = self._extract_arxiv_id(url_or_filename)
+        if not arxiv_id:
             return paper  # Not an arXiv paper
 
-        arxiv_id = match.group(1)
         logger.info(f"Detected arXiv ID: {arxiv_id}, fetching metadata...")
 
         try:

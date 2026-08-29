@@ -118,8 +118,8 @@ class UploadUrlRequest(BaseModel):
     url: str = Field(..., description="URL to download PDF from")
     title: Optional[str] = Field(None, description="Optional paper title override")
     authors: Optional[List[str]] = Field(None, description="Optional authors override")
-    run_summarizer: bool = Field(default=False, description="Run summarizer after upload")
-    generate_quiz: bool = Field(default=False, description="Generate quiz after upload")
+    run_summarizer: bool = Field(default=True, description="Run summarizer after upload")
+    generate_quiz: bool = Field(default=True, description="Generate quiz after upload")
 
 
 class UploadFileRequest(BaseModel):
@@ -128,16 +128,28 @@ class UploadFileRequest(BaseModel):
     authors: Optional[List[str]] = Field(default_factory=list, description="Paper authors")
     venue: Optional[str] = Field(None, description="Conference or journal")
     year: Optional[int] = Field(None, description="Publication year")
-    run_summarizer: bool = Field(default=False, description="Run summarizer after upload")
-    generate_quiz: bool = Field(default=False, description="Generate quiz after upload")
+    run_summarizer: bool = Field(default=True, description="Run summarizer after upload")
+    generate_quiz: bool = Field(default=True, description="Generate quiz after upload")
 
 
 class UploadResponse(BaseModel):
-    """Response schema for upload operations."""
-    success: bool = Field(..., description="Whether upload was successful")
+    """Response schema for upload operations.
+
+    ``success`` and ``pipeline_ok`` are two different facts and are deliberately not
+    collapsed. ``success`` means the paper reached the ``papers`` table; the follow-on
+    processing — ingest, summarizer, synthesis, quiz, vectors — is reported separately,
+    because it used to be reported not at all. A pipeline exception was appended to
+    ``actions_triggered`` as the pseudo-action ``pipeline_error: ...`` and the route
+    still answered ``success=True``, so the browser said "uploaded successfully!
+    Triggered: pipeline_error: ..." and a paper with no note, no lesson and no quiz
+    read as green.
+    """
+    success: bool = Field(..., description="Whether the paper was added to the library")
     paper: Optional[PaperRef] = Field(None, description="Created paper reference")
     message: str = Field(..., description="Status message")
-    actions_triggered: List[str] = Field(default_factory=list, description="Post-upload actions triggered")
+    actions_triggered: List[str] = Field(default_factory=list, description="Post-upload actions that COMPLETED")
+    pipeline_ok: bool = Field(default=True, description="Whether every requested post-upload action completed")
+    pipeline_errors: List[str] = Field(default_factory=list, description="Post-upload actions that failed, and why")
 
 
 class UploadStatus(BaseIOSchema):

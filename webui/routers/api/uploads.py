@@ -64,8 +64,11 @@ async def upload_paper_from_file(
     authors: Optional[str] = Form(None, description="Comma-separated list of authors"),
     venue: Optional[str] = Form(None, description="Conference or journal"),
     year: Optional[int] = Form(None, description="Publication year"),
-    run_summarizer: bool = Form(False, description="Run summarizer after upload"),
-    generate_quiz: bool = Form(False, description="Generate quiz after upload")
+    # Defaulted on to match the discovery path, which hardcodes enable_quiz=True and
+    # summarises unconditionally. An uploaded paper used to get a bare row unless the
+    # user ticked two boxes; matching the pipeline is the least surprising default.
+    run_summarizer: bool = Form(True, description="Run summarizer after upload"),
+    generate_quiz: bool = Form(True, description="Generate quiz after upload")
 ) -> UploadResponse:
     """
     Upload a paper from a file.

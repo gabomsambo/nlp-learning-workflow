@@ -5,6 +5,7 @@ All Qdrant and OpenAI calls are mocked for fast, reliable testing.
 
 import pytest
 import hashlib
+import math
 import os
 import uuid
 from contextlib import contextmanager
@@ -16,8 +17,9 @@ from nlp_pillars import vectors
 from nlp_pillars.vectors import (
     get_client, set_client, set_openai_client, reset_vector_size,
     ensure_collections, upsert_text, search_similar,
-    _embed, _get_vector_size, COLLECTION_NAME, PILLAR_ID_FIELD
+    _embed, _embed_batch, _get_vector_size, COLLECTION_NAME, PILLAR_ID_FIELD
 )
+from nlp_pillars.tools.pdf_loader import chunk_text
 
 
 def make_hit(paper_id, score, chunk_index=0):
@@ -82,18 +84,34 @@ def mock_qdrant_client():
     return mock_client
 
 
+def embedding_item(vector, index):
+    """One item of an OpenAI embeddings response: a vector and the input it answers."""
+    item = Mock()
+    item.embedding = vector
+    item.index = index
+    return item
+
+
 @pytest.fixture
 def mock_openai_client():
-    """Mock OpenAI client for testing."""
+    """Mock OpenAI client for testing.
+
+    Answers a batch, because upsert_text sends one. A fixture that returned a single
+    fixed item regardless of input would let a batching bug — the wrong number of
+    vectors, or vectors mapped to the wrong chunks — pass green.
+    """
     mock_client = Mock()
-    
-    # Mock embeddings response
-    mock_response = Mock()
-    mock_embedding = Mock()
-    mock_embedding.embedding = [0.1, 0.2, 0.3, 0.4]  # Small test vector
-    mock_response.data = [mock_embedding]
-    mock_client.embeddings.create.return_value = mock_response
-    
+
+    def create(model, input, **kwargs):
+        texts = input if isinstance(input, list) else [input]
+        response = Mock()
+        response.data = [
+            embedding_item([0.1, 0.2, 0.3, 0.4], idx) for idx in range(len(texts))
+        ]
+        return response
+
+    mock_client.embeddings.create.side_effect = create
+
     return mock_client
 
 
@@ -195,7 +213,7 @@ class TestEmbeddings:
         set_openai_client(mock_openai_client)
         
         result = _embed("test text")
-        
+
         assert result == [0.1, 0.2, 0.3, 0.4]
         mock_openai_client.embeddings.create.assert_called_once_with(
             model='text-embedding-3-small',
@@ -400,41 +418,202 @@ class TestUpsertText:
         assert first_point.vector == [0.1, 0.2, 0.3, 0.4]
     
     def test_upsert_text_embedding_failure(self, mock_qdrant_client):
-        """Test upsert_text when embedding fails for some chunks."""
+        """Test upsert_text when embedding fails."""
         set_client(mock_qdrant_client)
-        
-        # Mock embedding to fail
-        with patch('nlp_pillars.vectors._embed', side_effect=Exception("Embedding failed")):
+
+        with patch('nlp_pillars.vectors._embed_batch', side_effect=RuntimeError("Embedding failed")):
             with patch('nlp_pillars.vectors.logger') as mock_logger:
                 result = upsert_text("linguistic-cognitive-foundations", "test.123", "test text")
 
                 assert result == 0
-                mock_logger.warning.assert_called()
-    
-    def test_upsert_text_partial_embedding_failure(self, mock_qdrant_client, mock_openai_client):
-        """Test upsert_text when some embeddings fail but others succeed."""
+                mock_logger.error.assert_called()
+
+        # Nothing may reach Qdrant when the document could not be embedded.
+        mock_qdrant_client.upsert.assert_not_called()
+
+    def test_a_failed_batch_writes_nothing_rather_than_a_partial_document(
+        self, mock_qdrant_client
+    ):
+        """A partial embed is the one outcome with no honest way to report it.
+
+        upsert_text used to catch a failed chunk, log a warning, `continue`, and
+        upsert whatever survived — returning a plausible-looking count for a paper
+        that was only partly in the collection. Nothing downstream could tell that
+        from a short paper. Now the whole upsert is abandoned: no points are written
+        and the return is 0, which both callers already treat as a failed vector
+        stage for non-empty text.
+        """
         set_client(mock_qdrant_client)
-        
-        # Mock embedding to fail on second call only
-        embed_calls = 0
-        def mock_embed(text):
-            nonlocal embed_calls
-            embed_calls += 1
-            if embed_calls == 2:
-                raise Exception("Embedding failed")
-            return [0.1, 0.2, 0.3, 0.4]
-        
-        with patch('nlp_pillars.vectors._embed', side_effect=mock_embed):
-            # Text long enough in TOKENS (chunk_size is a token budget) to
-            # generate several chunks, so the second embed call can fail.
-            test_text = "Alpha beta gamma delta epsilon. " * 60
 
-            result = upsert_text("linguistic-cognitive-foundations", "test.123", test_text, chunk_size=50, overlap=5)
+        calls = {"n": 0}
 
-            # Should have upserted chunks except the second one that failed
-            # Check that we got some successful embeds but not all
-            assert result >= 1
-            assert result < embed_calls  # Some failed
+        def failing_second_batch(texts):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("Embedding failed")
+            return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+        # Comfortably more than one batch of EMBED_BATCH_SIZE chunks, so the second
+        # call is reached and the first batch's vectors are already in hand.
+        test_text = "Alpha beta gamma delta epsilon. " * 900
+
+        with patch('nlp_pillars.vectors._embed_batch', side_effect=failing_second_batch):
+            result = upsert_text(
+                "linguistic-cognitive-foundations", "test.123", test_text,
+                chunk_size=20, overlap=2,
+            )
+
+        assert calls["n"] >= 2, "the text did not span more than one batch"
+        assert result == 0
+        mock_qdrant_client.upsert.assert_not_called()
+
+    def test_chunks_are_embedded_in_batches_not_one_request_each(
+        self, mock_qdrant_client, mock_openai_client
+    ):
+        """The whole point of the change: one request per EMBED_BATCH_SIZE chunks.
+
+        The captain's 448-chunk paper cost 448 sequential OpenAI round trips and
+        dominated a 3m20s upload.
+        """
+        set_client(mock_qdrant_client)
+        set_openai_client(mock_openai_client)
+
+        test_text = "Alpha beta gamma delta epsilon. " * 900
+
+        result = upsert_text(
+            "models-architectures", "test.batched", test_text,
+            chunk_size=20, overlap=2,
+        )
+
+        assert result > vectors.EMBED_BATCH_SIZE, "not enough chunks to test batching"
+
+        calls = mock_openai_client.embeddings.create.call_args_list
+        expected_calls = math.ceil(result / vectors.EMBED_BATCH_SIZE)
+        assert len(calls) == expected_calls
+        assert len(calls) < result, "still one request per chunk"
+
+        # Every request sends a list, and no request exceeds the batch size.
+        for call in calls:
+            sent = call[1]['input']
+            assert isinstance(sent, list)
+            assert 0 < len(sent) <= vectors.EMBED_BATCH_SIZE
+
+    def test_a_multi_batch_document_matches_the_one_at_a_time_result(
+        self, mock_qdrant_client
+    ):
+        """Same vectors, same count, same order as embedding one chunk at a time.
+
+        Each chunk is given a vector derived from its own text, so a point holding
+        the wrong chunk's vector is detectable — which is the failure batching can
+        introduce and the reason _embed_batch places vectors by the response's
+        `index` rather than by arrival order.
+        """
+        set_client(mock_qdrant_client)
+
+        def vector_for(text):
+            digest = hashlib.sha1(text.encode()).digest()
+            return [b / 255 for b in digest[:4]]
+
+        test_text = "Alpha beta gamma delta epsilon. " * 900
+        chunks = chunk_text(test_text, chunk_size=20, chunk_overlap=2)
+        assert len(chunks) > vectors.EMBED_BATCH_SIZE, "not a multi-batch document"
+
+        # The one-at-a-time expectation, built without going through upsert_text.
+        expected = [vector_for(chunk) for chunk in chunks]
+
+        def batched(texts):
+            return [vector_for(t.strip()) for t in texts]
+
+        with patch('nlp_pillars.vectors._embed_batch', side_effect=batched):
+            result = upsert_text(
+                "models-architectures", "test.order", test_text,
+                chunk_size=20, overlap=2,
+            )
+
+        assert result == len(chunks)
+
+        points = mock_qdrant_client.upsert.call_args[1]['points']
+        assert len(points) == len(chunks)
+
+        # Order, payload and vector-to-chunk mapping, per point.
+        for idx, (point, chunk) in enumerate(zip(points, chunks)):
+            assert point.payload['chunk_index'] == idx
+            assert point.payload['len'] == len(chunk)
+            assert point.payload['paper_id'] == 'test.order'
+            assert point.payload['pillar_id'] == 'models-architectures'
+            assert point.vector == expected[idx]
+
+            id_string = f"models-architectures|test.order|{idx}"
+            hash_bytes = hashlib.sha1(id_string.encode()).digest()[:16]
+            assert point.id == str(uuid.UUID(bytes=hash_bytes))
+
+
+class TestEmbedBatch:
+    """_embed_batch maps one vector onto every input, or raises."""
+
+    def test_vectors_are_placed_by_the_responses_index_not_arrival_order(
+        self, mock_openai_client
+    ):
+        """Order is read from the response, not assumed.
+
+        A reshuffled response that is silently trusted produces a collection where
+        every chunk is present and every one of them answers for a different chunk —
+        invisible in the stored payloads, which carry no chunk text.
+        """
+        response = Mock()
+        response.data = [
+            embedding_item([2.0], 2),
+            embedding_item([0.0], 0),
+            embedding_item([1.0], 1),
+        ]
+        mock_openai_client.embeddings.create.side_effect = None
+        mock_openai_client.embeddings.create.return_value = response
+        set_openai_client(mock_openai_client)
+
+        assert _embed_batch(["a", "b", "c"]) == [[0.0], [1.0], [2.0]]
+
+    def test_a_short_response_raises_rather_than_returning_what_arrived(
+        self, mock_openai_client
+    ):
+        response = Mock()
+        response.data = [embedding_item([0.0], 0), embedding_item([1.0], 1)]
+        mock_openai_client.embeddings.create.side_effect = None
+        mock_openai_client.embeddings.create.return_value = response
+        set_openai_client(mock_openai_client)
+
+        with pytest.raises(RuntimeError, match="returned 2 vectors for 3 inputs"):
+            _embed_batch(["a", "b", "c"])
+
+    def test_a_duplicated_index_raises(self, mock_openai_client):
+        response = Mock()
+        response.data = [embedding_item([0.0], 0), embedding_item([1.0], 0)]
+        mock_openai_client.embeddings.create.side_effect = None
+        mock_openai_client.embeddings.create.return_value = response
+        set_openai_client(mock_openai_client)
+
+        with pytest.raises(RuntimeError, match="index 0 twice"):
+            _embed_batch(["a", "b"])
+
+    def test_an_out_of_range_index_raises(self, mock_openai_client):
+        response = Mock()
+        response.data = [embedding_item([0.0], 0), embedding_item([1.0], 7)]
+        mock_openai_client.embeddings.create.side_effect = None
+        mock_openai_client.embeddings.create.return_value = response
+        set_openai_client(mock_openai_client)
+
+        with pytest.raises(RuntimeError, match="out-of-range index"):
+            _embed_batch(["a", "b"])
+
+    def test_an_api_failure_is_a_runtime_error(self, mock_openai_client):
+        mock_openai_client.embeddings.create.side_effect = Exception("API Error")
+        set_openai_client(mock_openai_client)
+
+        with pytest.raises(RuntimeError, match="Failed to generate embeddings"):
+            _embed_batch(["a", "b"])
+
+    def test_an_empty_batch_needs_no_client(self):
+        set_openai_client(None)
+        assert _embed_batch([]) == []
 
 
 class TestSearchSimilar:

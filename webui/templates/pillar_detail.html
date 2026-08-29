@@ -263,16 +263,16 @@
                                     <h4>Post-Upload Actions</h4>
                                     <div class="checkbox-group">
                                         <label class="checkbox-label">
-                                            <input type="checkbox" id="file-run-summarizer" name="run_summarizer">
+                                            <input type="checkbox" id="file-run-summarizer" name="run_summarizer" checked>
                                             <span class="checkmark"></span>
                                             Run Summarizer
                                             <small>Generate structured notes and summary</small>
                                         </label>
                                         <label class="checkbox-label">
-                                            <input type="checkbox" id="file-generate-quiz" name="generate_quiz">
+                                            <input type="checkbox" id="file-generate-quiz" name="generate_quiz" checked>
                                             <span class="checkmark"></span>
                                             Generate Quiz Cards
-                                            <small>Create spaced repetition quiz questions</small>
+                                            <small>Create spaced repetition quiz questions &mdash; built from the summarizer's notes, so it needs Run Summarizer</small>
                                         </label>
                                     </div>
                                 </div>
@@ -314,16 +314,16 @@
                                 <h4>Post-Upload Actions</h4>
                                 <div class="checkbox-group">
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="url-run-summarizer" name="run_summarizer">
+                                        <input type="checkbox" id="url-run-summarizer" name="run_summarizer" checked>
                                         <span class="checkmark"></span>
                                         Run Summarizer
                                         <small>Generate structured notes and summary</small>
                                     </label>
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="url-generate-quiz" name="generate_quiz">
+                                        <input type="checkbox" id="url-generate-quiz" name="generate_quiz" checked>
                                         <span class="checkmark"></span>
                                         Generate Quiz Cards
-                                        <small>Create spaced repetition quiz questions</small>
+                                        <small>Create spaced repetition quiz questions &mdash; built from the summarizer's notes, so it needs Run Summarizer</small>
                                     </label>
                                 </div>
                             </div>
@@ -335,6 +335,17 @@
                     </div>
                 </div>
                 
+                <!-- Outcome of the last upload from this page.
+                     Rendered here rather than in an alert() because an upload can now
+                     half-succeed — the paper is added while the summarizer, quiz or
+                     vector step fails — and a modal that says "uploaded successfully!
+                     Triggered: pipeline_error: ..." is exactly the report that hid it.
+                     role="status" so the outcome is announced; empty at load, because
+                     a live region announces changes, not content already present. -->
+                <div class="upload-section">
+                    <div id="upload-result" role="status" aria-live="polite" hidden></div>
+                </div>
+
                 <!-- Upload Status Section -->
                 <div class="upload-section">
                     <h3>📊 Recent Uploads</h3>
@@ -1279,6 +1290,9 @@ function setupUploadInterface() {
         submitUrlUpload(pillarId);
     });
     
+    linkSummarizerAndQuiz('file-run-summarizer', 'file-generate-quiz');
+    linkSummarizerAndQuiz('url-run-summarizer', 'url-generate-quiz');
+
     document.getElementById('cancel-file-upload').addEventListener('click', () => {
         fileUploadForm.style.display = 'none';
         dropZone.style.display = 'block';
@@ -1316,12 +1330,20 @@ async function submitFileUpload(pillarId) {
     formData.append('file', window.selectedFile);
     
     // Add form data
+    const CHECKBOX_FIELDS = ['run_summarizer', 'generate_quiz'];
     const formDataObj = new FormData(form);
     for (const [key, value] of formDataObj.entries()) {
+        if (CHECKBOX_FIELDS.includes(key)) continue;
         if (value !== '') { // Only append non-empty values
             formData.append(key, value);
         }
     }
+
+    // An unchecked checkbox is absent from FormData, and the server now defaults
+    // these to true — so omitting them would silently override the user's choice
+    // with the opposite of it. Send both explicitly, always.
+    formData.append('run_summarizer', String(document.getElementById('file-run-summarizer').checked));
+    formData.append('generate_quiz', String(document.getElementById('file-generate-quiz').checked));
     
     // Ensure title is provided (it's required)
     const title = formData.get('title');
@@ -1344,7 +1366,7 @@ async function submitFileUpload(pillarId) {
         const result = await response.json();
         
         if (response.ok && result.success) {
-            showUploadSuccess(result);
+            showUploadResult(result);
             form.reset();
             document.getElementById('file-upload-form').style.display = 'none';
             document.getElementById('file-drop-zone').style.display = 'block';
@@ -1390,7 +1412,7 @@ async function submitUrlUpload(pillarId) {
         const result = await response.json();
         
         if (response.ok && result.success) {
-            showUploadSuccess(result);
+            showUploadResult(result);
             form.reset();
             loadRecentUploads();
         } else {
@@ -1405,12 +1427,85 @@ async function submitUrlUpload(pillarId) {
     }
 }
 
-function showUploadSuccess(result) {
-    let message = `Paper "${result.paper.title}" uploaded successfully!`;
-    if (result.actions_triggered && result.actions_triggered.length > 0) {
-        message += ` Triggered: ${result.actions_triggered.join(', ')}`;
+/**
+ * Report what the upload actually did.
+ *
+ * `success` means the paper reached the library; `pipeline_ok` means every requested
+ * follow-on step finished. They are two different facts and this is where the page
+ * stopped conflating them: a pipeline crash used to arrive as the pseudo-action
+ * `pipeline_error: ...` inside actions_triggered and got printed after the words
+ * "uploaded successfully!".
+ *
+ * createElement + textContent throughout. Titles and error strings come from PDFs,
+ * arXiv and exception messages; none of it may be interpolated into innerHTML.
+ */
+function showUploadResult(result) {
+    const box = document.getElementById('upload-result');
+    if (!box) return;
+
+    const failed = result.pipeline_ok === false;
+    const title = (result.paper && result.paper.title) || 'Paper';
+
+    const heading = document.createElement('strong');
+    heading.textContent = failed
+        ? `Added "${title}", but post-upload processing did not finish`
+        : `Added "${title}" and finished processing`;
+
+    box.replaceChildren(heading);
+
+    const done = result.actions_triggered || [];
+    if (done.length) {
+        const line = document.createElement('p');
+        line.textContent = `Completed: ${done.join(', ')}`;
+        box.appendChild(line);
     }
-    alert(message);
+
+    const errors = result.pipeline_errors || [];
+    if (errors.length) {
+        const label = document.createElement('p');
+        label.textContent = 'Failed:';
+        box.appendChild(label);
+
+        const list = document.createElement('ul');
+        errors.forEach((message) => {
+            const item = document.createElement('li');
+            item.textContent = message;
+            list.appendChild(item);
+        });
+        box.appendChild(list);
+
+        const note = document.createElement('p');
+        note.textContent =
+            'The paper is in the library. Nothing needs re-uploading; the steps above '
+            + 'are what did not run.';
+        box.appendChild(note);
+    }
+
+    // The border carries the same distinction as the words, for anyone scanning.
+    box.style.borderLeft = `4px solid ${failed ? 'darkorange' : 'green'}`;
+    box.style.padding = '0.75rem 1rem';
+    box.hidden = false;
+    box.scrollIntoView({ block: 'nearest' });
+}
+
+/**
+ * Quiz cards are generated from the summarizer's PaperNote, so the quiz option only
+ * means anything with the summarizer on. That was previously enforced by the backend
+ * silently doing nothing. Here the two boxes move together, so the constraint is
+ * visible before the upload rather than inferred from a missing quiz afterwards.
+ * The backend still reports the combination if an API client sends it directly.
+ */
+function linkSummarizerAndQuiz(summarizerId, quizId) {
+    const summarizer = document.getElementById(summarizerId);
+    const quiz = document.getElementById(quizId);
+    if (!summarizer || !quiz) return;
+
+    quiz.addEventListener('change', () => {
+        if (quiz.checked) summarizer.checked = true;
+    });
+    summarizer.addEventListener('change', () => {
+        if (!summarizer.checked) quiz.checked = false;
+    });
 }
 
 async function loadRecentUploads() {
