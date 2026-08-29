@@ -12,7 +12,8 @@ Plan non-trivial changes before writing code. This applies to any agent working 
    file that cover it.
 2. **Write the plan** to `PRPs/<feature>.md`: goal, context (files, patterns, gotchas),
    dependency-ordered tasks, and the validation gates each task must pass.
-   `/prp:generate-prp` produces this shape. `/PRPs` is gitignored — plans stay local.
+   The `generate-prp` skill produces this shape — `/prp:generate-prp` on Claude,
+   `$generate-prp` on Codex. `/PRPs` is gitignored — plans stay local.
 3. **Implement the tasks in order**, passing the gates as you go.
 
 **One plan should be one reviewable change.** If the task list spans unrelated subsystems,
