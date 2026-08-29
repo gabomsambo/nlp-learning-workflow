@@ -16,6 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    ffmpeg \
     libpq-dev \
     poppler-utils \
     tesseract-ocr \
@@ -53,7 +54,7 @@ COPY scripts/ ./scripts/
 # fresh empty named volume is seeded with appuser ownership — Docker copies the
 # image directory's contents *and* permissions into it, and a root-owned mount
 # point would make every upload fail for the non-root user.
-RUN mkdir -p /app/data/uploads
+RUN mkdir -p /app/data/uploads /app/data/podcast_audio /app/data/tts-downloads /app/data/tts-previews
 
 # Change ownership to app user
 RUN chown -R appuser:appuser /app

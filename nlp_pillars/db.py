@@ -15,6 +15,7 @@ from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
     ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
     PaperCitation, PodcastScript, PodcastOptions, SourceMaterial, GroundPackCallRecord,
+    AudioMetadata,
     PipelineRun, PipelineRunStage, RunStatus, StageStatus
 )
 
@@ -321,6 +322,7 @@ def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
         # docs/migrations/012_podcast_options.sql on databases created before
         # it; add_podcast_script() retries without the key and says so.
         'options': script.options.model_dump(),
+        'audio_metadata': script.audio_metadata.model_dump(mode='json'),
         'created_at': script.created_at.isoformat() if script.created_at else None
     }
 
@@ -348,6 +350,7 @@ def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
         # accepted through the fallback insert. An empty PodcastOptions is the
         # honest reading: those scripts were made when nothing was choosable.
         options=PodcastOptions(**(row.get('options') or {})),
+        audio_metadata=AudioMetadata(**(row.get('audio_metadata') or {})),
         created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
     )
 
@@ -907,6 +910,7 @@ def add_podcast_script(script: PodcastScript) -> str:
             ('source_material', 'docs/migrations/011_podcast_source_material.sql'),
             ('options', 'docs/migrations/012_podcast_options.sql'),
             ('ground_pack_calls', 'docs/migrations/013_podcast_ground_pack_calls.sql'),
+            ('audio_metadata', 'docs/migrations/014_podcast_audio.sql'),
         ):
             if not response['error'] or not _is_missing_column(response['error'], column):
                 continue
@@ -1025,6 +1029,31 @@ def get_podcast_script_by_id(script_id: str) -> Optional[PodcastScript]:
         raise PodcastScriptLookupError(
             f"Could not read podcast script {script_id}: {e}"
         ) from e
+
+
+def update_podcast_audio_metadata(script_id: str, metadata: AudioMetadata) -> None:
+    """Persist generated audio metadata on a podcast script row."""
+    try:
+        client = get_client()
+        payload = metadata.model_dump(mode='json')
+        response = (
+            client.table('podcast_scripts')
+            .eq('id', script_id)
+            .update({'audio_metadata': payload})
+        )
+        if response['error'] and _is_missing_column(response['error'], 'audio_metadata'):
+            raise PodcastScriptSaveError(
+                "podcast_scripts has no audio_metadata column — run "
+                "docs/migrations/014_podcast_audio.sql"
+            )
+        if response['error']:
+            raise PodcastScriptSaveError(str(response['error']))
+        if not response['data']:
+            raise PodcastScriptSaveError(f"No podcast script updated for id {script_id}")
+    except PodcastScriptSaveError:
+        raise
+    except Exception as e:
+        raise PodcastScriptSaveError(str(e)) from e
 
 
 # =====================================

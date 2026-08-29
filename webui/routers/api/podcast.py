@@ -3,20 +3,24 @@ API Router for podcast script generation and management.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from nlp_pillars.agents.podcast_agent import (
     InsufficientSourceMaterialError, GroundPackExtractionError, PodcastAgent
 )
+from nlp_pillars.config import get_settings
 from nlp_pillars.podcast_options import PodcastOptionError, resolve
 from nlp_pillars.db import (
     add_podcast_script, get_podcast_scripts, get_podcast_script_by_id,
     get_paper_by_id, PodcastScriptLookupError, PodcastScriptSaveError
 )
+from webui.services import podcast_audio_service, run_service
+from webui.services.run_service import RunAlreadyActiveError
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,99 @@ class PodcastGenerateResponse(BaseModel):
     # Only populated when the script could not be stored; there is no other copy.
     script: Optional[str] = None
     key_points: List[str] = []
+
+
+class PodcastAudioRequest(BaseModel):
+    """Start background audio generation for a stored script."""
+
+    script_id: str
+    voice_path: str = Field(..., description="Library-relative path under /voices")
+
+
+class PodcastAudioResponse(BaseModel):
+    run_id: str
+    message: str
+
+
+@router.get("/tts/status")
+async def tts_status():
+    """IndexTTS liveness with wrong-service detection."""
+    return JSONResponse(content=podcast_audio_service.tts_status_payload())
+
+
+@router.get("/tts/voices")
+async def tts_voices():
+    """List voice references from the mounted library with usability preflight."""
+    return JSONResponse(content=podcast_audio_service.list_voices_payload())
+
+
+@router.get("/tts/voices/preview")
+async def tts_voice_preview(path: str):
+    """Return a short preview clip for the selected reference voice."""
+    try:
+        preview = podcast_audio_service.preview_voice(path)
+        return FileResponse(
+            preview,
+            media_type="audio/wav",
+            filename=preview.name,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tts/generate", status_code=202)
+async def generate_podcast_audio(request: PodcastAudioRequest, http_request: Request):
+    """Queue podcast audio synthesis as a pipeline run."""
+    script = get_podcast_script_by_id(request.script_id)
+    if not script:
+        raise HTTPException(status_code=404, detail="Script not found")
+
+    try:
+        podcast_audio_service.validate_voice_for_generation(request.voice_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    status = podcast_audio_service.tts_status_payload()
+    if not status.get("ready"):
+        raise HTTPException(status_code=503, detail=status.get("message"))
+
+    try:
+        run_id = run_service.dispatch_run(
+            http_request.app.state.scheduler,
+            http_request.app.state.cancel_events,
+            pillar_id=script.pillar_id,
+            trigger_source=podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
+            kind=podcast_audio_service.KIND_PODCAST_AUDIO,
+            script_id=request.script_id,
+            voice_path=request.voice_path,
+        )
+    except RunAlreadyActiveError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return PodcastAudioResponse(
+        run_id=run_id,
+        message="Audio generation started",
+    )
+
+
+@router.get("/audio/{filename}")
+async def serve_podcast_audio(filename: str):
+    """Stream a generated MP3 from the podcast audio directory."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    audio_dir = Path(get_settings().podcast_audio_dir)
+    target = (audio_dir / filename).resolve()
+    if not str(target).startswith(str(audio_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return FileResponse(target, media_type="audio/mpeg", filename=filename)
 
 
 @router.post("/generate")
@@ -280,6 +377,7 @@ async def get_podcast(script_id: str):
                 # re-opened; without it, two scripts for the same paper differ
                 # for no visible reason.
                 "options": script.options.model_dump(),
+                "audio_metadata": script.audio_metadata.model_dump(mode="json"),
                 "created_at": script.created_at.isoformat() if script.created_at else None
             }
         })

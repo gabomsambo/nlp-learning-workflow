@@ -170,6 +170,11 @@
     discover_semantic_scholar: 'Searching Semantic Scholar',
     discover_citations: 'Following citations from your recent papers',
     discover_rank: 'Ranking and removing duplicates',
+    tts_prepare: 'Preparing script and chunks',
+    tts_synthesize: 'Synthesizing speech',
+    tts_assemble: 'Assembling episode',
+    tts_encode: 'Encoding MP3',
+    tts_save: 'Saving audio metadata',
   };
 
   function stageLabel(name) {

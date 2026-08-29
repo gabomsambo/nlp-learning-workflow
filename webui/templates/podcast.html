@@ -76,12 +76,16 @@
 <div id="status-area" style="margin: 1rem 0;">
   <span id="status"></span>
   <progress id="progress-bar" value="0" max="100" style="display: none; width: 100%;"></progress>
-  {# Caveats about what the script was written from, and the "not saved" alarm.
-     Rendered empty so the live region announces the change rather than content
-     that was already present at load. #}
+  {# Caveats about what the script was written from, and the "not saved" alarm. #}
   <div id="script-warnings" role="status" aria-live="polite" hidden
        style="margin-top: 0.75rem; border-left: 4px solid #b00; padding: 0.5rem 0 0.5rem 1rem;"></div>
 </div>
+
+<article id="tts-status-panel" style="margin: 1rem 0; border-left: 4px solid #888; padding-left: 1rem;">
+  <strong>IndexTTS</strong>
+  <p id="tts-status-message">Checking speech engine…</p>
+  <pre id="tts-start-command" style="display: none; white-space: pre-wrap; background: #f5f5f5; padding: 0.5rem;"></pre>
+</article>
 
 <div id="script-area" style="display: none; margin-top: 1rem;">
   <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -100,6 +104,31 @@
 
   <div id="script-content" style="background: #f5f5f5; padding: 1rem; border-radius: 8px; max-height: 500px; overflow-y: auto; font-family: monospace; white-space: pre-wrap;">
   </div>
+
+  <section id="audio-section" style="margin-top: 1.5rem; display: none;">
+    <h4>Episode audio</h4>
+    <p><small>Single narrator via IndexTTS on your GPU. Pick a reference voice, preview it, then generate.</small></p>
+    <div class="grid">
+      <label>
+        Voice
+        <select id="voice-select" disabled>
+          <option value="">Loading voices…</option>
+        </select>
+        <small id="voice-reason"></small>
+      </label>
+    </div>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.75rem 0;">
+      <button type="button" id="preview-voice-btn" class="secondary" disabled>Preview voice</button>
+      <button type="button" id="generate-audio-btn" disabled>Generate audio</button>
+      <button type="button" id="cancel-audio-btn" class="secondary outline" hidden>Cancel</button>
+    </div>
+    <audio id="voice-preview" controls hidden style="width: 100%; margin-bottom: 0.5rem;"></audio>
+    <p id="audio-run-status" role="status" aria-live="polite"></p>
+    <progress id="audio-progress-bar" value="0" max="100" hidden style="width: 100%;"></progress>
+    <ul id="audio-stages" aria-live="off" style="list-style: none; padding: 0;"></ul>
+    <audio id="episode-player" controls hidden style="width: 100%; margin-top: 0.75rem;"></audio>
+    <p id="audio-file-hint" hidden><small>Saved under <code id="audio-file-path"></code> on disk.</small></p>
+  </section>
 </div>
 
 <div id="existing-scripts" style="margin-top: 2rem;">
@@ -137,6 +166,7 @@
   {% endif %}
 </div>
 
+<script src="/static/run-progress.js"></script>
 <script>
 // State
 let currentScriptId = null;
@@ -156,6 +186,33 @@ const downloadBtn = document.getElementById('download-btn');
 const warningsEl = document.getElementById('script-warnings');
 const settingsEl = document.getElementById('script-settings');
 const settingsTextEl = document.getElementById('script-settings-text');
+const ttsStatusMessage = document.getElementById('tts-status-message');
+const ttsStartCommand = document.getElementById('tts-start-command');
+const ttsStatusPanel = document.getElementById('tts-status-panel');
+const audioSection = document.getElementById('audio-section');
+const voiceSelect = document.getElementById('voice-select');
+const voiceReason = document.getElementById('voice-reason');
+const previewVoiceBtn = document.getElementById('preview-voice-btn');
+const generateAudioBtn = document.getElementById('generate-audio-btn');
+const cancelAudioBtn = document.getElementById('cancel-audio-btn');
+const voicePreview = document.getElementById('voice-preview');
+const audioRunStatus = document.getElementById('audio-run-status');
+const audioProgressBar = document.getElementById('audio-progress-bar');
+const audioStages = document.getElementById('audio-stages');
+const episodePlayer = document.getElementById('episode-player');
+const audioFileHint = document.getElementById('audio-file-hint');
+const audioFilePath = document.getElementById('audio-file-path');
+
+let ttsReady = false;
+let voicesCatalog = [];
+let audioRunId = null;
+
+const audioEls = {
+  status: audioRunStatus,
+  stages: audioStages,
+  progress: audioProgressBar,
+  cancel: cancelAudioBtn,
+};
 
 // "Something else…" reveals that option's free-text box. The value posted is
 // the sentinel plus "<key>_custom"; the server sanitizes and validates it.
@@ -360,6 +417,166 @@ function renderScript(script) {
 
   scriptArea.style.display = 'block';
   progressBar.style.display = 'none';
+  if (currentScriptId) {
+    audioSection.style.display = 'block';
+  }
+}
+
+async function refreshTtsStatus() {
+  try {
+    const res = await fetch('/api/podcast/tts/status');
+    const data = await res.json();
+    ttsReady = !!data.ready;
+    ttsStatusMessage.textContent = data.message || '';
+    if (data.start_command) {
+      ttsStartCommand.textContent = data.start_command;
+      ttsStartCommand.style.display = ttsReady ? 'none' : 'block';
+    }
+    ttsStatusPanel.style.borderColor = ttsReady ? '#080' : '#b00';
+    syncAudioControls();
+  } catch (err) {
+    ttsStatusMessage.textContent = 'Could not reach the speech engine status endpoint.';
+    ttsReady = false;
+    syncAudioControls();
+  }
+}
+
+async function loadVoices() {
+  try {
+    const res = await fetch('/api/podcast/tts/voices');
+    const data = await res.json();
+    voicesCatalog = data.voices || [];
+    voiceSelect.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select a voice…';
+    voiceSelect.appendChild(placeholder);
+    voicesCatalog.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.relative_path;
+      const mark = v.usability === 'usable' ? '' : v.usability === 'warning' ? ' ⚠' : ' ✗';
+      opt.textContent = v.label + mark;
+      opt.disabled = v.usability === 'unusable';
+      voiceSelect.appendChild(opt);
+    });
+    voiceSelect.disabled = voicesCatalog.length === 0;
+    syncAudioControls();
+  } catch (err) {
+    voiceSelect.replaceChildren();
+    const opt = document.createElement('option');
+    opt.textContent = 'Could not load voices';
+    voiceSelect.appendChild(opt);
+    voiceSelect.disabled = true;
+  }
+}
+
+function selectedVoiceMeta() {
+  const path = voiceSelect.value;
+  return voicesCatalog.find(v => v.relative_path === path) || null;
+}
+
+function syncAudioControls() {
+  const voice = selectedVoiceMeta();
+  if (voice) {
+    voiceReason.textContent = voice.reason || '';
+  } else {
+    voiceReason.textContent = '';
+  }
+  const voiceOk = voice && voice.usability !== 'unusable';
+  previewVoiceBtn.disabled = !voiceOk;
+  generateAudioBtn.disabled = !(ttsReady && currentScriptId && voiceOk && !audioRunId);
+}
+
+voiceSelect.addEventListener('change', () => {
+  voicePreview.hidden = true;
+  syncAudioControls();
+});
+
+previewVoiceBtn.addEventListener('click', () => {
+  const path = voiceSelect.value;
+  if (!path) return;
+  voicePreview.src = `/api/podcast/tts/voices/preview?path=${encodeURIComponent(path)}&t=${Date.now()}`;
+  voicePreview.hidden = false;
+  voicePreview.load();
+});
+
+function onAudioFinished(run) {
+  audioRunId = null;
+  generateAudioBtn.disabled = false;
+  syncAudioControls();
+  if (run && run.result && run.result.audio_url) {
+    episodePlayer.src = run.result.audio_url;
+    episodePlayer.hidden = false;
+    audioFilePath.textContent = run.result.file_name || run.result.audio_url;
+    audioFileHint.hidden = false;
+    audioRunStatus.textContent = 'Audio ready — press play above.';
+  } else if (run && run.status === 'failed') {
+    audioRunStatus.textContent = run.error || 'Audio generation failed.';
+  }
+}
+
+function onAudioUpdate(run) {
+  if (run && run.result && run.result.audio_url && RunProgress.isTerminal(run.status)) {
+    onAudioFinished(run);
+  }
+}
+
+generateAudioBtn.addEventListener('click', async () => {
+  if (!currentScriptId || !voiceSelect.value) return;
+  generateAudioBtn.disabled = true;
+  episodePlayer.hidden = true;
+  audioFileHint.hidden = true;
+  audioProgressBar.hidden = false;
+  audioRunStatus.textContent = 'Starting audio generation…';
+  try {
+    const res = await fetch('/api/podcast/tts/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script_id: currentScriptId, voice_path: voiceSelect.value }),
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+      const active = await RunProgress.findActive();
+      if (active) {
+        audioRunId = active.id;
+        RunProgress.attach(active.id, audioEls, onAudioFinished, onAudioUpdate);
+        return;
+      }
+    }
+    if (!res.ok) throw new Error(data.detail || 'Could not start audio generation');
+    audioRunId = data.run_id;
+    RunProgress.attach(data.run_id, audioEls, onAudioFinished, onAudioUpdate);
+  } catch (err) {
+    audioRunStatus.textContent = `Error: ${err.message}`;
+    generateAudioBtn.disabled = false;
+    audioProgressBar.hidden = true;
+  }
+});
+
+cancelAudioBtn.addEventListener('click', async () => {
+  if (!audioRunId) return;
+  await RunProgress.cancel(audioRunId);
+});
+
+function showStoredAudio(meta) {
+  if (!meta || !meta.file_name) {
+    episodePlayer.hidden = true;
+    audioFileHint.hidden = true;
+    return;
+  }
+  episodePlayer.src = `/api/podcast/audio/${encodeURIComponent(meta.file_name)}`;
+  episodePlayer.hidden = false;
+  audioFilePath.textContent = meta.file_name;
+  audioFileHint.hidden = false;
+}
+
+refreshTtsStatus();
+loadVoices();
+setInterval(refreshTtsStatus, 30000);
+
+const urlScriptId = new URLSearchParams(window.location.search).get('script');
+if (urlScriptId) {
+  loadScript(urlScriptId);
 }
 
 // Load and display script
@@ -383,6 +600,9 @@ async function loadScript(scriptId) {
     showSettings(script.options);
 
     renderScript(script);
+    showStoredAudio(script.audio_metadata);
+    audioSection.style.display = 'block';
+    syncAudioControls();
 
   } catch (err) {
     console.error('Error loading script:', err);
