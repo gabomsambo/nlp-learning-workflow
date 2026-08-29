@@ -236,6 +236,26 @@ class QuizCard(BaseIOSchema):
     interval_days: int = Field(default=1, description="Current interval in days (legacy)")
 
 
+class SourceMaterial(BaseModel):
+    """What the podcast was actually written from.
+
+    A script built from an abstract alone and a script built from the full paper
+    are different artifacts, and used to be indistinguishable in the response, on
+    the page and in the database. This records the difference so the ambiguity
+    does not just move one level down. ``level`` is "full" or "partial"; a run
+    with neither body, abstract nor notes never reaches this type — it raises
+    (see ``podcast_agent.InsufficientSourceMaterialError``).
+    """
+    level: str = Field(default="full", description="'full' or 'partial'")
+    full_text_chars: int = Field(default=0, description="Chars of paper body used (0 when none)")
+    has_abstract: bool = Field(default=False)
+    has_notes: bool = Field(default=False)
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="Human-readable caveats, shown to the user and stored with the script",
+    )
+
+
 class PodcastScript(BaseIOSchema):
     """Generated podcast script from a paper - single host format."""
     id: Optional[str] = Field(None, description="Unique script ID")
@@ -246,6 +266,10 @@ class PodcastScript(BaseIOSchema):
     word_count: int = Field(default=0, description="Script word count")
     key_points: List[str] = Field(default_factory=list, description="Main discussion points")
     ground_pack: dict = Field(default_factory=dict, description="4 prompt outputs for reference")
+    source_material: SourceMaterial = Field(
+        default_factory=SourceMaterial,
+        description="What the script was written from; see SourceMaterial",
+    )
     created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the script was created")
 
 

@@ -10,7 +10,9 @@ from datetime import datetime
 import pytest
 
 from nlp_pillars.agents.ingest_agent import IngestAgent
-from nlp_pillars.agents.podcast_agent import MAX_FULL_TEXT_CHARS, PodcastAgent
+from nlp_pillars.agents.podcast_agent import (
+    MAX_FULL_TEXT_CHARS, FullTextResult, InsufficientSourceMaterialError, PodcastAgent
+)
 from nlp_pillars.schemas import PodcastScript, PaperRef, PaperNote
 
 
@@ -143,11 +145,12 @@ class TestPodcastAgent:
 
             result = agent._get_full_text(mock_paper)
 
-            assert "full paper text content" in result
+            assert "full paper text content" in result.text
+            assert result.error is None
             agent.ingest_agent.ingest.assert_called_once_with(mock_paper)
 
     def test_get_full_text_handles_missing_url(self, mock_paper):
-        """Test returns empty string when no PDF URL."""
+        """Empty text plus a reason when there is no PDF URL."""
         with patch.object(PodcastAgent, '__init__', lambda x: None):
             agent = PodcastAgent()
             agent.ingest_agent = MagicMock()
@@ -157,11 +160,17 @@ class TestPodcastAgent:
 
             result = agent._get_full_text(mock_paper)
 
-            assert result == ""
+            assert result.text == ""
+            assert "no PDF URL" in result.error
             agent.ingest_agent.ingest.assert_not_called()
 
     def test_get_full_text_handles_ingest_error(self, mock_paper):
-        """Test returns empty string when ingest fails."""
+        """The ingest failure reason survives, instead of dying at the except.
+
+        Returning a bare "" is exactly as informative as an empty paper: the
+        caller could not tell "this PDF 404s" from "this paper has no PDF",
+        and neither could the user.
+        """
         from nlp_pillars.agents.ingest_agent import IngestError
 
         with patch.object(PodcastAgent, '__init__', lambda x: None):
@@ -173,7 +182,8 @@ class TestPodcastAgent:
 
             result = agent._get_full_text(mock_paper)
 
-            assert result == ""
+            assert result.text == ""
+            assert "PDF download failed" in result.error
 
     def test_init_configures_timeout_and_ingest_agent(self):
         """Constructor wires up the HTTP timeout and the IngestAgent.
@@ -220,7 +230,7 @@ class TestPodcastAgent:
             mock_get_notes.return_value = None
 
             agent = PodcastAgent()
-            agent._get_full_text = MagicMock(return_value=oversized)
+            agent._get_full_text = MagicMock(return_value=FullTextResult(oversized))
             agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
             agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
             agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
@@ -259,7 +269,7 @@ class TestPodcastAgent:
             mock_get_notes.return_value = None
 
             agent = PodcastAgent()
-            agent._get_full_text = MagicMock(return_value=exact)
+            agent._get_full_text = MagicMock(return_value=FullTextResult(exact))
             agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
             agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
             agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
@@ -286,7 +296,7 @@ class TestPodcastAgent:
 
         def slow_ingest(paper):
             time.sleep(blocking_duration)
-            return "Full paper content here..."
+            return FullTextResult("Full paper content here...")
 
         with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
              patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
@@ -339,7 +349,7 @@ class TestPodcastAgent:
             agent = PodcastAgent()
 
             # Mock full text extraction
-            agent._get_full_text = MagicMock(return_value="Full paper content here...")
+            agent._get_full_text = MagicMock(return_value=FullTextResult("Full paper content here..."))
 
             # Mock all Claude calls
             agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
@@ -368,6 +378,160 @@ class TestPodcastAgent:
             agent._generate_metrics_datasets.assert_called_once()
             agent._generate_limitations.assert_called_once()
             agent._generate_final_script.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_refuses_before_spending_when_there_is_nothing_to_read(
+        self, mock_paper, mock_ground_pack, mock_script_content
+    ):
+        """No body, no abstract, no notes: raise before the first model call.
+
+        Reproduced live against paper file:2dd76e910fbc, whose url_pdf points at
+        a stale .cache/ path that does not exist. Before this guard, generation
+        made all five Claude calls (~$0.27) against a "paper" consisting of a
+        title, one author name and the string "[Full text not available...]",
+        and reported it to the user as a green success.
+        """
+        mock_paper.abstract = None
+
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper
+            mock_get_notes.return_value = None
+
+            agent = PodcastAgent()
+            agent._get_full_text = MagicMock(
+                return_value=FullTextResult("", "Local file not found: /app/.cache/uploads/x.pdf")
+            )
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            with pytest.raises(InsufficientSourceMaterialError) as exc:
+                await agent.generate("test-paper-123", "models-architectures")
+
+            # The reason has to be actionable, not "generation failed".
+            message = str(exc.value)
+            assert "Local file not found" in message
+            assert "no abstract" in message
+            assert mock_paper.title in message
+
+            # Nothing was spent. This is the entire point of the guard.
+            agent._generate_facts_outline.assert_not_called()
+            agent._generate_core_concepts.assert_not_called()
+            agent._generate_metrics_datasets.assert_not_called()
+            agent._generate_limitations.assert_not_called()
+            agent._generate_final_script.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generate_proceeds_from_an_abstract_but_records_that_it_did(
+        self, mock_paper, mock_ground_pack, mock_script_content
+    ):
+        """An abstract with no body is thin, not empty: proceed and say so.
+
+        Refusing here would block every paper whose PDF host is briefly
+        unreachable, so this runs — but the caveat is attached to the result and
+        stored with the row, because "written from the whole paper" and "written
+        from two hundred words of abstract" looking identical is the bug.
+        """
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper  # has an abstract
+            mock_get_notes.return_value = None
+
+            agent = PodcastAgent()
+            agent._get_full_text = MagicMock(
+                return_value=FullTextResult("", "HTTP 404 fetching the PDF")
+            )
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            result = await agent.generate("test-paper-123", "models-architectures")
+
+            assert result.source_material.level == "partial"
+            assert result.source_material.full_text_chars == 0
+            assert result.source_material.has_abstract is True
+            assert result.source_material.has_notes is False
+            assert len(result.source_material.warnings) == 1
+            assert "HTTP 404 fetching the PDF" in result.source_material.warnings[0]
+            agent._generate_final_script.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_proceeds_from_notes_alone(
+        self, mock_paper, mock_notes, mock_ground_pack, mock_script_content
+    ):
+        """A notes row alone is enough: it carries problem, method and findings."""
+        mock_paper.abstract = None
+
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper
+            mock_get_notes.return_value = mock_notes
+
+            agent = PodcastAgent()
+            agent._get_full_text = MagicMock(return_value=FullTextResult("", "no PDF"))
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            result = await agent.generate("test-paper-123", "models-architectures")
+
+            assert result.source_material.level == "partial"
+            assert result.source_material.has_notes is True
+            assert "extracted notes" in result.source_material.warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_generate_from_full_text_records_no_warnings(
+        self, mock_paper, mock_ground_pack, mock_script_content
+    ):
+        """The normal path stays clean — no caveat where there is nothing to caveat."""
+        with patch('nlp_pillars.agents.podcast_agent.get_paper_by_id') as mock_get_paper, \
+             patch('nlp_pillars.agents.podcast_agent.get_notes_by_paper_id') as mock_get_notes, \
+             patch.object(PodcastAgent, '__init__', lambda x: None):
+
+            mock_get_paper.return_value = mock_paper
+            mock_get_notes.return_value = None
+
+            agent = PodcastAgent()
+            agent._get_full_text = MagicMock(return_value=FullTextResult("Body " * 500))
+            agent._generate_facts_outline = AsyncMock(return_value=mock_ground_pack["facts_outline"])
+            agent._generate_core_concepts = AsyncMock(return_value=mock_ground_pack["core_concepts"])
+            agent._generate_metrics_datasets = AsyncMock(return_value=mock_ground_pack["metrics_datasets"])
+            agent._generate_limitations = AsyncMock(return_value=mock_ground_pack["limitations"])
+            agent._generate_final_script = AsyncMock(return_value=mock_script_content)
+
+            result = await agent.generate("test-paper-123", "models-architectures")
+
+            assert result.source_material.level == "full"
+            assert result.source_material.warnings == []
+            assert result.source_material.full_text_chars == len("Body " * 500)
+
+    def test_whitespace_only_extraction_counts_as_no_body(self, mock_paper):
+        """A PDF that parses to whitespace is an empty paper, not a full one."""
+        with patch.object(PodcastAgent, '__init__', lambda x: None):
+            agent = PodcastAgent()
+            parsed = MagicMock()
+            parsed.full_text = "   \n  "
+            agent.ingest_agent = MagicMock()
+            agent.ingest_agent.ingest.return_value = parsed
+            mock_paper.url_pdf = "http://example.com/test.pdf"
+
+            result = agent._get_full_text(mock_paper)
+
+            assert result.text == ""
+            assert "no text could be extracted" in result.error
 
     def test_agent_requires_api_key(self):
         """Test that agent raises error without API key."""

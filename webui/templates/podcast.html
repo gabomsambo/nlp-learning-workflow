@@ -3,6 +3,18 @@
 <h2>Podcast Script Generation</h2>
 <p>Generate educational podcast scripts from papers using AI.</p>
 
+{% if load_errors %}
+{# The database could not be read. Say so — an empty dropdown and "no scripts
+   yet" are what an unreachable database used to look like. #}
+<article style="border-left: 4px solid #b00; padding-left: 1rem;">
+  <strong>Some of this page could not be loaded.</strong>
+  <ul>
+    {% for err in load_errors %}<li>{{ err }}</li>{% endfor %}
+  </ul>
+  <small>The database could not be read. This is not the same as having no data — try reloading.</small>
+</article>
+{% endif %}
+
 <form id="generate-form">
   <div class="grid">
     <label>
@@ -30,6 +42,11 @@
 <div id="status-area" style="margin: 1rem 0;">
   <span id="status"></span>
   <progress id="progress-bar" value="0" max="100" style="display: none; width: 100%;"></progress>
+  {# Caveats about what the script was written from, and the "not saved" alarm.
+     Rendered empty so the live region announces the change rather than content
+     that was already present at load. #}
+  <div id="script-warnings" role="status" aria-live="polite" hidden
+       style="margin-top: 0.75rem; border-left: 4px solid #b00; padding: 0.5rem 0 0.5rem 1rem;"></div>
 </div>
 
 <div id="script-area" style="display: none; margin-top: 1rem;">
@@ -76,6 +93,8 @@
       {% endfor %}
     </tbody>
   </table>
+  {% elif scripts is none %}
+  <p><em>Existing scripts could not be loaded — see the error above. This does not mean there are none.</em></p>
   {% else %}
   <p>No podcast scripts generated yet.</p>
   {% endif %}
@@ -97,6 +116,35 @@ const wordCount = document.getElementById('word-count');
 const keyPointsList = document.getElementById('key-points-list');
 const scriptContent = document.getElementById('script-content');
 const downloadBtn = document.getElementById('download-btn');
+const warningsEl = document.getElementById('script-warnings');
+
+// Holds a script the server generated but could NOT store. There is no other
+// copy of it anywhere, so the download button falls back to this.
+let unsavedScript = null;
+
+// Render caveats about what a script was written from, plus the "not saved"
+// alarm. createElement + textContent throughout: these strings carry a database
+// error message and a paper title.
+function showWarnings(warnings, opts) {
+  warningsEl.replaceChildren();
+  if (!warnings || warnings.length === 0) {
+    warningsEl.hidden = true;
+    return;
+  }
+  const heading = document.createElement('strong');
+  heading.textContent = (opts && opts.unsaved)
+    ? 'Generated, but NOT saved'
+    : 'About this script';
+  warningsEl.appendChild(heading);
+  const ul = document.createElement('ul');
+  warnings.forEach(w => {
+    const li = document.createElement('li');
+    li.textContent = w;
+    ul.appendChild(li);
+  });
+  warningsEl.appendChild(ul);
+  warningsEl.hidden = false;
+}
 
 // Filter papers by pillar
 pillarSelect.addEventListener('change', () => {
@@ -134,6 +182,9 @@ generateForm.addEventListener('submit', async (e) => {
   // Update UI for loading state
   statusEl.textContent = 'Generating podcast script... This may take 30-60 seconds.';
   statusEl.style.color = '';
+  showWarnings([]);
+  unsavedScript = null;
+  currentScriptId = null;
   progressBar.style.display = 'block';
   progressBar.value = 0;
   scriptArea.style.display = 'none';
@@ -162,12 +213,34 @@ generateForm.addEventListener('submit', async (e) => {
       throw new Error(data.detail || 'Generation failed');
     }
 
-    currentScriptId = data.script_id;
-    statusEl.textContent = `Script generated successfully! ${data.word_count} words.`;
-    statusEl.style.color = 'green';
+    if (data.saved === false) {
+      // The script exists and has been paid for, but the insert failed, so it
+      // is in this response and nowhere else. Render it from the response
+      // rather than re-fetching an id that was never written.
+      currentScriptId = null;
+      unsavedScript = data;
+      statusEl.textContent = `Script generated (${data.word_count} words) but NOT saved.`;
+      statusEl.style.color = 'red';
+      showWarnings(data.warnings, { unsaved: true });
+      renderScript({
+        title: data.title,
+        script: data.script,
+        word_count: data.word_count,
+        key_points: data.key_points
+      });
+    } else {
+      currentScriptId = data.script_id;
+      unsavedScript = null;
+      const partial = data.warnings && data.warnings.length;
+      statusEl.textContent = partial
+        ? `Script generated from partial material — ${data.word_count} words. See the note below.`
+        : `Script generated successfully! ${data.word_count} words.`;
+      statusEl.style.color = partial ? 'orange' : 'green';
+      showWarnings(data.warnings, { unsaved: false });
 
-    // Fetch full script details
-    await loadScript(data.script_id);
+      // Fetch full script details
+      await loadScript(data.script_id);
+    }
 
   } catch (err) {
     clearInterval(progressInterval);
@@ -178,6 +251,31 @@ generateForm.addEventListener('submit', async (e) => {
     generateForm.querySelector('button').disabled = false;
   }
 });
+
+// Paint a script into the page. One renderer for both the stored path and the
+// unsaved-in-the-response path, so there is exactly one place that formats a
+// script — not two that can drift.
+function renderScript(script) {
+  scriptTitle.textContent = script.title;
+  wordCount.textContent = script.word_count;
+
+  // Format key points
+  keyPointsList.innerHTML = '';
+  (script.key_points || []).forEach(point => {
+    const li = document.createElement('li');
+    li.textContent = point;
+    keyPointsList.appendChild(li);
+  });
+
+  // Format script content with [HOST]: highlighting
+  let formattedContent = script.script;
+  formattedContent = formattedContent.replace(/\[HOST\]:/g, '<strong style="color: #0066cc;">[HOST]:</strong>');
+  formattedContent = formattedContent.replace(/\[(MUSIC|SFX|PAUSE|TRANSITION)\]/g, '<em style="color: #666;">[$1]</em>');
+  scriptContent.innerHTML = formattedContent;
+
+  scriptArea.style.display = 'block';
+  progressBar.style.display = 'none';
+}
 
 // Load and display script
 async function loadScript(scriptId) {
@@ -191,27 +289,14 @@ async function loadScript(scriptId) {
 
     const script = data.script;
     currentScriptId = scriptId;
+    unsavedScript = null;
 
-    // Update UI
-    scriptTitle.textContent = script.title;
-    wordCount.textContent = script.word_count;
+    // A stored script written from partial material still says so when it is
+    // re-opened, not only on the run that produced it.
+    const stored = script.source_material || {};
+    showWarnings(stored.warnings, { unsaved: false });
 
-    // Format key points
-    keyPointsList.innerHTML = '';
-    (script.key_points || []).forEach(point => {
-      const li = document.createElement('li');
-      li.textContent = point;
-      keyPointsList.appendChild(li);
-    });
-
-    // Format script content with [HOST]: highlighting
-    let formattedContent = script.script;
-    formattedContent = formattedContent.replace(/\[HOST\]:/g, '<strong style="color: #0066cc;">[HOST]:</strong>');
-    formattedContent = formattedContent.replace(/\[(MUSIC|SFX|PAUSE|TRANSITION)\]/g, '<em style="color: #666;">[$1]</em>');
-    scriptContent.innerHTML = formattedContent;
-
-    scriptArea.style.display = 'block';
-    progressBar.style.display = 'none';
+    renderScript(script);
 
   } catch (err) {
     console.error('Error loading script:', err);
@@ -248,6 +333,21 @@ async function viewScript(paperId) {
 downloadBtn.addEventListener('click', () => {
   if (currentScriptId) {
     window.location.href = `/api/podcast/${currentScriptId}/download`;
+    return;
+  }
+  if (unsavedScript) {
+    // Nothing to download from the server — the row was never written. Build
+    // the file from the copy in the response so the work is not lost.
+    const header = `# ${unsavedScript.title}\n\nWord Count: ${unsavedScript.word_count}\n`
+      + `NOT SAVED TO THE DATABASE - this is the only copy.\n`
+      + '\n' + '='.repeat(60) + '\n\n';
+    const blob = new Blob([header + unsavedScript.script], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'unsaved_podcast.txt';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 });
 </script>

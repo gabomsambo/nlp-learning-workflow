@@ -14,11 +14,22 @@ from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
     ReviewLog, UserFSRSParameters, FSRSRating, CardState, QuizReviewRequest, QuizReviewResponse,
-    PaperCitation, PodcastScript,
+    PaperCitation, PodcastScript, SourceMaterial,
     PipelineRun, PipelineRunStage, RunStatus, StageStatus
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_missing_column(error: Any, column: str) -> bool:
+    """True if a PostgREST error means `column` does not exist on the table.
+
+    PostgREST reports an unknown column as PGRST204 with a message naming it.
+    Used so a database that has not had a hand-applied migration run against it
+    degrades visibly instead of failing the write.
+    """
+    text = str(error).lower()
+    return column.lower() in text and ("pgrst204" in text or "column" in text)
 
 
 def _is_missing_url_pdf_column(error: Any) -> bool:
@@ -295,6 +306,10 @@ def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
         'word_count': script.word_count,
         'key_points': script.key_points,
         'ground_pack': script.ground_pack,
+        # What the script was written from. Requires
+        # docs/migrations/011_podcast_source_material.sql on databases created
+        # before it; add_podcast_script() retries without the key and says so.
+        'source_material': script.source_material.model_dump(),
         'created_at': script.created_at.isoformat() if script.created_at else None
     }
 
@@ -310,6 +325,10 @@ def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
         word_count=row.get('word_count', 0),
         key_points=row.get('key_points', []),
         ground_pack=row.get('ground_pack', {}),
+        # Absent on rows written before 011, and on any row a pre-011 database
+        # accepted through the fallback insert. Defaults to level="full", which
+        # is what every historical row was assumed to be anyway.
+        source_material=SourceMaterial(**(row.get('source_material') or {})),
         created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
     )
 
@@ -568,6 +587,15 @@ def paper_exists(pillar_id: str, paper_id: str) -> bool:
         return False
 
 
+class PaperLookupError(Exception):
+    """The paper list could not be read from the database.
+
+    Distinct from "there are no papers", which is an empty list. Collapsing the
+    two rendered the /podcast page's paper dropdown empty, with no error, when
+    the database was simply unreachable.
+    """
+
+
 def get_all_papers(limit: int = 100) -> List[PaperRef]:
     """
     Get all papers across all pillars.
@@ -576,7 +604,10 @@ def get_all_papers(limit: int = 100) -> List[PaperRef]:
         limit: Maximum number of papers to return
 
     Returns:
-        List of paper references
+        List of paper references. Empty means there are none — nothing else.
+
+    Raises:
+        PaperLookupError: the database could not be read.
     """
     try:
         client = get_client()
@@ -588,16 +619,18 @@ def get_all_papers(limit: int = 100) -> List[PaperRef]:
 
         if response['error']:
             logger.error(f"Failed to get all papers: {response['error']}")
-            return []
+            raise PaperLookupError(f"Could not read the paper list: {response['error']}")
 
         if not response['data']:
             return []
 
         return [_dict_to_paper_ref(row) for row in response['data']]
 
+    except PaperLookupError:
+        raise
     except Exception as e:
         logger.error(f"Failed to get all papers: {e}")
-        return []
+        raise PaperLookupError(f"Could not read the paper list: {e}") from e
 
 
 def get_paper_by_id(paper_id: str) -> Optional[PaperRef]:
@@ -800,7 +833,31 @@ def get_lessons(pillar_id: str, limit: int = 10) -> List[Lesson]:
 # Podcast Script Operations
 # =====================================
 
-def add_podcast_script(script: PodcastScript) -> Optional[str]:
+class PodcastScriptSaveError(Exception):
+    """A generated podcast script could not be persisted.
+
+    Raised rather than returned as None because the caller has an artifact in
+    its hands that already cost ~$0.27 and four minutes to make, and the only
+    correct response to a failed insert is to hand that artifact back to the
+    user together with the real reason. The old `return None` made every
+    failure — dead database, missing table, bad grant, constraint violation —
+    into the same opaque 500 with the script silently discarded.
+    """
+
+
+class PodcastScriptLookupError(Exception):
+    """Podcast scripts could not be read from the database.
+
+    Distinct from "there is no such script", which is None, and from "there are
+    no scripts", which is an empty list. Same precedent as PillarLookupError and
+    PostgrestClient.get_pipeline_run: a transient failure must not tell the
+    browser the thing is gone. Measured before this split: a malformed script id
+    made PostgREST answer `400 invalid input syntax for type uuid`, which the
+    route reported as 404 "Script not found".
+    """
+
+
+def add_podcast_script(script: PodcastScript) -> str:
     """
     Add a podcast script for a paper.
 
@@ -808,7 +865,12 @@ def add_podcast_script(script: PodcastScript) -> Optional[str]:
         script: PodcastScript to add
 
     Returns:
-        Script ID if successful, None otherwise
+        The new script's ID.
+
+    Raises:
+        PodcastScriptSaveError: the row could not be written. Never swallowed —
+            see the class docstring; the caller owns an artifact that has
+            already been paid for.
     """
     try:
         client = get_client()
@@ -816,9 +878,22 @@ def add_podcast_script(script: PodcastScript) -> Optional[str]:
 
         response = client.table('podcast_scripts').insert(data)
 
+        if response['error'] and _is_missing_column(response['error'], 'source_material'):
+            # Same degradation as paper_queue.url_pdf: keep the write working on
+            # a database that has not had the migration applied, and say loudly
+            # what was dropped. Losing the provenance record is much better than
+            # losing the script.
+            logger.error(
+                "podcast_scripts has no source_material column — run "
+                "docs/migrations/011_podcast_source_material.sql. Saving the "
+                "script without its source-material record."
+            )
+            data.pop('source_material')
+            response = client.table('podcast_scripts').insert(data)
+
         if response['error']:
             logger.error(f"Failed to add podcast script for paper {script.paper_id}: {response['error']}")
-            return None
+            raise PodcastScriptSaveError(str(response['error']))
 
         # Get the ID from the response
         if response['data'] and len(response['data']) > 0:
@@ -826,11 +901,15 @@ def add_podcast_script(script: PodcastScript) -> Optional[str]:
             logger.info(f"Added podcast script {script_id} for paper {script.paper_id}")
             return script_id
 
-        return None
+        raise PodcastScriptSaveError(
+            "the insert returned no row, so the script has no id and may not have been stored"
+        )
 
+    except PodcastScriptSaveError:
+        raise
     except Exception as e:
         logger.error(f"Failed to add podcast script for paper {script.paper_id}: {e}")
-        return None
+        raise PodcastScriptSaveError(str(e)) from e
 
 
 def get_podcast_scripts(pillar_id: Optional[str] = None, limit: int = 10) -> List[PodcastScript]:
@@ -842,7 +921,12 @@ def get_podcast_scripts(pillar_id: Optional[str] = None, limit: int = 10) -> Lis
         limit: Maximum number of scripts to return
 
     Returns:
-        List of podcast scripts
+        List of podcast scripts. Empty means there are none — nothing else.
+
+    Raises:
+        PodcastScriptLookupError: the database could not be read. An unreachable
+            database used to render /podcast as "No podcast scripts generated
+            yet" with no error anywhere.
     """
     try:
         client = get_client()
@@ -858,16 +942,20 @@ def get_podcast_scripts(pillar_id: Optional[str] = None, limit: int = 10) -> Lis
 
         if response['error']:
             logger.error(f"Failed to get podcast scripts: {response['error']}")
-            return []
+            raise PodcastScriptLookupError(
+                f"Could not read the podcast scripts: {response['error']}"
+            )
 
         if not response['data']:
             return []
 
         return [_dict_to_podcast_script(row) for row in response['data']]
 
+    except PodcastScriptLookupError:
+        raise
     except Exception as e:
         logger.error(f"Failed to get podcast scripts: {e}")
-        return []
+        raise PodcastScriptLookupError(f"Could not read the podcast scripts: {e}") from e
 
 
 def get_podcast_script_by_id(script_id: str) -> Optional[PodcastScript]:
@@ -878,7 +966,13 @@ def get_podcast_script_by_id(script_id: str) -> Optional[PodcastScript]:
         script_id: The script ID to fetch
 
     Returns:
-        PodcastScript if found, None otherwise
+        PodcastScript, or None if there is genuinely no such script.
+
+    Raises:
+        PodcastScriptLookupError: the query failed. A missing row is already
+            `data == []` with HTTP 200, so every error reaching here is a real
+            failure and reporting it as None made the route answer 404 — telling
+            the browser a script is gone when the database merely hiccuped.
     """
     try:
         client = get_client()
@@ -889,16 +983,22 @@ def get_podcast_script_by_id(script_id: str) -> Optional[PodcastScript]:
 
         if response['error']:
             logger.error(f"Failed to get podcast script {script_id}: {response['error']}")
-            return None
+            raise PodcastScriptLookupError(
+                f"Could not read podcast script {script_id}: {response['error']}"
+            )
 
         if not response['data'] or len(response['data']) == 0:
             return None
 
         return _dict_to_podcast_script(response['data'][0])
 
+    except PodcastScriptLookupError:
+        raise
     except Exception as e:
         logger.error(f"Failed to get podcast script {script_id}: {e}")
-        return None
+        raise PodcastScriptLookupError(
+            f"Could not read podcast script {script_id}: {e}"
+        ) from e
 
 
 # =====================================
