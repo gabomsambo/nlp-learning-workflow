@@ -428,18 +428,47 @@ The one-sentence summary lives in a `role="status" aria-live="polite"` element r
 at load. The stage list is `aria-live="off"`; re-announcing eleven rows a second is
 unusable.
 
-### JS tests exist now, and they are deliberately narrow
+## The paper-detail modal is shared, and it is the only paper detail surface
 
-`tests/js/run-progress.test.js`, run by `node --test tests/js/*.test.js` in its own CI
-job. Stdlib only — no npm, no bundler, no `package.json` — reached through a CommonJS
-guard at the bottom of `run-progress.js` that the browser ignores. Use the glob, not
-`node --test tests/js/`: the directory form resolves as a module and dies with
-`MODULE_NOT_FOUND` when the repo path contains a space.
+`webui/static/paper-modal.js` + `webui/templates/_paper_modal.html`, included by
+`papers.html` and `pillar_detail.html`. Both call `PaperModal.init({triggerSelector})`
+and nothing else. One endpoint behind it — `GET /papers/details/{paper_id}`, which returns
+`{paper, notes, lessons, quiz_cards}` — so a lesson row and a quiz-card row open the *paper*
+they came from, keyed by their `paper_id`. Do not add a second detail surface; the pillar
+page had inert `<div>`s for exactly as long as it had no shared one to point at.
 
-It covers the pure helpers only. The polling loop, `AbortController` teardown and the
-404 path need a DOM and are **not** covered; jsdom means npm and Playwright means a
-browser download, both rejected. Do not read that job's green tick as "the frontend is
-tested".
+`triggerSelector` must be narrow. The pillar page's search results carry `data-paper-id` on
+their **enqueue** buttons, so a generic `[data-paper-id]` trigger swallows those clicks; the
+page passes `.activity-item-link`.
+
+Nothing in that module escapes anything, on purpose: every node is `createElement` +
+`textContent` and every attribute is `setAttribute`. The version it replaced built the whole
+modal from template literals into `innerHTML`. Measured on the pre-change page with a hostile
+payload through the details endpoint: **19 injected handlers fired and a `javascript:` href
+went live**; the same payload against the new renderer fires none and produces no `<a>` at
+all. `url_pdf` is scheme-checked before it reaches an href — `textContent` does not protect a
+URL, and `file://` is allowed because uploaded PDFs are stored that way.
+
+Quiz answers are **visible by default** and hidden by one control for the whole section, not
+per card (captain's call, 2026-08-29): these cards are read as a paper summary far more often
+than they are self-tested, so per-card reveal was friction on the common path. The choice
+persists at `localStorage['nlp:quizAnswersVisible']` across cards, papers, reloads and both
+pages. Hiding uses the `hidden` attribute, never a `display:none` class — a class leaves the
+answer in the accessibility tree, so a screen reader still reads out what the user hid.
+
+## JS tests exist now, and they are deliberately narrow
+
+`tests/js/run-progress.test.js` and `tests/js/paper-modal.test.js`, run by
+`node --test tests/js/*.test.js` in its own CI job. Stdlib only — no npm, no bundler, no
+`package.json` — reached through a CommonJS guard at the bottom of each module that the
+browser ignores. Use the glob, not `node --test tests/js/`: the directory form resolves as
+a module and dies with `MODULE_NOT_FOUND` when the repo path contains a space.
+
+They cover the pure helpers only. The polling loop, `AbortController` teardown, the 404
+path, and everything in `paper-modal.js` that touches the DOM — the renderer, the fetch,
+the answers toggle — need a DOM and are **not** covered; jsdom means npm and Playwright
+means a browser download, both rejected. Do not read that job's green tick as "the
+frontend is tested".
 
 ### Counts on the pillar page are totals, and a failed count is not zero
 
