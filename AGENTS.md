@@ -930,7 +930,14 @@ the exact 24-parameter contract in `nlp_pillars/tts/indextts_client.py`.
 Voice references come from the captain's folder, mounted read-only at `/voices`
 (`VOICES_DIR`). Scanning and preflight live in `nlp_pillars/tts/voice_library.py`.
 All podcast cues (`[HOST]:`, `[PAUSE]`, `[MUSIC]`, etc.) are stripped in
-`nlp_pillars/tts/cue_parser.py` before any text reaches the model.
+`nlp_pillars/tts/cue_parser.py` before any text reaches the model. IndexTTS then
+splits each chunk again internally (120 tokens, on `-` and sentence punctuation).
+Em-dashes in script prose normalize to `-` and can isolate a trailing quote into a
+one-token segment that crashes the codec — `prepare_text_for_indextts()` in
+`nlp_pillars/tts/text_prep.py` replaces em/en dashes with `, ` before every
+`/gen_single` call. A failed chunk aborts the episode (no partial MP3): the
+`tts_synthesize` stage is marked `failed` with `chunk N/M: {reason}` and the run
+error carries the same via `ChunkSynthesisError`.
 
 Audio generation is a fourth `pipeline_runs` kind (`podcast_audio` /
 `ui_podcast_audio`). MP3s land in `/app/data/podcast_audio/` on the `nlp_uploads`
