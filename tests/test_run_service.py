@@ -19,9 +19,10 @@ import pytest
 
 from nlp_pillars.db import PipelineRunCreateError
 from nlp_pillars.orchestrator import RunCancelledError
-from nlp_pillars.schemas import RunStatus
+from nlp_pillars.schemas import DiscoveryCandidate, PaperRef, RunStatus, StageStatus
 from webui.services import run_service
 from webui.services.run_service import (
+    KIND_DISCOVER,
     KIND_RUN_DAILY,
     RunAlreadyActiveError,
     _count_failed_papers,
@@ -197,6 +198,130 @@ def test_the_cancel_event_is_always_cleaned_up():
     assert "run-1" not in events
 
 
+# -------------------------------------------------------------------- discovery
+
+
+def _candidate(paper_id="arxiv:2401.1"):
+    return DiscoveryCandidate(
+        paper=PaperRef(id=paper_id, title="A Paper", authors=[]),
+        source="arxiv",
+        relevance_score=0.9,
+        citation_count=3,
+        is_influential=False,
+    )
+
+
+def _discover(candidates=None, infra_errors=None, side_effect=None):
+    """Drive execute_run for a discovery run; return the db mock."""
+    events = {"run-1": threading.Event()}
+    with (
+        patch("webui.services.run_service.db") as mock_db,
+        patch("webui.services.run_service.Orchestrator") as mock_orch,
+    ):
+        orch = mock_orch.return_value
+        if side_effect is not None:
+            orch.run_discovery_with_selection.side_effect = side_effect
+        else:
+            orch.run_discovery_with_selection.return_value = candidates or []
+        orch.infra_errors = infra_errors or []
+        try:
+            execute_run("run-1", KIND_DISCOVER, PILLAR, events["run-1"], events,
+                        priority_topics=["mamba"], limit=7)
+        except Exception:
+            pass
+        return mock_db, orch
+
+
+def test_a_discovery_run_stores_its_candidates_on_the_run():
+    """The candidates are the whole product of the run and the request no longer
+    carries them back, so they must survive on the row the browser is polling."""
+    mock_db, _ = _discover(candidates=[_candidate("arxiv:1"), _candidate("arxiv:2")])
+
+    kwargs = mock_db.finish_pipeline_run.call_args.kwargs
+    assert mock_db.finish_pipeline_run.call_args.args[1] == RunStatus.SUCCEEDED.value
+    assert [c["paper"]["id"] for c in kwargs["result"]["candidates"]] == [
+        "arxiv:1", "arxiv:2"
+    ]
+    assert kwargs["result"]["sources_used"] == ["arxiv"]
+
+
+def test_a_discovery_run_reports_no_processed_papers():
+    """papers_processed counts papers put through the pipeline. Discovery puts none
+    through it, and borrowing the column for a candidate count would claim otherwise."""
+    mock_db, _ = _discover(candidates=[_candidate()])
+
+    assert mock_db.finish_pipeline_run.call_args.kwargs["papers_processed"] == 0
+
+
+def test_the_request_arguments_reach_the_orchestrator():
+    _, orch = _discover(candidates=[])
+    orch.run_discovery_with_selection.assert_called_once_with(
+        PILLAR, priority_topics=["mamba"], limit=7
+    )
+
+
+def test_a_discovery_that_matched_nothing_is_a_success():
+    """Same rule as an empty daily run: nothing to find is not a failure."""
+    mock_db, _ = _discover(candidates=[])
+
+    assert mock_db.finish_pipeline_run.call_args.args[1] == RunStatus.SUCCEEDED.value
+    assert mock_db.finish_pipeline_run.call_args.kwargs["error"] is None
+
+
+def test_a_discovery_that_found_nothing_because_everything_broke_is_a_failure():
+    """The distinction this whole change exists for: an empty result that means
+    "broken" must not be recorded the same way as one that means "nothing matched"."""
+    mock_db, _ = _discover(candidates=[], infra_errors=[
+        {"paper_id": "pipeline", "step": "discover_arxiv",
+         "message": "rate-limited — try again in a few minutes"},
+    ])
+
+    assert mock_db.finish_pipeline_run.call_args.args[1] == RunStatus.FAILED.value
+    assert "rate-limited" in mock_db.finish_pipeline_run.call_args.kwargs["error"]
+
+
+def test_a_partly_broken_discovery_succeeds_but_keeps_its_reason():
+    """Ten papers from three sources with the fourth down is a success — but the
+    user is the one who decides whether it is worth running again."""
+    mock_db, _ = _discover(candidates=[_candidate()], infra_errors=[
+        {"paper_id": "pipeline", "step": "discover_vectors",
+         "message": "vector search is switched off — QDRANT_URL is not set"},
+    ])
+
+    assert mock_db.finish_pipeline_run.call_args.args[1] == RunStatus.SUCCEEDED.value
+    assert "QDRANT_URL" in mock_db.finish_pipeline_run.call_args.kwargs["error"]
+
+
+def test_a_cancelled_discovery_is_recorded_as_cancelled():
+    mock_db, _ = _discover(side_effect=RunCancelledError("cancelled before stage x"))
+
+    assert mock_db.finish_pipeline_run.call_args.args[1] == RunStatus.CANCELLED.value
+
+
+def test_a_dropped_stage_is_deleted_rather_than_patched():
+    """'dropped' is not a status a row may hold — the CHECK constraint refuses it.
+    It means the step will not happen, and the honest rendering of that is no row."""
+    events = {"run-1": threading.Event()}
+    with (
+        patch("webui.services.run_service.db") as mock_db,
+        patch("webui.services.run_service.Orchestrator") as mock_orch,
+    ):
+        mock_orch.return_value.infra_errors = []
+        mock_orch.return_value.run_discovery_with_selection.return_value = []
+        execute_run("run-1", KIND_DISCOVER, PILLAR, events["run-1"], events)
+        on_stage = mock_orch.call_args.kwargs["on_stage"]
+
+        on_stage("discover_citations", StageStatus.DROPPED.value)
+        on_stage("discover_arxiv", StageStatus.COMPLETED.value, "3 found")
+
+    mock_db.delete_pipeline_run_stage.assert_called_once_with(
+        "run-1", "discover_citations"
+    )
+    mock_db.update_pipeline_run_stage.assert_called_once_with(
+        "run-1", "discover_arxiv", StageStatus.COMPLETED.value, "3 found"
+    )
+
+
 # ------------------------------------------------------------------ dispatch_run
 
 
@@ -219,6 +344,20 @@ def test_a_conflict_becomes_run_already_active():
     active run. That is the ONLY thing it may mean now."""
     with pytest.raises(RunAlreadyActiveError):
         _dispatch(create_return=None)
+
+
+def test_discovery_seeds_its_own_stage_list():
+    """Not run_daily's. The two pipelines share a table, not a shape."""
+    scheduler = MagicMock()
+    with patch("webui.services.run_service.db") as mock_db:
+        mock_db.create_pipeline_run.return_value = MagicMock(id="run-9")
+        dispatch_run(scheduler, {}, pillar_id=PILLAR,
+                     trigger_source="ui_discover", kind=KIND_DISCOVER, limit=10)
+
+    stage_names = mock_db.create_pipeline_run.call_args.args[3]
+    assert stage_names[0] == "discover_context"
+    assert stage_names[-1] == "discover_rank"
+    assert "ingest" not in stage_names
 
 
 def test_a_broken_database_does_not_masquerade_as_a_conflict():

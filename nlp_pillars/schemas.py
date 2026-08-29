@@ -5,7 +5,7 @@ All data models inherit from BaseIOSchema for Atomic Agents compatibility.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from pydantic import BaseModel as BaseIOSchema
 
@@ -502,11 +502,17 @@ class PipelineResult(BaseModel):
 
 
 class StageName(str, Enum):
-    """The eleven `Step N` boundaries that already exist in orchestrator.py.
+    """The stage boundaries that already exist in orchestrator.py.
 
     These are names for log lines that were always there — the comment on each
     member is where it lives, so a rename in one place is easy to follow to the
-    other. `seq` in the database is this enum's declaration order, 1-based.
+    other. `seq` in the database is the position within the *run kind's* stage
+    list, 1-based, not this enum's declaration order.
+
+    The DISCOVER_* members belong to `run_discovery_with_selection`, which is a
+    different pipeline from `run_daily`: its `DISCOVER_QUERIES` is the same work
+    `DISCOVERY` does for the daily run, but the surrounding steps are not, and one
+    shared member would put the wrong label on whichever run it was not written for.
     """
 
     DISCOVERY = "discovery"      # Step 1  run_daily
@@ -521,9 +527,34 @@ class StageName(str, Enum):
     PERSIST = "persist"          # Step 5e _process_paper
     VECTORS = "vectors"          # Step 5f _process_paper
 
+    # run_discovery_with_selection, in execution order.
+    DISCOVER_CONTEXT = "discover_context"          # db.get_recent_notes
+    DISCOVER_QUERIES = "discover_queries"          # DiscoveryAgent.run
+    DISCOVER_VECTORS = "discover_vectors"          # _search_vectors
+    DISCOVER_ARXIV = "discover_arxiv"              # _search_arxiv_candidates
+    DISCOVER_S2 = "discover_semantic_scholar"      # _search_semantic_scholar
+    DISCOVER_CITATIONS = "discover_citations"      # _search_citations (conditional)
+    DISCOVER_RANK = "discover_rank"                # _rank_and_dedupe
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
-RUN_DAILY_STAGES: List[StageName] = list(StageName)
+#:
+#: Spelled out rather than `list(StageName)`, which is what it used to be: that made
+#: every future enum member a silent extra stage on every daily run, seeded pending
+#: and never written to. The DISCOVER_* members below would have been exactly that.
+RUN_DAILY_STAGES: List[StageName] = [
+    StageName.DISCOVERY,
+    StageName.SEARCH,
+    StageName.ENQUEUE,
+    StageName.POP_QUEUE,
+    StageName.PROCESS,
+    StageName.INGEST,
+    StageName.SUMMARIZE,
+    StageName.SYNTHESIZE,
+    StageName.QUIZ,
+    StageName.PERSIST,
+    StageName.VECTORS,
+]
 
 #: Stages for `process_selected_papers`, which has no discovery/search/enqueue/pop
 #: phase — the papers are already chosen, so it starts at PROCESS.
@@ -535,6 +566,24 @@ PROCESS_SELECTED_STAGES: List[StageName] = [
     StageName.QUIZ,
     StageName.PERSIST,
     StageName.VECTORS,
+]
+
+
+#: Stages for `run_discovery_with_selection`, in order.
+#:
+#: DISCOVER_CITATIONS is seeded like the rest and then DELETED by the orchestrator when
+#: the pillar has no recent papers to follow citations from — `_search_citations` is
+#: guarded by `if recent_paper_ids:`, and a step that will not run has no business
+#: sitting in the list looking pending. Deleting it rather than skipping it keeps the
+#: seq of DISCOVER_RANK stable.
+DISCOVER_STAGES: List[StageName] = [
+    StageName.DISCOVER_CONTEXT,
+    StageName.DISCOVER_QUERIES,
+    StageName.DISCOVER_VECTORS,
+    StageName.DISCOVER_ARXIV,
+    StageName.DISCOVER_S2,
+    StageName.DISCOVER_CITATIONS,
+    StageName.DISCOVER_RANK,
 ]
 
 
@@ -564,13 +613,23 @@ TERMINAL_RUN_STATUSES = frozenset({
 
 
 class StageStatus(str, Enum):
-    """Lifecycle of one stage within a run."""
+    """Lifecycle of one stage within a run.
+
+    DROPPED is the odd one out and is deliberately NOT a stored value — the
+    pipeline_run_stages CHECK constraint does not admit it. It is a signal on the
+    on_stage sink meaning "this run has decided this step will not happen, remove its
+    row", which run_service turns into a DELETE. Discovery uses it for the citation
+    step, which is conditional on the pillar having recent papers: a step that will
+    not run should not sit on screen looking pending, and 'skipped' would still render
+    it as a step that was considered and passed over.
+    """
 
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    DROPPED = "dropped"
 
 
 class PipelineRunStage(BaseModel):
@@ -603,3 +662,10 @@ class PipelineRun(BaseModel):
     finished_at: Optional[datetime] = None
     heartbeat_at: Optional[datetime] = None
     stages: List[PipelineRunStage] = Field(default_factory=list)
+    result: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Terminal payload for run kinds that produce one. A 'discover' run stores "
+            "{'candidates': [...], 'sources_used': [...]}; the others leave it None."
+        ),
+    )

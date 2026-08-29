@@ -439,9 +439,19 @@ class PostgrestClient:
     async def list_pipeline_runs(
         self, pillar_id: Optional[str] = None, limit: int = 20
     ) -> List[Dict[str, Any]]:
-        """Recent runs, newest first. Stages are not embedded — this is a summary."""
+        """Recent runs, newest first. Stages are not embedded — this is a summary.
+
+        Columns are listed rather than selected with ``*`` so that `result` stays out
+        of it: a discovery run's payload is the whole candidate list, and twenty of
+        them on a history page is a lot of JSON for a view that shows a status and a
+        timestamp. Anything wanting the payload reads the single run.
+        """
         params: Dict[str, Any] = {
-            "select": "*",
+            "select": (
+                "id,pillar_id,trigger_source,kind,status,current_stage,"
+                "papers_processed,papers_failed,error,created_at,started_at,"
+                "finished_at,heartbeat_at"
+            ),
             "order": "created_at.desc",
             "limit": limit,
         }

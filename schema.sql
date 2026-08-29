@@ -361,9 +361,12 @@ CREATE TABLE pipeline_runs (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     pillar_id        TEXT NOT NULL,
     trigger_source   TEXT NOT NULL
-        CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'scheduler')),
+        CONSTRAINT pipeline_runs_trigger_source_check
+        CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'ui_discover',
+                                  'scheduler')),
     kind             TEXT NOT NULL
-        CHECK (kind IN ('run_daily', 'process_selected')),
+        CONSTRAINT pipeline_runs_kind_check
+        CHECK (kind IN ('run_daily', 'process_selected', 'discover')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".
@@ -377,7 +380,12 @@ CREATE TABLE pipeline_runs (
     created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
     started_at       TIMESTAMP WITH TIME ZONE,
     finished_at      TIMESTAMP WITH TIME ZONE,
-    heartbeat_at     TIMESTAMP WITH TIME ZONE
+    heartbeat_at     TIMESTAMP WITH TIME ZONE,
+    -- Terminal payload for the run kinds that produce one. 'discover' stores the
+    -- candidate list the user chooses from; the other kinds leave it NULL. Written
+    -- once, at the end, in a single PATCH — so unlike the stage list it has no
+    -- read-modify-write problem and does not need a child table.
+    result           JSONB
 );
 
 -- ==========================================

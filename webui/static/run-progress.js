@@ -133,6 +133,15 @@
     quiz: 'Building quiz cards',
     persist: 'Saving to the database',
     vectors: 'Indexing for search',
+    // run_discovery_with_selection. Named for what the user gets out of each step,
+    // not for the function that does it.
+    discover_context: 'Reading your recent papers',
+    discover_queries: 'Writing search queries',
+    discover_vectors: 'Searching your library by meaning',
+    discover_arxiv: 'Searching arXiv',
+    discover_semantic_scholar: 'Searching Semantic Scholar',
+    discover_citations: 'Following citations from your recent papers',
+    discover_rank: 'Ranking and removing duplicates',
   };
 
   function stageLabel(name) {
@@ -274,6 +283,18 @@
     return d.innerHTML;
   }
 
+  /**
+   * How many candidates a finished discovery run found.
+   *
+   * Read from the stored payload rather than from papers_processed, which a discovery
+   * run leaves at 0 on purpose: it processed no papers, it found some. Conflating the
+   * two would put "10 papers processed" on a run that ingested nothing.
+   */
+  function candidateCount(run) {
+    var result = run && run.result;
+    return result && Array.isArray(result.candidates) ? result.candidates.length : 0;
+  }
+
   function summarise(run) {
     var total = (run.stages || []).length;
     var done = countCompleted(run);
@@ -282,6 +303,18 @@
       if (!run.current_stage) return 'Starting…';
       return 'Step ' + Math.min(done + 1, total) + ' of ' + total + ' — ' +
              stageLabel(run.current_stage);
+    }
+    if (run.kind === 'discover' && run.status === 'succeeded') {
+      // A discovery run counts candidates, not processed papers, and it reports the
+      // sources that failed even when it succeeded: "ten papers, but arXiv was
+      // rate-limited" is a different claim from "ten papers", and only the user can
+      // decide whether that is worth a retry.
+      var found = candidateCount(run);
+      var msg = found
+        ? 'Done — ' + found + ' candidate paper(s) found'
+        : 'Done — no papers matched';
+      if (run.error) msg += ' — ' + run.error;
+      return msg;
     }
     if (run.status === 'succeeded') {
       // A run that found nothing is recorded as succeeded (it is not a failure), but
@@ -524,6 +557,7 @@
     countCompleted: countCompleted,
     displayStatus: displayStatus,
     duration: duration,
+    candidateCount: candidateCount,
   };
 
   // Also reachable from `node --test` (tests/js/). CommonJS on purpose: the browser
@@ -538,6 +572,7 @@
       countCompleted: countCompleted,
       displayStatus: displayStatus,
       duration: duration,
+      candidateCount: candidateCount,
     };
   }
 })(typeof window !== 'undefined' ? window : globalThis);
