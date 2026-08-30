@@ -160,6 +160,10 @@ def download_pdf(url: str, cache_dir: str = ".cache/pdfs") -> str:
             raise PDFDownloadError(f"Failed to download PDF from {url}: {e}")
 
 
+# Exported for tests: patch to a small value rather than allocating 50+ MiB in memory.
+_PDF_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024  # 50 MB limit
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -167,7 +171,7 @@ def download_pdf(url: str, cache_dir: str = ".cache/pdfs") -> str:
 )
 def _download_with_retries(url: str) -> bytes:
     """Download PDF content with retry logic for rate limits and server errors."""
-    max_size = 50 * 1024 * 1024  # 50 MB limit
+    max_size = _PDF_MAX_DOWNLOAD_BYTES
 
     with httpx.Client(timeout=30.0, follow_redirects=True) as client:
         # Use streaming to check size and content-type

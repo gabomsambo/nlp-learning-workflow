@@ -180,12 +180,13 @@ class TestPDFLoader:
             download_pdf("file:///nonexistent.pdf", temp_cache_dir)
     
     @patch('nlp_pillars.tools.pdf_loader.httpx.Client')
+    @patch('nlp_pillars.tools.pdf_loader._PDF_MAX_DOWNLOAD_BYTES', 1024)
     def test_download_pdf_size_limit(self, mock_client_class, temp_cache_dir):
         """Test PDF size limit enforcement."""
         url = "https://example.com/huge.pdf"
         
-        # Mock large response
-        huge_content = b'%PDF-1.4\n' + b'x' * (60 * 1024 * 1024)  # 60MB
+        # Exceed the patched 1 KiB limit without allocating tens of megabytes.
+        huge_content = b'%PDF-1.4\n' + b'x' * 2048
         
         mock_response = Mock()
         mock_response.status_code = 200

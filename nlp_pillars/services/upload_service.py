@@ -546,7 +546,7 @@ class UploadService:
 
         # Fallback to Semantic Scholar if still missing metadata
         if not paper.authors or not paper.year or not paper.abstract:
-            paper = enrich_from_semantic_scholar(paper)
+            paper = self._enrich_from_semantic_scholar(paper)
 
         return paper
 
@@ -595,7 +595,7 @@ class UploadService:
 
         # Fallback to Semantic Scholar if title is provided but missing other metadata
         if paper.title and (not paper.authors or not paper.year or not paper.abstract):
-            paper = enrich_from_semantic_scholar(paper)
+            paper = self._enrich_from_semantic_scholar(paper)
 
         return paper
 

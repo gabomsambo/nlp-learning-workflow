@@ -146,7 +146,8 @@ class TestS2Enrichment:
         # Paper should still be returned unchanged (short title)
         assert result.id == "non-arxiv-id"
 
-    def test_s2_enrichment_preserves_existing_data(self, upload_service):
+    @patch('nlp_pillars.services.paper_metadata.enrich_from_semantic_scholar')
+    def test_s2_enrichment_preserves_existing_data(self, mock_enrich, upload_service):
         """Test that S2 enrichment preserves existing user data."""
         paper = PaperRef(
             id="non-arxiv-id",
@@ -155,6 +156,7 @@ class TestS2Enrichment:
             year=2024,  # Already has year
             url_pdf=""
         )
+        mock_enrich.return_value = paper
         # Even if S2 returns data, user data should be preserved
         result = upload_service._enrich_from_semantic_scholar(paper)
         assert result.authors == ["User Author"]

@@ -133,8 +133,9 @@ class TestArXivTool:
         assert paper2.id == "2402.67890"
         assert paper2.venue == "NAACL 2019"
     
+    @patch("time.sleep")
     @patch('nlp_pillars.tools.arxiv_tool.arxiv.Client')
-    def test_search_error_handling(self, mock_client_class, sample_search_query):
+    def test_search_error_handling(self, mock_client_class, mock_sleep, sample_search_query):
         """Test ArXiv search error handling."""
         # Mock client that raises an error
         mock_client = Mock()
@@ -255,8 +256,9 @@ class TestSearXNGTool:
         assert paper2.title == "BERT: Pre-training of Deep Bidirectional Transformers"
         assert paper2.url_pdf == "https://arxiv.org/pdf/1810.04805.pdf"
     
-    @pytest.mark.asyncio 
-    async def test_search_async_error_handling(self, sample_search_query):
+    @pytest.mark.asyncio
+    @patch("time.sleep")
+    async def test_search_async_error_handling(self, mock_sleep, sample_search_query):
         """Test SearXNG search error handling."""
         with patch.object(SearXNGTool, '__init__', lambda x: None):
             tool = SearXNGTool()
