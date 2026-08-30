@@ -144,6 +144,9 @@ compare `information_schema.columns` against `schema.sql`. Both 008 and 009 were
 the captain's volume on 2026-08-29, which brought it level with `schema.sql`'s 13 tables;
 **015 was applied on 2026-08-30** (verified: `pipeline_runs_kind_check` admits `upload`
 and the one-active-per-pillar index carries `AND kind <> 'upload'`).
+**016 (`podcast_script` / `ui_podcast_script`) must be applied by hand** for script
+generation progress — until it is, `POST /api/podcast/generate` answers 503 naming
+the migration file.
 **011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
 PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
 `add_podcast_script()` detects exactly that and retries without the key, so podcasts still
@@ -896,9 +899,10 @@ never 404 — a malformed id used to produce PostgREST `400 invalid input syntax
 uuid` and reach the user as "Script not found". The `/podcast` page renders an explicit
 banner instead of an empty dropdown plus "No podcast scripts generated yet".
 
-Still deliberately unfixed on this path: the fake progress bar (tracked as
-`nlp-podcast-progress`) and the `innerHTML` sink that renders the script body. The
-"30-60 seconds" label is fixed — it says ~4 minutes, which is what 238s rounds to.
+Still deliberately unfixed on this path: the `innerHTML` sink that renders the
+script body. Script **generation progress** is real now (`kind=podcast_script`,
+migration 016, seven stages through `run-progress.js`) — the fake 2%/sec bar and
+fixed-time claim are gone. Audio synthesis was already on the same machinery.
 
 ### What a podcast is aimed at is configurable; what it may say is not
 

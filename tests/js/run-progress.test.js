@@ -269,6 +269,58 @@ test('a failed upload whose paper is in the library is a partial failure', () =>
   assert.equal(statusColor('failed'), 'crimson');
 });
 
+/* --------------------------------------------- summarise: podcast_script */
+
+function podcastScriptStages(done) {
+  const names = [
+    'podcast_prepare', 'podcast_facts_outline', 'podcast_core_concepts',
+    'podcast_metrics', 'podcast_limitations', 'podcast_synthesize',
+    'podcast_persist',
+  ];
+  return names.map((name, i) => ({
+    name,
+    status: i < done ? 'completed' : (i === done ? 'running' : 'pending'),
+  }));
+}
+
+test('podcast script stages have prose labels', () => {
+  assert.equal(stageLabel('podcast_facts_outline'), 'Extracting facts outline');
+  assert.equal(stageLabel('podcast_synthesize'), 'Writing the podcast script');
+  assert.equal(stageLabel('podcast_persist'), 'Saving the script');
+});
+
+test('a podcast script run in flight names the Ground Pack step', () => {
+  const run = {
+    kind: 'podcast_script',
+    status: 'running',
+    current_stage: 'podcast_metrics',
+    stages: podcastScriptStages(3),
+  };
+  assert.equal(summarise(run), 'Step 4 of 7 — Extracting metrics and datasets');
+});
+
+test('a saved podcast script run names the title and word count', () => {
+  const run = {
+    kind: 'podcast_script',
+    status: 'succeeded',
+    stages: podcastScriptStages(7),
+    result: { saved: true, title: 'Deep Dive: Attention', word_count: 4803 },
+  };
+  assert.match(summarise(run), /Deep Dive: Attention/);
+  assert.match(summarise(run), /4803 words/);
+});
+
+test('an unsaved podcast script is not painted as a clean success', () => {
+  const run = {
+    kind: 'podcast_script',
+    status: 'succeeded',
+    stages: podcastScriptStages(7),
+    result: { saved: false, title: 'Deep Dive: X', word_count: 100, script: '[HOST]: hi' },
+  };
+  assert.match(summarise(run), /NOT saved/);
+  assert.equal(statusColor(run), 'darkorange');
+});
+
 /* ----------------------------------------------------------- displayStatus */
 
 test('a terminal run never shows a stage as still running', () => {

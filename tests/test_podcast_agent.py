@@ -823,16 +823,13 @@ class TestAPIEndpoints:
 
     @pytest.mark.asyncio
     async def test_generate_response_model(self):
-        """Test generate response model."""
+        """Test generate response model — now a 202 ack with a run id."""
         from webui.routers.api.podcast import PodcastGenerateResponse
 
         response = PodcastGenerateResponse(
-            success=True,
-            script_id="script-456",
-            title="Test Episode",
-            word_count=1000,
-            message="Generated successfully"
+            run_id="run-456",
+            message="Podcast script generation started",
         )
 
-        assert response.success is True
-        assert response.word_count == 1000
+        assert response.run_id == "run-456"
+        assert "started" in response.message.lower()

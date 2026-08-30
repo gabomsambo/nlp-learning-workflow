@@ -37,6 +37,7 @@ from nlp_pillars.orchestrator import Orchestrator, RunCancelledError
 from nlp_pillars.schemas import (
     DISCOVER_STAGES,
     PODCAST_AUDIO_STAGES,
+    PODCAST_SCRIPT_STAGES,
     PROCESS_SELECTED_STAGES,
     RUN_DAILY_STAGES,
     UPLOAD_STAGES,
@@ -48,7 +49,7 @@ from nlp_pillars.schemas import (
 )
 from nlp_pillars.services.upload_service import get_upload_service
 from webui.services.discovery_results import candidates_payload
-from webui.services import podcast_audio_service
+from webui.services import podcast_audio_service, podcast_script_service
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ KIND_RUN_DAILY = "run_daily"
 KIND_PROCESS_SELECTED = "process_selected"
 KIND_DISCOVER = "discover"
 KIND_PODCAST_AUDIO = podcast_audio_service.KIND_PODCAST_AUDIO
+KIND_PODCAST_SCRIPT = podcast_script_service.KIND_PODCAST_SCRIPT
 KIND_UPLOAD = "upload"
 
 #: The trigger source for both manual upload routes. Uploads are exempt from the
@@ -72,6 +74,7 @@ _STAGES_FOR_KIND = {
     KIND_PROCESS_SELECTED: PROCESS_SELECTED_STAGES,
     KIND_DISCOVER: DISCOVER_STAGES,
     KIND_PODCAST_AUDIO: PODCAST_AUDIO_STAGES,
+    KIND_PODCAST_SCRIPT: PODCAST_SCRIPT_STAGES,
     KIND_UPLOAD: UPLOAD_STAGES,
 }
 
@@ -115,6 +118,9 @@ def dispatch_run(
             paper the user handed over. It can therefore still raise here, but only if
             015 has not been applied — which is also the case where the insert fails
             the kind CHECK first, so in practice this is unreachable for uploads.
+
+            KIND_PODCAST_SCRIPT is exempted the same way (migration 016): generation
+            is scoped to one paper, and must not 409 against discovery or TTS.
         ValueError: on an unknown ``kind``.
         db.PipelineRunCreateError: the row could not be written for any other reason
             — including the CHECK constraints migration 015 widens.
@@ -185,6 +191,11 @@ def execute_run(
             # store must not stop a paper being added to the library — that step
             # reports its own failure further down, on the VECTORS stage.
             _finish_upload(run_id, pillar_id, cancel_event, kwargs, on_stage)
+            return
+
+        if kind == KIND_PODCAST_SCRIPT:
+            # Same no-Orchestrator rule: script generation never needs Qdrant.
+            _finish_podcast_script(run_id, pillar_id, cancel_event, kwargs, on_stage)
             return
 
         # Built HERE, inside the worker thread. Never cached on app.state and never
@@ -326,6 +337,57 @@ def _finish_podcast_audio(
         result=result_payload,
     )
     logger.info("Run %s finished podcast audio for script %s", run_id, script_id)
+
+
+def _finish_podcast_script(
+    run_id: str,
+    pillar_id: str,
+    cancel_event: threading.Event,
+    kwargs: Dict[str, Any],
+    on_stage,
+) -> None:
+    """Close out a podcast script generation run.
+
+    Two honesty facts travel in ``result``, matching the old sync route:
+
+    - ``saved`` / ``script_id`` — whether the insert worked
+    - full ``script`` text when ``saved`` is false — the only copy of a paid artifact
+
+    A save failure therefore finishes as SUCCEEDED with ``saved: false`` (generation
+    did what was asked). Insufficient material / extraction / cancel raise and are
+    recorded by ``execute_run`` as failed / cancelled.
+    """
+    paper_id = kwargs.get("paper_id")
+    options = kwargs.get("options")
+    if not paper_id or options is None:
+        raise ValueError("podcast_script run requires paper_id and options")
+
+    result_payload = podcast_script_service.run_podcast_script_job(
+        run_id,
+        paper_id,
+        pillar_id,
+        options,
+        on_stage,
+        cancel_event,
+    )
+    db.finish_pipeline_run(
+        run_id,
+        RunStatus.SUCCEEDED.value,
+        papers_processed=0,
+        papers_failed=0,
+        result=result_payload,
+        error=(
+            None
+            if result_payload.get("saved")
+            else "Script generated but not saved to the database"
+        ),
+    )
+    logger.info(
+        "Run %s finished podcast script for paper %s (saved=%s)",
+        run_id,
+        paper_id,
+        result_payload.get("saved"),
+    )
 
 
 def _finish_upload(
@@ -480,6 +542,7 @@ WEBUI_TRIGGER_SOURCES = [
     "ui_discover",
     TRIGGER_UI_UPLOAD,
     podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
+    podcast_script_service.TRIGGER_UI_PODCAST_SCRIPT,
 ]
 
 

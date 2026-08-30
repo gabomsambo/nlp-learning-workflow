@@ -6,10 +6,11 @@ Claude for synthesis (call 5).
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -21,12 +22,15 @@ from ..podcast_options import (
 )
 from ..schemas import (
     GroundPackCallRecord, PaperNote, PaperRef, PodcastOptions, PodcastScript,
-    SourceMaterial,
+    SourceMaterial, StageName, StageStatus,
 )
 from ..db import get_paper_by_id, get_notes_by_paper_id
+from ..orchestrator import RunCancelledError, _first_line
 from .ingest_agent import IngestAgent, IngestError
 
 logger = logging.getLogger(__name__)
+
+StageCallback = Callable[[str, str, Optional[str]], None]
 
 # Full text is passed to five separate LLM calls (four Ground Pack extractions
 # plus final synthesis), so this bound is multiplied by five on the bill.
@@ -791,13 +795,52 @@ LIMITATIONS & THREATS:
             ],
         )
 
-    async def generate(self, paper_id: str, pillar_id: str) -> PodcastScript:
+    @staticmethod
+    def _emit_stage(
+        on_stage: Optional[StageCallback],
+        stage: StageName,
+        status: StageStatus,
+        detail: Optional[str] = None,
+    ) -> None:
+        if on_stage is None:
+            return
+        try:
+            on_stage(stage.value, status.value, detail)
+        except Exception as e:  # noqa: BLE001 — UI must not kill generation
+            logger.warning("podcast on_stage(%s, %s) raised: %s", stage, status, e)
+
+    @staticmethod
+    def _check_cancel(cancel: Optional[threading.Event], stage: StageName) -> None:
+        if cancel is not None and cancel.is_set():
+            raise RunCancelledError(f"cancelled before {stage.value}")
+
+    @staticmethod
+    def _call_detail(rec: GroundPackCallRecord) -> str:
+        bits = [f"{rec.provider}/{rec.model}"]
+        if rec.fallback:
+            bits.append("Claude fallback")
+        if rec.output_tokens is not None:
+            bits.append(f"{rec.output_tokens:,} out tokens")
+        if rec.input_tokens is not None:
+            bits.append(f"{rec.input_tokens:,} in")
+        return " · ".join(bits)
+
+    async def generate(
+        self,
+        paper_id: str,
+        pillar_id: str,
+        *,
+        on_stage: Optional[StageCallback] = None,
+        cancel: Optional[threading.Event] = None,
+    ) -> PodcastScript:
         """
         Generate complete podcast script for a paper.
 
         Args:
             paper_id: ID of the paper to generate script for
             pillar_id: Associated pillar ID
+            on_stage: optional ``(name, status, detail)`` sink for pipeline_run_stages
+            cancel: optional cooperative cancel event, checked at stage boundaries
 
         Returns:
             PodcastScript with generated content, carrying a SourceMaterial record
@@ -809,6 +852,7 @@ LIMITATIONS & THREATS:
             InsufficientSourceMaterialError: the paper body could not be read and
                 the paper has neither an abstract nor a notes row. Raised before
                 the first model call, so nothing is spent.
+            RunCancelledError: cancel was set before a stage started.
         """
         total_start = time.time()
         logger.info(
@@ -816,10 +860,21 @@ LIMITATIONS & THREATS:
             f"({', '.join(f'{k}={c.label}' for k, c in self.options.choices.items())})"
         )
 
+        prepare = StageName.PODCAST_PREPARE
+        self._check_cancel(cancel, prepare)
+        self._emit_stage(
+            on_stage,
+            prepare,
+            StageStatus.RUNNING,
+            "Loading paper, notes and PDF text",
+        )
+
         # Fetch paper data
         paper = get_paper_by_id(paper_id)
         if not paper:
-            raise ValueError(f"Paper not found: {paper_id}")
+            detail = f"Paper not found: {paper_id}"
+            self._emit_stage(on_stage, prepare, StageStatus.FAILED, detail)
+            raise ValueError(detail)
 
         # Fetch notes for additional context
         notes = get_notes_by_paper_id(paper_id)
@@ -829,8 +884,8 @@ LIMITATIONS & THREATS:
         # Limitations section, none of which exist in an abstract.
         #
         # to_thread because _get_full_text downloads and parses a PDF (~7s cold)
-        # and generate() is awaited directly from a FastAPI route — running it
-        # inline froze the event loop for every other request.
+        # and generate() may be awaited from a FastAPI route or from asyncio.run
+        # on a worker thread — running it inline freezes the event loop.
         full_text_result = await asyncio.to_thread(self._get_full_text, paper)
 
         # Decide whether there is anything to write from BEFORE spending a
@@ -838,9 +893,26 @@ LIMITATIONS & THREATS:
         # and there is no abstract and no notes; five calls against a title and
         # the string "[Full text not available...]" is $0.27 of confident
         # fiction with a green success message on top.
-        source_material = self._assess_source_material(paper, notes, full_text_result)
+        try:
+            source_material = self._assess_source_material(
+                paper, notes, full_text_result
+            )
+        except InsufficientSourceMaterialError as e:
+            self._emit_stage(on_stage, prepare, StageStatus.FAILED, _first_line(e))
+            raise
+
         for warning in source_material.warnings:
             logger.warning(f"Podcast for {paper_id}: {warning}")
+
+        prepare_detail = (
+            f"{source_material.level} material · "
+            f"{source_material.full_text_chars:,} body chars"
+        )
+        if source_material.has_notes:
+            prepare_detail += " · notes"
+        if source_material.has_abstract:
+            prepare_detail += " · abstract"
+        self._emit_stage(on_stage, prepare, StageStatus.COMPLETED, prepare_detail)
 
         full_text = full_text_result.text
 
@@ -877,12 +949,53 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
 """
 
         logger.info(f"Paper content assembled: {len(paper_content)} chars")
+        extraction_model = EXTRACTION_ROUTE.resolved_model()
+
+        async def _run_section(
+            stage: StageName,
+            label: str,
+            coro,
+        ):
+            self._check_cancel(cancel, stage)
+            self._emit_stage(
+                on_stage,
+                stage,
+                StageStatus.RUNNING,
+                f"Extracting {label} via {extraction_model}",
+            )
+            try:
+                text, rec = await coro
+            except Exception as e:
+                self._emit_stage(
+                    on_stage, stage, StageStatus.FAILED, _first_line(e)
+                )
+                raise
+            self._emit_stage(
+                on_stage, stage, StageStatus.COMPLETED, self._call_detail(rec)
+            )
+            return text, rec
 
         # Run 4 Ground Pack prompts sequentially
-        facts_outline, facts_call = await self._generate_facts_outline(paper_content)
-        core_concepts, concepts_call = await self._generate_core_concepts(paper_content)
-        metrics_datasets, metrics_call = await self._generate_metrics_datasets(paper_content)
-        limitations, limitations_call = await self._generate_limitations(paper_content)
+        facts_outline, facts_call = await _run_section(
+            StageName.PODCAST_FACTS_OUTLINE,
+            "facts outline",
+            self._generate_facts_outline(paper_content),
+        )
+        core_concepts, concepts_call = await _run_section(
+            StageName.PODCAST_CORE_CONCEPTS,
+            "core concepts",
+            self._generate_core_concepts(paper_content),
+        )
+        metrics_datasets, metrics_call = await _run_section(
+            StageName.PODCAST_METRICS,
+            "metrics and datasets",
+            self._generate_metrics_datasets(paper_content),
+        )
+        limitations, limitations_call = await _run_section(
+            StageName.PODCAST_LIMITATIONS,
+            "limitations",
+            self._generate_limitations(paper_content),
+        )
 
         ground_pack = {
             "facts_outline": facts_outline,
@@ -896,7 +1009,27 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
         }
 
         # Generate final script
-        script = await self._generate_final_script(ground_pack, paper_content)
+        synth = StageName.PODCAST_SYNTHESIZE
+        synth_model = SYNTHESIS_ROUTE.resolved_model()
+        self._check_cancel(cancel, synth)
+        self._emit_stage(
+            on_stage,
+            synth,
+            StageStatus.RUNNING,
+            f"Writing script via {synth_model}",
+        )
+        try:
+            script = await self._generate_final_script(ground_pack, paper_content)
+        except Exception as e:
+            self._emit_stage(on_stage, synth, StageStatus.FAILED, _first_line(e))
+            raise
+        word_count = len(script.split())
+        self._emit_stage(
+            on_stage,
+            synth,
+            StageStatus.COMPLETED,
+            f"{synth_model} · {word_count:,} words",
+        )
 
         # Create PodcastScript
         podcast_script = PodcastScript(
@@ -904,7 +1037,7 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
             pillar_id=pillar_id,
             title=f"Deep Dive: {paper.title}",
             script=script,
-            word_count=len(script.split()),
+            word_count=word_count,
             key_points=self._extract_key_points(ground_pack),
             ground_pack=ground_pack,
             ground_pack_calls=ground_pack_calls,
