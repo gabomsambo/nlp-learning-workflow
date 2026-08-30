@@ -30,6 +30,7 @@
   'use strict';
 
   var DETAILS_URL = '/papers/details/';
+  var REFRESH_URL = '/api/papers/';
   var ANSWERS_KEY = 'nlp:quizAnswersVisible';
   var DIFFICULTY_LABELS = ['Easy', 'Medium', 'Hard'];
 
@@ -329,6 +330,14 @@
     contentEl.appendChild(box);
   }
 
+  function setRefreshStatus(statusEl, message, kind) {
+    if (!statusEl) return;
+    statusEl.hidden = !message;
+    statusEl.textContent = message || '';
+    statusEl.classList.remove('is-success', 'is-info', 'is-error');
+    if (message && kind) statusEl.classList.add(kind);
+  }
+
   /* ------------------------------------------------------------------ wiring */
 
   /**
@@ -345,31 +354,89 @@
     var titleEl = document.getElementById(opts.titleId || 'modal-paper-title');
     var contentEl = document.getElementById(opts.contentId || 'modal-content');
     var closeEl = document.getElementById(opts.closeId || 'close-modal');
+    var refreshBtn = document.getElementById(opts.refreshId || 'refresh-metadata-btn');
+    var refreshStatusEl = document.getElementById(opts.refreshStatusId || 'metadata-refresh-status');
     var selector = opts.triggerSelector || '[data-paper-id]';
     var requestSeq = 0;
+    var refreshSeq = 0;
+    var currentPaperId = null;
 
-    function open(paperId) {
-      if (!paperId) return;
-      var seq = ++requestSeq;
-      titleEl.textContent = 'Loading…';
-      renderMessage(contentEl, 'Loading paper details…');
-      if (!dialog.open) dialog.showModal();
-
-      fetch(DETAILS_URL + encodeURIComponent(paperId))
+    function loadDetails(paperId, seq) {
+      return fetch(DETAILS_URL + encodeURIComponent(paperId))
         .then(function (response) {
           if (!response.ok) throw new Error('HTTP ' + response.status + ' ' + response.statusText);
           return response.json();
         })
         .then(function (data) {
-          // A second click while the first request is in flight must win; otherwise the
-          // slower response repaints the modal with the paper the user moved off.
-          if (seq !== requestSeq) return;
+          if (seq !== requestSeq) return null;
           renderDetails(data, titleEl, contentEl);
+          return data;
+        });
+    }
+
+    function open(paperId) {
+      if (!paperId) return;
+      currentPaperId = paperId;
+      var seq = ++requestSeq;
+      titleEl.textContent = 'Loading…';
+      renderMessage(contentEl, 'Loading paper details…');
+      setRefreshStatus(refreshStatusEl, '', null);
+      if (refreshBtn) {
+        refreshBtn.hidden = true;
+        refreshBtn.disabled = true;
+      }
+      if (!dialog.open) dialog.showModal();
+
+      loadDetails(paperId, seq)
+        .then(function () {
+          if (seq !== requestSeq) return;
+          if (refreshBtn) {
+            refreshBtn.hidden = false;
+            refreshBtn.disabled = false;
+          }
         })
         .catch(function (error) {
           if (seq !== requestSeq) return;
           titleEl.textContent = 'Paper details';
           renderMessage(contentEl, 'Could not load paper details.', error.message);
+        });
+    }
+
+    function refreshMetadata() {
+      if (!currentPaperId || !refreshBtn || refreshBtn.disabled) return;
+      var seq = ++refreshSeq;
+      refreshBtn.disabled = true;
+      setRefreshStatus(refreshStatusEl, 'Refreshing metadata…', 'is-info');
+
+      fetch(REFRESH_URL + encodeURIComponent(currentPaperId) + '/refresh-metadata', {
+        method: 'POST',
+      })
+        .then(function (response) {
+          return response.json().then(function (body) {
+            if (!response.ok) {
+              var detail = body && body.detail;
+              var message = typeof detail === 'string'
+                ? detail
+                : 'HTTP ' + response.status + ' ' + response.statusText;
+              throw new Error(message);
+            }
+            return body;
+          });
+        })
+        .then(function (body) {
+          if (seq !== refreshSeq) return;
+          var kind = body.updated ? 'is-success' : 'is-info';
+          setRefreshStatus(refreshStatusEl, body.message || 'Metadata refresh finished.', kind);
+          return loadDetails(currentPaperId, requestSeq);
+        })
+        .then(function () {
+          if (seq !== refreshSeq) return;
+          refreshBtn.disabled = false;
+        })
+        .catch(function (error) {
+          if (seq !== refreshSeq) return;
+          setRefreshStatus(refreshStatusEl, error.message, 'is-error');
+          refreshBtn.disabled = false;
         });
     }
 
@@ -382,6 +449,7 @@
     });
 
     if (closeEl) closeEl.addEventListener('click', function () { dialog.close(); });
+    if (refreshBtn) refreshBtn.addEventListener('click', refreshMetadata);
     dialog.addEventListener('click', function (event) {
       if (event.target === dialog) dialog.close();
     });

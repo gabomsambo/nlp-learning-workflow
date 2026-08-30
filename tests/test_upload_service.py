@@ -62,8 +62,8 @@ class TestArxivIdExtraction:
 class TestArxivEnrichment:
     """Test arXiv metadata enrichment."""
 
-    @patch('nlp_pillars.services.upload_service.arxiv.Client')
-    @patch('nlp_pillars.services.upload_service.arxiv.Search')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Client')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Search')
     def test_arxiv_enrichment_success(
         self, mock_search_class, mock_client_class, upload_service
     ):
@@ -87,8 +87,8 @@ class TestArxivEnrichment:
         assert enriched.title == "Attention Is All You Need"
         assert len(enriched.authors) == 2
 
-    @patch('nlp_pillars.services.upload_service.arxiv.Client')
-    @patch('nlp_pillars.services.upload_service.arxiv.Search')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Client')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Search')
     def test_arxiv_enrichment_uses_api_data(
         self, mock_search_class, mock_client_class, upload_service
     ):
