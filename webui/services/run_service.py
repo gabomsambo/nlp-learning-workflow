@@ -39,10 +39,14 @@ from nlp_pillars.schemas import (
     PODCAST_AUDIO_STAGES,
     PROCESS_SELECTED_STAGES,
     RUN_DAILY_STAGES,
+    UPLOAD_STAGES,
     PaperRef,
     RunStatus,
     StageStatus,
+    UploadFileRequest,
+    UploadUrlRequest,
 )
+from nlp_pillars.services.upload_service import get_upload_service
 from webui.services.discovery_results import candidates_payload
 from webui.services import podcast_audio_service
 
@@ -52,12 +56,23 @@ KIND_RUN_DAILY = "run_daily"
 KIND_PROCESS_SELECTED = "process_selected"
 KIND_DISCOVER = "discover"
 KIND_PODCAST_AUDIO = podcast_audio_service.KIND_PODCAST_AUDIO
+KIND_UPLOAD = "upload"
+
+#: The trigger source for both manual upload routes. Uploads are exempt from the
+#: one-active-run-per-pillar guard (migration 015) — see dispatch_run.
+TRIGGER_UI_UPLOAD = "ui_upload"
+
+#: Which of an upload run's kwargs decides what it fetches. Both sources produce the
+#: same stage list and the same result payload; only the first stage differs.
+UPLOAD_SOURCE_URL = "url"
+UPLOAD_SOURCE_FILE = "file"
 
 _STAGES_FOR_KIND = {
     KIND_RUN_DAILY: RUN_DAILY_STAGES,
     KIND_PROCESS_SELECTED: PROCESS_SELECTED_STAGES,
     KIND_DISCOVER: DISCOVER_STAGES,
     KIND_PODCAST_AUDIO: PODCAST_AUDIO_STAGES,
+    KIND_UPLOAD: UPLOAD_STAGES,
 }
 
 
@@ -79,16 +94,30 @@ def dispatch_run(
         scheduler: The APScheduler instance from ``app.state.scheduler``.
         cancel_events: The ``app.state.cancel_events`` registry, keyed by run id.
         pillar_id: Target pillar slug.
-        trigger_source: 'ui_pipeline' | 'ui_select' | 'ui_discover' | 'scheduler'.
-        kind: KIND_RUN_DAILY, KIND_PROCESS_SELECTED or KIND_DISCOVER.
+        trigger_source: 'ui_pipeline' | 'ui_select' | 'ui_discover' | 'ui_upload' |
+            'ui_podcast_audio' | 'scheduler'.
+        kind: one of the KIND_* constants above.
         **kwargs: ``papers_limit`` for run_daily, ``papers`` for process_selected,
-            ``priority_topics`` and ``limit`` for discover.
+            ``priority_topics`` and ``limit`` for discover, ``script_id`` and
+            ``voice_path`` for podcast_audio, ``source`` plus that source's fields
+            for upload (see :func:`_finish_upload`).
 
     Raises:
-        RunAlreadyActiveError: if this pillar already has a pending/running run. The
-            database enforces this with a partial unique index, so it is reported
-            rather than guessed at — a check-then-insert would race.
+        RunAlreadyActiveError: if this pillar already has a pending/running run of a
+            kind the guard covers. The database enforces this with a partial unique
+            index, so it is reported rather than guessed at — a check-then-insert
+            would race.
+
+            KIND_UPLOAD is deliberately OUTSIDE that guard: migration 015 narrows the
+            index to ``kind <> 'upload'``, so an upload is never refused because a
+            discovery run is in flight on the same pillar. The guard is about two
+            writers driving one pillar's queue at once; an upload is scoped to the one
+            paper the user handed over. It can therefore still raise here, but only if
+            015 has not been applied — which is also the case where the insert fails
+            the kind CHECK first, so in practice this is unreachable for uploads.
         ValueError: on an unknown ``kind``.
+        db.PipelineRunCreateError: the row could not be written for any other reason
+            — including the CHECK constraints migration 015 widens.
 
     """
     if kind not in _STAGES_FOR_KIND:
@@ -149,6 +178,15 @@ def execute_run(
             db.update_pipeline_run_stage(run_id, name, status, detail)
 
     try:
+        if kind == KIND_UPLOAD:
+            # No Orchestrator on this path, deliberately. An upload does not discover,
+            # search or pop a queue, and building one dials Qdrant on the way in
+            # (VectorSearchTool.__init__ -> ensure_collections). An unreachable vector
+            # store must not stop a paper being added to the library — that step
+            # reports its own failure further down, on the VECTORS stage.
+            _finish_upload(run_id, pillar_id, cancel_event, kwargs, on_stage)
+            return
+
         # Built HERE, inside the worker thread. Never cached on app.state and never
         # passed across the thread boundary: it holds HTTP clients and agent state
         # that belong to the run, and reusing one across runs is how state leaks.
@@ -290,8 +328,99 @@ def _finish_podcast_audio(
     logger.info("Run %s finished podcast audio for script %s", run_id, script_id)
 
 
+def _finish_upload(
+    run_id: str,
+    pillar_id: str,
+    cancel_event: threading.Event,
+    kwargs: Dict[str, Any],
+    on_stage,
+) -> None:
+    """Close out a manual upload run, from either source.
+
+    An upload reports TWO facts and they are not the same one, which is the mistake
+    this path has made twice already (see UploadService._run_full_pipeline). The paper
+    reaching the library is one; whether the summarizer, lesson, quiz, metadata and
+    vector steps finished is the other.
+
+    Both reach the user here. The run's terminal STATUS carries the second — a run
+    whose post-upload steps failed is ``failed``, exactly as a daily run with errors
+    is, because the alternative is a green panel above a red stage row — and the
+    ``result`` payload carries the first, so the page can say "the paper is in the
+    library, these steps did not finish" instead of implying the upload must be
+    retried. ``papers_processed`` follows the orchestrator's meaning: a paper whose
+    processing failed was not processed.
+
+    A failure that stops the paper reaching the library at all does NOT come back
+    here: run_url_upload_job / run_file_upload_job raise, and execute_run records the
+    run as failed with the reason. That is the loud path and it is meant to be.
+    """
+    source = kwargs.get("source")
+    service = get_upload_service()
+
+    if source == UPLOAD_SOURCE_URL:
+        result = service.run_url_upload_job(
+            pillar_id,
+            UploadUrlRequest(
+                url=kwargs["url"],
+                title=kwargs.get("title"),
+                authors=kwargs.get("authors"),
+                run_summarizer=kwargs.get("run_summarizer", True),
+                generate_quiz=kwargs.get("generate_quiz", True),
+            ),
+            on_stage=on_stage,
+            cancel=cancel_event,
+        )
+    elif source == UPLOAD_SOURCE_FILE:
+        result = service.run_file_upload_job(
+            pillar_id,
+            kwargs["saved_path"],
+            kwargs["filename"],
+            UploadFileRequest(
+                title=kwargs["title"],
+                authors=kwargs.get("authors") or [],
+                venue=kwargs.get("venue"),
+                year=kwargs.get("year"),
+                run_summarizer=kwargs.get("run_summarizer", True),
+                generate_quiz=kwargs.get("generate_quiz", True),
+            ),
+            on_stage=on_stage,
+            cancel=cancel_event,
+        )
+    else:
+        raise ValueError(f"upload run needs source={UPLOAD_SOURCE_URL!r} or "
+                         f"{UPLOAD_SOURCE_FILE!r}, got {source!r}")
+
+    outcome = result.outcome
+    status = RunStatus.SUCCEEDED.value if outcome.ok else RunStatus.FAILED.value
+    db.finish_pipeline_run(
+        run_id,
+        status,
+        papers_processed=1 if outcome.ok else 0,
+        papers_failed=0 if outcome.ok else 1,
+        error=_join_problems(outcome.errors),
+        result={
+            "paper_id": result.paper.id,
+            "title": result.paper.title,
+            "pillar_id": pillar_id,
+            "source": result.source,
+            # Always true by the time we are here: the job raises rather than
+            # returning if the papers row was never written. Stated explicitly so the
+            # page never has to infer it from a status that is about something else.
+            "added": True,
+            "actions_triggered": outcome.actions_triggered,
+            "errors": outcome.errors,
+        },
+    )
+    logger.info(
+        "Run %s finished upload of %s (%s): %d action(s), %d error(s)",
+        run_id, result.paper.id, result.source,
+        len(outcome.actions_triggered), len(outcome.errors),
+    )
+
+
 def _join_problems(problems: List[str]) -> Optional[str]:
-    """One run-level line for the degradations a discovery run survived.
+    """One run-level line for the degradations a run survived. Shared by discovery
+    and upload, which both produce several independent problems per run.
 
     Kept even on a succeeded run: "we found ten papers, but arXiv was rate-limited and
     these are the other three sources' results" is a materially different claim from
@@ -349,6 +478,7 @@ WEBUI_TRIGGER_SOURCES = [
     "ui_pipeline",
     "ui_select",
     "ui_discover",
+    TRIGGER_UI_UPLOAD,
     podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
 ]
 

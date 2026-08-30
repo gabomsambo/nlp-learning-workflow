@@ -132,37 +132,23 @@ class UploadFileRequest(BaseModel):
     generate_quiz: bool = Field(default=True, description="Generate quiz after upload")
 
 
-class UploadResponse(BaseModel):
-    """Response schema for upload operations.
+class UploadAccepted(BaseModel):
+    """Acknowledgement of an upload, returned before the work happens.
 
-    ``success`` and ``pipeline_ok`` are two different facts and are deliberately not
-    collapsed. ``success`` means the paper reached the ``papers`` table; the follow-on
-    processing — ingest, summarizer, synthesis, quiz, vectors — is reported separately,
-    because it used to be reported not at all. A pipeline exception was appended to
-    ``actions_triggered`` as the pseudo-action ``pipeline_error: ...`` and the route
-    still answered ``success=True``, so the browser said "uploaded successfully!
-    Triggered: pipeline_error: ..." and a paper with no note, no lesson and no quiz
-    read as green.
+    Both upload routes answer 202 with this and nothing else. What the upload did —
+    the paper it added, which post-upload steps ran, which failed and why — arrives on
+    the run: the browser polls GET /api/pipeline-runs/{run_id} for per-stage progress
+    and reads the finished run's `result` payload, exactly as discovery does.
+
+    This replaces UploadResponse and UploadStatus. UploadResponse could only be
+    written once the whole pipeline had finished, which is what held the request open
+    for minutes; UploadStatus was an in-memory progress object on a process-local
+    singleton whose id was returned only after the call it described had ended, so
+    nothing could ever poll it while it meant anything.
     """
-    success: bool = Field(..., description="Whether the paper was added to the library")
-    paper: Optional[PaperRef] = Field(None, description="Created paper reference")
-    message: str = Field(..., description="Status message")
-    actions_triggered: List[str] = Field(default_factory=list, description="Post-upload actions that COMPLETED")
-    pipeline_ok: bool = Field(default=True, description="Whether every requested post-upload action completed")
-    pipeline_errors: List[str] = Field(default_factory=list, description="Post-upload actions that failed, and why")
-
-
-class UploadStatus(BaseIOSchema):
-    """Upload status for tracking progress."""
-    id: str = Field(..., description="Upload ID")
+    run_id: str = Field(..., description="Pipeline run following this upload")
     pillar_id: str = Field(..., description="Target pillar ID")
-    status: str = Field(..., description="Current status: pending, processing, completed, failed")
-    filename: Optional[str] = Field(None, description="Uploaded filename")
-    url: Optional[str] = Field(None, description="Source URL if URL upload")
-    progress: int = Field(default=0, description="Progress percentage (0-100)")
-    message: str = Field(default="", description="Current status message")
-    created_at: datetime = Field(default_factory=datetime.now)
-    completed_at: Optional[datetime] = None
+    message: str = Field(..., description="What was accepted")
 
 
 class SearchQuery(BaseIOSchema):
@@ -654,6 +640,12 @@ class StageName(str, Enum):
     DISCOVER_CITATIONS = "discover_citations"      # _search_citations (conditional)
     DISCOVER_RANK = "discover_rank"                # _rank_and_dedupe
 
+    # Manual upload, in execution order. Only these two are new: an upload runs the
+    # same ingest/summarize/synthesize/quiz/persist/vectors work as _process_paper and
+    # reuses those names verbatim, so one label change fixes both pipelines.
+    UPLOAD_FETCH = "upload_fetch"        # download the PDF / accept the saved file
+    UPLOAD_METADATA = "upload_metadata"  # arXiv + S2 lookup, then add_paper
+
     # podcast audio generation (IndexTTS), in execution order.
     TTS_PREPARE = "tts_prepare"
     TTS_SYNTHESIZE = "tts_synthesize"
@@ -709,6 +701,25 @@ DISCOVER_STAGES: List[StageName] = [
     StageName.DISCOVER_S2,
     StageName.DISCOVER_CITATIONS,
     StageName.DISCOVER_RANK,
+]
+
+#: Stages for one manual upload, URL or file, in order.
+#:
+#: The tail is PROCESS_SELECTED_STAGES minus PROCESS — an upload is one paper, so a
+#: "processing papers" wrapper around a single paper says nothing — with the two
+#: upload-specific steps in front. SUMMARIZE, SYNTHESIZE and QUIZ are seeded even when
+#: the user turned those options off: they are marked `skipped` with the reason, which
+#: is a different statement from a step that was never going to happen (see
+#: StageStatus.DROPPED, which discovery uses for that case).
+UPLOAD_STAGES: List[StageName] = [
+    StageName.UPLOAD_FETCH,
+    StageName.UPLOAD_METADATA,
+    StageName.INGEST,
+    StageName.SUMMARIZE,
+    StageName.SYNTHESIZE,
+    StageName.QUIZ,
+    StageName.PERSIST,
+    StageName.VECTORS,
 ]
 
 PODCAST_AUDIO_STAGES: List[StageName] = [

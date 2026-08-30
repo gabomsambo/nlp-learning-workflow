@@ -381,11 +381,11 @@ CREATE TABLE pipeline_runs (
     trigger_source   TEXT NOT NULL
         CONSTRAINT pipeline_runs_trigger_source_check
         CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'ui_discover',
-                                  'scheduler', 'ui_podcast_audio')),
+                                  'scheduler', 'ui_podcast_audio', 'ui_upload')),
     kind             TEXT NOT NULL
         CONSTRAINT pipeline_runs_kind_check
         CHECK (kind IN ('run_daily', 'process_selected', 'discover',
-                        'podcast_audio')),
+                        'podcast_audio', 'upload')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".
@@ -401,9 +401,10 @@ CREATE TABLE pipeline_runs (
     finished_at      TIMESTAMP WITH TIME ZONE,
     heartbeat_at     TIMESTAMP WITH TIME ZONE,
     -- Terminal payload for the run kinds that produce one. 'discover' stores the
-    -- candidate list the user chooses from; the other kinds leave it NULL. Written
-    -- once, at the end, in a single PATCH — so unlike the stage list it has no
-    -- read-modify-write problem and does not need a child table.
+    -- candidate list the user chooses from, 'podcast_audio' the generated episode,
+    -- 'upload' the paper it added and what the post-upload steps did; the rest leave
+    -- it NULL. Written once, at the end, in a single PATCH — so unlike the stage list
+    -- it has no read-modify-write problem and does not need a child table.
     result           JSONB
 );
 
@@ -542,8 +543,14 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 -- The partial unique index is the one-active-run-per-pillar guard. It is a
 -- correctness constraint, not a performance index: a check-then-insert in Python
 -- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
+--
+-- kind <> 'upload' EXEMPTS uploads from it (migration 015). The guard is about two
+-- writers driving one pillar's queue at once; an upload is scoped to the single paper
+-- the user handed over, so refusing it because a discovery run is in flight would
+-- refuse work for a conflict that does not exist.
 CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
-    ON pipeline_runs (pillar_id) WHERE status IN ('pending', 'running');
+    ON pipeline_runs (pillar_id)
+    WHERE status IN ('pending', 'running') AND kind <> 'upload';
 CREATE INDEX idx_pipeline_runs_pillar ON pipeline_runs(pillar_id, created_at DESC);
 CREATE INDEX idx_pipeline_runs_active ON pipeline_runs(status)
     WHERE status IN ('pending', 'running');

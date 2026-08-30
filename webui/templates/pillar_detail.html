@@ -335,18 +335,40 @@
                     </div>
                 </div>
                 
-                <!-- Outcome of the last upload from this page.
-                     Rendered here rather than in an alert() because an upload can now
+                <!-- Live progress for the upload in flight, and its outcome.
+                     Both upload routes now answer 202 with a run id and do the work on
+                     a worker thread, so this is the same RunProgress component the
+                     Pipeline and Discovery pages use, reading the same
+                     pipeline_run_stages rows. Completion is this panel reaching a
+                     terminal state; there is no success alert, because an upload can
                      half-succeed — the paper is added while the summarizer, quiz or
-                     vector step fails — and a modal that says "uploaded successfully!
-                     Triggered: pipeline_error: ..." is exactly the report that hid it.
-                     role="status" so the outcome is announced; empty at load, because
-                     a live region announces changes, not content already present. -->
-                <div class="upload-section">
-                    <div id="upload-result" role="status" aria-live="polite" hidden></div>
+                     vector step fails — and "uploaded successfully!" was exactly the
+                     report that hid that. -->
+                <div class="upload-section" id="upload-progress-section" hidden>
+                    <h3>⏱️ Upload Progress</h3>
+                    {# Rendered EMPTY on purpose: assistive technology announces
+                       CHANGES to a live region, not content already present at load.
+                       This one sentence is the announced summary; the stage list below
+                       is aria-live="off" because re-reading eight rows a second is
+                       unusable. #}
+                    <p id="upload-run-status" role="status" aria-live="polite" aria-atomic="true"></p>
+                    <progress id="upload-run-bar" hidden aria-label="Upload progress"></progress>
+                    <div id="upload-run-stages" aria-live="off" style="margin-top:1rem"></div>
+                    <div class="form-actions">
+                        <button type="button" id="upload-cancel-btn" class="btn-secondary" hidden disabled>
+                            Cancel upload
+                        </button>
+                    </div>
+                    {# Not a live region: the sentence above already announces the
+                       outcome, and two competing regions read over each other. #}
+                    <div id="upload-result" hidden></div>
                 </div>
 
-                <!-- Upload Status Section -->
+                <!-- Upload Status Section.
+                     Backed by pipeline_runs now. It used to read an in-memory
+                     UploadStatus dict on a process-local singleton, which was empty on
+                     every page load and after every restart, so this list said "No
+                     recent uploads" no matter how many papers had been uploaded. -->
                 <div class="upload-section">
                     <h3>📊 Recent Uploads</h3>
                     <div id="upload-status-container" class="upload-status-container">
@@ -1193,6 +1215,10 @@
 
 {% include "_paper_modal.html" %}
 
+{# The same poller the Pipeline and Discovery pages use. Uploads are background runs
+   now, so this page needs it too — and reusing it means one place to fix a rendering
+   bug, one set of stage labels, and the same reload-survival behaviour. #}
+<script src="/static/run-progress.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Tab switching
@@ -1227,6 +1253,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Upload functionality
     setupUploadInterface();
     loadRecentUploads();
+    // A reload mid-upload must not lose the upload. ?run= wins, then localStorage,
+    // then the server's own "what is in flight" lookup. onUploadRun drops anything
+    // that turns out not to be an upload — the stored key is shared with the
+    // Pipeline and Discovery pages.
+    RunProgress.reattach(uploadProgressEls(), onUploadFinished, onUploadRun);
     
     // Search functionality
     setupSearchInterface();
@@ -1316,19 +1347,135 @@ function handleFileSelection(file) {
     window.selectedFile = file;
 }
 
+/* --------------------------------------------------------- upload progress */
+
+/**
+ * The elements RunProgress renders into. Rebuilt per call rather than cached: the
+ * poller keeps a reference for the life of the run, and a stale node from before a
+ * re-render would be updated invisibly.
+ */
+function uploadProgressEls() {
+    return {
+        status: document.getElementById('upload-run-status'),
+        stages: document.getElementById('upload-run-stages'),
+        progress: document.getElementById('upload-run-bar'),
+        cancel: document.getElementById('upload-cancel-btn'),
+    };
+}
+
+function showUploadPanel(show) {
+    const panel = document.getElementById('upload-progress-section');
+    if (panel) panel.hidden = !show;
+}
+
+/**
+ * Both upload buttons follow the one active upload run, because they both feed it.
+ * `dataset.idleText` remembers the label rather than hardcoding it in two places.
+ */
+function setUploadBusy(busy) {
+    ['submit-url-upload', 'submit-file-upload'].forEach((id) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        if (busy && !btn.dataset.idleText) btn.dataset.idleText = btn.textContent;
+        btn.disabled = busy;
+        btn.textContent = busy ? 'Uploading…' : (btn.dataset.idleText || btn.textContent);
+    });
+}
+
+let uploadRunConfirmed = false;
+
+/**
+ * Called on every poll. Its first job is to reject runs that are not uploads.
+ *
+ * RunProgress stores the active run id under one key shared by every page that uses
+ * it, so a discovery run started on /discovery is exactly what reattach() finds here.
+ * Rendering its stages under "Upload Progress" would be another run's progress under
+ * this page's heading — a display that is wrong rather than merely empty.
+ */
+function onUploadRun(run) {
+    if (!run) return;
+    if (run.kind !== 'upload') {
+        RunProgress.detach();
+        showUploadPanel(false);
+        setUploadBusy(false);
+        return;
+    }
+    if (!uploadRunConfirmed) {
+        uploadRunConfirmed = true;
+        showUploadPanel(true);
+        setUploadBusy(!RunProgress.isTerminal(run.status));
+    }
+}
+
+/**
+ * Fires for a finished run AND for a run that turned out not to exist (run === null).
+ * Both must re-enable the buttons; RunProgress's 404 path is the only thing that can
+ * report the second case, and skipping it here leaves the page stuck on "Uploading…".
+ */
+function onUploadFinished(run) {
+    uploadRunConfirmed = false;
+    setUploadBusy(false);
+    if (!run) return;
+    renderUploadOutcome(run);
+    loadRecentUploads();
+}
+
+function startUploadRun(runId) {
+    uploadRunConfirmed = true;
+    const box = document.getElementById('upload-result');
+    if (box) {
+        box.replaceChildren();
+        box.hidden = true;
+    }
+    showUploadPanel(true);
+    setUploadBusy(true);
+    RunProgress.attach(runId, uploadProgressEls(), onUploadFinished, onUploadRun);
+}
+
+/**
+ * Read the 202 (or the failure) from an upload route and start following the run.
+ */
+async function dispatchUpload(url, init) {
+    const response = await fetch(url, init);
+    let payload = {};
+    try {
+        payload = await response.json();
+    } catch (e) { /* a non-JSON error page; the status below still says enough */ }
+
+    if (!response.ok || !payload.run_id) {
+        throw new Error(payload.detail || payload.message || `HTTP ${response.status}`);
+    }
+    startUploadRun(payload.run_id);
+}
+
+function reportUploadDispatchFailure(error) {
+    // The panel is the one place upload state is reported, so a dispatch that never
+    // produced a run says so there rather than in an alert() the user must dismiss
+    // before they can read the form again.
+    showUploadPanel(true);
+    setUploadBusy(false);
+    const statusEl = document.getElementById('upload-run-status');
+    if (statusEl) {
+        statusEl.textContent = 'Could not start the upload — ' + error.message;
+        statusEl.style.color = 'crimson';
+    }
+    const stages = document.getElementById('upload-run-stages');
+    if (stages) stages.replaceChildren();
+}
+
 async function submitFileUpload(pillarId) {
     const formData = new FormData();
     const form = document.getElementById('pdf-upload-form');
-    
+
     // Validate that we have a file
     if (!window.selectedFile) {
         alert('Please select a file first');
         return;
     }
-    
+
     // Add file
     formData.append('file', window.selectedFile);
-    
+
     // Add form data
     const CHECKBOX_FIELDS = ['run_summarizer', 'generate_quiz'];
     const formDataObj = new FormData(form);
@@ -1344,49 +1491,37 @@ async function submitFileUpload(pillarId) {
     // with the opposite of it. Send both explicitly, always.
     formData.append('run_summarizer', String(document.getElementById('file-run-summarizer').checked));
     formData.append('generate_quiz', String(document.getElementById('file-generate-quiz').checked));
-    
+
     // Ensure title is provided (it's required)
     const title = formData.get('title');
     if (!title || title.trim() === '') {
         alert('Please provide a title for the paper');
         return;
     }
-    
-    const submitBtn = document.getElementById('submit-file-upload');
-    const originalText = submitBtn.innerHTML;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = 'Uploading...';
-    
+
+    setUploadBusy(true);
     try {
-        const response = await fetch(`/api/pillars/${pillarId}/upload/pdf`, {
+        await dispatchUpload(`/api/pillars/${pillarId}/upload/pdf`, {
             method: 'POST',
-            body: formData
+            body: formData,
         });
-        
-        const result = await response.json();
-        
-        if (response.ok && result.success) {
-            showUploadResult(result);
-            form.reset();
-            document.getElementById('file-upload-form').style.display = 'none';
-            document.getElementById('file-drop-zone').style.display = 'block';
-            loadRecentUploads();
-        } else {
-            throw new Error(result.message || 'Upload failed');
-        }
+        // The bytes are on the server and the run owns them from here, so the form
+        // can be cleared: re-submitting it would start a second upload of the same
+        // paper, not retry this one.
+        form.reset();
+        document.getElementById('file-upload-form').style.display = 'none';
+        document.getElementById('file-drop-zone').style.display = 'block';
+        window.selectedFile = null;
     } catch (error) {
         console.error('Upload error:', error);
-        alert(`Upload failed: ${error.message}`);
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = originalText;
+        reportUploadDispatchFailure(error);
     }
 }
 
 async function submitUrlUpload(pillarId) {
     const form = document.getElementById('url-upload-form');
     const formData = new FormData(form);
-    
+
     const data = {
         url: formData.get('url'),
         title: formData.get('title') || null,
@@ -1394,95 +1529,85 @@ async function submitUrlUpload(pillarId) {
         run_summarizer: formData.get('run_summarizer') === 'on',
         generate_quiz: formData.get('generate_quiz') === 'on'
     };
-    
-    const submitBtn = document.getElementById('submit-url-upload');
-    const originalText = submitBtn.innerHTML;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = 'Uploading...';
-    
+
+    setUploadBusy(true);
     try {
-        const response = await fetch(`/api/pillars/${pillarId}/upload/url`, {
+        await dispatchUpload(`/api/pillars/${pillarId}/upload/url`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(data)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
         });
-        
-        const result = await response.json();
-        
-        if (response.ok && result.success) {
-            showUploadResult(result);
-            form.reset();
-            loadRecentUploads();
-        } else {
-            throw new Error(result.message || 'Upload failed');
-        }
+        form.reset();
     } catch (error) {
         console.error('Upload error:', error);
-        alert(`Upload failed: ${error.message}`);
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = originalText;
+        reportUploadDispatchFailure(error);
     }
 }
 
 /**
- * Report what the upload actually did.
+ * Report what the finished upload actually did.
  *
- * `success` means the paper reached the library; `pipeline_ok` means every requested
- * follow-on step finished. They are two different facts and this is where the page
- * stopped conflating them: a pipeline crash used to arrive as the pseudo-action
- * `pipeline_error: ...` inside actions_triggered and got printed after the words
- * "uploaded successfully!".
+ * Three facts, kept apart because collapsing them is the bug this path keeps
+ * relearning: whether the paper reached the library (`result.added`), which
+ * post-upload steps completed, and which failed. A failed run whose paper WAS added
+ * is not an instruction to upload again — saying so is the whole point of this box.
  *
- * createElement + textContent throughout. Titles and error strings come from PDFs,
- * arXiv and exception messages; none of it may be interpolated into innerHTML.
+ * createElement + textContent throughout. Titles come from PDFs and arXiv and the
+ * error strings are raw exception text; none of it may be interpolated into innerHTML.
  */
-function showUploadResult(result) {
+function renderUploadOutcome(run) {
     const box = document.getElementById('upload-result');
     if (!box) return;
 
-    const failed = result.pipeline_ok === false;
-    const title = (result.paper && result.paper.title) || 'Paper';
+    const result = run.result || {};
+    const errors = result.errors || [];
+    const added = Boolean(result.added);
+    const nodes = [];
 
     const heading = document.createElement('strong');
-    heading.textContent = failed
-        ? `Added "${title}", but post-upload processing did not finish`
-        : `Added "${title}" and finished processing`;
-
-    box.replaceChildren(heading);
+    if (added) {
+        heading.textContent = `In your library: ${result.title || result.paper_id || 'the paper'}`;
+    } else {
+        heading.textContent = 'Nothing was added to the library.';
+    }
+    nodes.push(heading);
 
     const done = result.actions_triggered || [];
     if (done.length) {
         const line = document.createElement('p');
         line.textContent = `Completed: ${done.join(', ')}`;
-        box.appendChild(line);
+        nodes.push(line);
     }
 
-    const errors = result.pipeline_errors || [];
-    if (errors.length) {
+    const reasons = errors.length ? errors : (added || !run.error ? [] : [run.error]);
+    if (reasons.length) {
         const label = document.createElement('p');
-        label.textContent = 'Failed:';
-        box.appendChild(label);
+        label.textContent = added ? 'These steps did not finish:' : 'Why:';
+        nodes.push(label);
 
         const list = document.createElement('ul');
-        errors.forEach((message) => {
+        reasons.forEach((message) => {
             const item = document.createElement('li');
             item.textContent = message;
             list.appendChild(item);
         });
-        box.appendChild(list);
+        nodes.push(list);
+    }
 
+    if (added && reasons.length) {
         const note = document.createElement('p');
         note.textContent =
             'The paper is in the library. Nothing needs re-uploading; the steps above '
             + 'are what did not run.';
-        box.appendChild(note);
+        nodes.push(note);
     }
 
+    box.replaceChildren(...nodes);
     // The border carries the same distinction as the words, for anyone scanning.
-    box.style.borderLeft = `4px solid ${failed ? 'darkorange' : 'green'}`;
+    let colour = 'green';
+    if (!added) colour = 'crimson';
+    else if (reasons.length) colour = 'darkorange';
+    box.style.borderLeft = `4px solid ${colour}`;
     box.style.padding = '0.75rem 1rem';
     box.hidden = false;
     box.scrollIntoView({ block: 'nearest' });
@@ -1508,59 +1633,97 @@ function linkSummarizerAndQuiz(summarizerId, quizId) {
     });
 }
 
+/**
+ * Recent uploads, read from pipeline_runs.
+ *
+ * This list used to read GET /uploads/recent, which served an in-memory dict on a
+ * process-local singleton: empty on every page load, empty after every restart, and
+ * invisible to the scheduler container. It printed "No recent uploads" no matter how
+ * many papers had been uploaded. The run rows are the real record.
+ *
+ * Filtered client-side by kind because /api/pipeline-runs takes pillar_id and limit
+ * and nothing else; the limit is raised to compensate so a pillar's uploads are not
+ * pushed out of the window by its discovery runs.
+ */
 async function loadRecentUploads() {
     const pillarId = window.location.pathname.split('/')[2];
     const container = document.getElementById('upload-status-container');
-    
+    if (!container) return;
+
+    const empty = (text) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'empty-state';
+        const line = document.createElement('p');
+        line.textContent = text;
+        wrap.appendChild(line);
+        container.replaceChildren(wrap);
+    };
+
     try {
-        const response = await fetch(`/api/pillars/${pillarId}/uploads/recent`);
-        const uploads = await response.json();
-        
-        if (uploads.length === 0) {
-            container.innerHTML = '<div class="empty-state"><p>No recent uploads</p></div>';
+        const response = await fetch(
+            `/api/pipeline-runs?pillar_id=${encodeURIComponent(pillarId)}&limit=50`
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const runs = (await response.json()).filter((run) => run.kind === 'upload');
+
+        if (!runs.length) {
+            empty('No recent uploads');
             return;
         }
-        
-        // Built with createElement, not a template literal. `filename` is whatever
-        // the user named the file they uploaded and `message` can carry server text,
-        // and both used to be interpolated straight into innerHTML — a file called
-        // `<img src=x onerror=...>.pdf` executed on this page. Note that wrapping
-        // them in escapeHtml() would not be enough on its own for the attributes
-        // below: it leaves quote characters intact, so only setAttribute/style
-        // assignment makes an attribute safe.
+
+        // createElement + textContent throughout. Titles come from PDFs and arXiv and
+        // `error` is raw exception text; a filename like `<img src=x onerror=...>.pdf`
+        // executed on this page when it was built from a template literal. Note that
+        // escaping would not be enough for the attributes below either — it leaves
+        // quote characters intact, so only setAttribute/style assignment is safe.
         const frag = document.createDocumentFragment();
-        uploads.forEach(upload => {
+        runs.slice(0, 10).forEach((run) => {
+            // This endpoint returns runs WITHOUT their stages and without the whole
+            // `result` payload — see PostgrestClient.list_pipeline_runs, which
+            // projects just the two scalars a row needs out of it. Rebuild the shape
+            // summarise()/statusColor() expect so the wording here and in the live
+            // panel above cannot drift apart.
+            const listed = Object.assign({}, run, {
+                result: run.result_title || run.result_added
+                    ? { title: run.result_title, added: run.result_added === 'true' }
+                    : null,
+            });
             const item = document.createElement('div');
             item.className = 'upload-status-item';
 
             const icon = document.createElement('div');
             icon.className = 'upload-status-icon';
-            icon.textContent = getStatusIcon(upload.status);
+            icon.textContent = getStatusIcon(run.status);
 
             const content = document.createElement('div');
             content.className = 'upload-status-content';
 
             const name = document.createElement('h5');
-            name.textContent = upload.filename || upload.url || 'Unknown file';
+            // `result` is written once at the end, and only when a paper was added,
+            // so a live row and a row whose upload never got that far both arrive
+            // with no title. They are different states and say so; neither prints a
+            // run id at the user, which is what this list used to do.
+            name.textContent = run.result_title
+                || (RunProgress.isTerminal(run.status) ? 'Upload' : 'Upload in progress');
 
             const message = document.createElement('p');
-            message.className = 'status-' + String(upload.status || '').replace(/[^\w-]/g, '');
-            message.textContent = upload.message || '';
+            // summarise() counts steps out of `run.stages`, which are not in this
+            // response, so a live run would read "Step 0 of 0". A terminal upload's
+            // summary comes from `result` instead, so only the live case needs its
+            // own line here.
+            message.textContent = RunProgress.isTerminal(run.status)
+                ? RunProgress.summarise(listed)
+                : 'In progress — ' + RunProgress.stageLabel(run.current_stage || '');
+            message.style.color = RunProgress.statusColor(listed);
 
             content.append(name, message);
 
-            if (upload.status === 'processing') {
-                const wrap = document.createElement('div');
-                wrap.className = 'upload-progress';
-                const bar = document.createElement('div');
-                bar.className = 'upload-progress-bar';
-                // Clamped and coerced: a non-numeric progress cannot reach the
-                // stylesheet as arbitrary CSS.
-                const pct = Math.max(0, Math.min(100, Number(upload.progress) || 0));
-                bar.style.width = pct + '%';
-                wrap.appendChild(bar);
-                content.appendChild(wrap);
-            }
+            const when = document.createElement('small');
+            when.style.opacity = '.7';
+            when.textContent = run.created_at
+                ? new Date(run.created_at).toLocaleString()
+                : '';
+            content.appendChild(when);
 
             item.append(icon, content);
             frag.appendChild(item);
@@ -1569,16 +1732,21 @@ async function loadRecentUploads() {
         container.replaceChildren(frag);
     } catch (error) {
         console.error('Failed to load recent uploads:', error);
-        container.innerHTML = '<div class="empty-state"><p>Failed to load uploads</p></div>';
+        // Not "No recent uploads": an unreachable database and an empty list are
+        // different facts, and this list showed the second for both for its whole life.
+        empty('Could not load recent uploads — ' + error.message);
     }
 }
 
+//: pipeline_runs statuses, not the retired UploadStatus vocabulary.
 function getStatusIcon(status) {
     switch (status) {
         case 'pending': return '⏳';
-        case 'processing': return '⚙️';
-        case 'completed': return '✅';
+        case 'running': return '⚙️';
+        case 'succeeded': return '✅';
         case 'failed': return '❌';
+        case 'cancelled': return '🚫';
+        case 'interrupted': return '⚠️';
         default: return '📄';
     }
 }
