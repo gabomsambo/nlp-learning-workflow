@@ -14,7 +14,13 @@
   <article>
     <header>
       <button aria-label="Close" rel="prev" id="close-modal"></button>
-      <p><strong id="modal-paper-title">Loading…</strong></p>
+      <div class="modal-header-row">
+        <p><strong id="modal-paper-title">Loading…</strong></p>
+        <button type="button" id="refresh-metadata-btn" class="metadata-refresh-btn" hidden>
+          Refresh metadata
+        </button>
+      </div>
+      <div id="metadata-refresh-status" class="metadata-refresh-status" hidden role="status" aria-live="polite"></div>
     </header>
     <div id="modal-content"></div>
   </article>
@@ -25,6 +31,54 @@
   max-width: 80vw;
   max-height: 80vh;
   overflow-y: auto;
+}
+
+#paper-details-modal .modal-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+#paper-details-modal .metadata-refresh-btn {
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+  background: transparent;
+  color: var(--pico-primary, var(--primary));
+  border: 1px solid var(--pico-muted-border-color, var(--muted-border-color));
+  border-radius: 1rem;
+  cursor: pointer;
+}
+
+#paper-details-modal .metadata-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#paper-details-modal .metadata-refresh-status {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+}
+
+#paper-details-modal .metadata-refresh-status.is-success {
+  background: #d4edda;
+  color: #155724;
+}
+
+#paper-details-modal .metadata-refresh-status.is-info {
+  background: var(--pico-card-sectioning-background-color, var(--secondary-background));
+  color: var(--pico-color, var(--color));
+}
+
+#paper-details-modal .metadata-refresh-status.is-error {
+  background: #f8d7da;
+  color: #721c24;
 }
 
 #paper-details-modal .paper-section {

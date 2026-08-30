@@ -665,6 +665,14 @@ def get_paper_by_id(paper_id: str) -> Optional[PaperRef]:
     Returns:
         PaperRef if found, None otherwise
     """
+    row = get_paper_row_by_id(paper_id)
+    if not row:
+        return None
+    return paper_ref_from_row(row)
+
+
+def get_paper_row_by_id(paper_id: str) -> Optional[Dict[str, Any]]:
+    """Return the raw papers row for ``paper_id``, or None if absent."""
     try:
         client = get_client()
         response = (client.table('papers')
@@ -676,14 +684,51 @@ def get_paper_by_id(paper_id: str) -> Optional[PaperRef]:
             logger.error(f"Failed to get paper {paper_id}: {response['error']}")
             return None
 
-        if not response['data'] or len(response['data']) == 0:
+        if not response['data']:
             return None
 
-        return _dict_to_paper_ref(response['data'][0])
+        return response['data'][0]
 
     except Exception as e:
         logger.error(f"Failed to get paper {paper_id}: {e}")
         return None
+
+
+def paper_ref_from_row(row: Dict[str, Any]) -> PaperRef:
+    """Convert a papers table row to PaperRef."""
+    return _dict_to_paper_ref(row)
+
+
+def update_paper_metadata(paper_id: str, fields: Dict[str, Any]) -> bool:
+    """Update only the named metadata columns on an existing paper row."""
+    if not fields:
+        return True
+
+    allowed = {'title', 'authors', 'abstract', 'venue', 'year'}
+    patch = {k: v for k, v in fields.items() if k in allowed}
+    if not patch:
+        return True
+
+    try:
+        client = get_client()
+        response = (client.table('papers')
+                   .eq('id', paper_id)
+                   .update(patch))
+
+        if response['error']:
+            logger.error(
+                "Failed to update metadata for paper %s: %s",
+                paper_id,
+                response['error'],
+            )
+            return False
+
+        logger.info("Updated metadata for paper %s: %s", paper_id, sorted(patch))
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to update metadata for paper {paper_id}: {e}")
+        return False
 
 
 # =====================================

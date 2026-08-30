@@ -615,6 +615,14 @@ persists at `localStorage['nlp:quizAnswersVisible']` across cards, papers, reloa
 pages. Hiding uses the `hidden` attribute, never a `display:none` class — a class leaves the
 answer in the accessibility tree, so a screen reader still reads out what the user hid.
 
+**Per-paper metadata refresh** lives on the same modal (`Refresh metadata` in the header).
+`POST /api/papers/{paper_id}/refresh-metadata` re-resolves title, authors, abstract, venue
+and year through `nlp_pillars/services/paper_metadata.py` (the upload path's arXiv + S2
+lookups, extracted once). It updates only fields the lookup actually returned — never blanks
+good data — and answers with a before/after message. No bulk mode, no re-ingest, no vectors.
+Papers without an arXiv id and without a title long enough for S2 get **422** with a specific
+reason rather than a silent no-op.
+
 ## JS tests exist now, and they are deliberately narrow
 
 `tests/js/run-progress.test.js` and `tests/js/paper-modal.test.js`, run by

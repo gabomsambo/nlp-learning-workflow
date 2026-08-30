@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Callable, List, Optional
 from urllib.parse import urlparse
 
-import arxiv
 from fastapi import UploadFile
 
 from .. import db, vectors
@@ -59,6 +58,12 @@ from ..schemas import (
     UploadUrlRequest,
 )
 from ..tools.pdf_loader import download_pdf, extract_text
+from .paper_metadata import (
+    enrich_from_arxiv,
+    enrich_from_semantic_scholar,
+    extract_arxiv_id_from_hint,
+    titles_similar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +514,7 @@ class UploadService:
         paper_id = self._generate_paper_id_from_url(url)
 
         default_title = f"Paper from {urlparse(url).netloc}"
-        arxiv_id = self._extract_arxiv_id(url)
+        arxiv_id = extract_arxiv_id_from_hint(url)
 
         title = title_override
         if not title and not arxiv_id:
@@ -531,7 +536,7 @@ class UploadService:
 
         # Enrich from arXiv if it's an arXiv URL
         logger.info(f"Attempting metadata enrichment for URL: {url}")
-        paper = self._enrich_from_arxiv(paper, url)
+        paper = enrich_from_arxiv(paper, url)
 
         # The arXiv lookup was supposed to supply the title and did not (not found,
         # or the API was unreachable). Pay for the parse now rather than record the
@@ -541,7 +546,7 @@ class UploadService:
 
         # Fallback to Semantic Scholar if still missing metadata
         if not paper.authors or not paper.year or not paper.abstract:
-            paper = self._enrich_from_semantic_scholar(paper)
+            paper = enrich_from_semantic_scholar(paper)
 
         return paper
 
@@ -586,11 +591,11 @@ class UploadService:
         # Enrich from arXiv if filename contains arXiv ID
         if arxiv_match:
             logger.info(f"Attempting metadata enrichment for file: {filename}")
-            paper = self._enrich_from_arxiv(paper, filename)
+            paper = enrich_from_arxiv(paper, filename)
 
         # Fallback to Semantic Scholar if title is provided but missing other metadata
         if paper.title and (not paper.authors or not paper.year or not paper.abstract):
-            paper = self._enrich_from_semantic_scholar(paper)
+            paper = enrich_from_semantic_scholar(paper)
 
         return paper
 
@@ -862,105 +867,16 @@ class UploadService:
 
     @staticmethod
     def _extract_arxiv_id(url_or_filename: str) -> Optional[str]:
-        """The arXiv id in a URL or filename, or None.
-
-        One definition, used both by the enrichment below and by the caller that
-        decides whether a PDF parse is worth doing. Two copies of this regex would
-        drift, and the failure would be silent in the expensive direction: a URL the
-        skip recognised but the enrichment did not would leave the paper with no
-        title and no parse to recover one from.
-        """
-        match = re.search(r'(\d{4}\.\d{4,5})', url_or_filename)
-        return match.group(1) if match else None
+        return extract_arxiv_id_from_hint(url_or_filename)
 
     def _enrich_from_arxiv(self, paper: PaperRef, url_or_filename: str) -> PaperRef:
-        """Enrich paper metadata from arXiv API if arXiv ID detected."""
-        arxiv_id = self._extract_arxiv_id(url_or_filename)
-        if not arxiv_id:
-            return paper  # Not an arXiv paper
-
-        logger.info(f"Detected arXiv ID: {arxiv_id}, fetching metadata...")
-
-        try:
-            # Use id_list parameter for direct lookup (not query)
-            search = arxiv.Search(id_list=[arxiv_id])
-            client = arxiv.Client()
-            result = next(client.results(search))
-
-            # For arXiv papers, API data is authoritative - always use it
-            # (PDF text extraction often gets wrong title from headers/footers)
-            paper.title = result.title
-            paper.authors = [a.name for a in result.authors]
-            paper.year = result.published.year
-            paper.abstract = result.summary
-            paper.venue = result.journal_ref or f"arXiv:{result.primary_category}"
-
-            logger.info(f"Enriched from arXiv: {paper.title[:50]}...")
-
-        except StopIteration:
-            logger.warning(f"arXiv paper {arxiv_id} not found")
-        except Exception as e:
-            logger.warning(f"arXiv enrichment failed: {e}")
-
-        return paper
+        return enrich_from_arxiv(paper, url_or_filename)
 
     def _enrich_from_semantic_scholar(self, paper: PaperRef) -> PaperRef:
-        """Enrich paper metadata from Semantic Scholar API.
-
-        This is a best-effort enrichment - failures are logged but don't
-        stop the upload process.
-        """
-        try:
-            from ..tools.semantic_scholar_tool import SemanticScholarTool
-
-            s2 = SemanticScholarTool()
-            enriched = None
-
-            # Try by arXiv ID first if we have one
-            if paper.id and re.match(r'\d{4}\.\d{4,5}', paper.id.replace('arxiv:', '')):
-                arxiv_id = paper.id.replace('arxiv:', '')
-                logger.info(f"Trying S2 lookup by arXiv ID: {arxiv_id}")
-                enriched = s2.get_paper(arxiv_id)  # Tool handles arXiv: prefix
-
-            # Fallback: search by title
-            if not enriched and paper.title and len(paper.title) > 10:
-                logger.info(f"Trying S2 search by title: {paper.title[:30]}...")
-                results = s2.search(paper.title, limit=1)
-                if results and self._titles_similar(paper.title, results[0].title):
-                    enriched = results[0]
-
-            if enriched:
-                # Only fill empty fields (preserve user overrides)
-                if not paper.authors and enriched.authors:
-                    paper.authors = enriched.authors
-                if not paper.year and enriched.year:
-                    paper.year = enriched.year
-                if not paper.abstract and enriched.abstract:
-                    paper.abstract = enriched.abstract
-                if enriched.citation_count:
-                    paper.citation_count = enriched.citation_count
-
-                logger.info(f"Enriched from S2: citations={paper.citation_count}")
-
-        except Exception as e:
-            # Semantic Scholar enrichment is optional - don't fail the upload
-            logger.warning(
-                f"Semantic Scholar enrichment failed (continuing without): {e}"
-            )
-
-        return paper
+        return enrich_from_semantic_scholar(paper)
 
     def _titles_similar(self, title1: str, title2: str) -> bool:
-        """Check if two titles are similar enough to be the same paper."""
-        # Simple: lowercase, remove punctuation, check overlap
-        clean1 = re.sub(r'[^\w\s]', '', title1.lower())
-        clean2 = re.sub(r'[^\w\s]', '', title2.lower())
-        words1 = set(clean1.split())
-        words2 = set(clean2.split())
-        if not words1 or not words2:
-            return False
-        overlap = len(words1 & words2) / max(len(words1), len(words2))
-        return overlap > 0.7
+        return titles_similar(title1, title2)
 
     def _get_pillar_config(self, pillar_id: str) -> PillarConfig:
         """Get pillar configuration from database."""

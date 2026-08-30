@@ -62,8 +62,8 @@ class TestArxivIdExtraction:
 class TestArxivEnrichment:
     """Test arXiv metadata enrichment."""
 
-    @patch('nlp_pillars.services.upload_service.arxiv.Client')
-    @patch('nlp_pillars.services.upload_service.arxiv.Search')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Client')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Search')
     def test_arxiv_enrichment_success(
         self, mock_search_class, mock_client_class, upload_service
     ):
@@ -87,8 +87,8 @@ class TestArxivEnrichment:
         assert enriched.title == "Attention Is All You Need"
         assert len(enriched.authors) == 2
 
-    @patch('nlp_pillars.services.upload_service.arxiv.Client')
-    @patch('nlp_pillars.services.upload_service.arxiv.Search')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Client')
+    @patch('nlp_pillars.services.paper_metadata.arxiv.Search')
     def test_arxiv_enrichment_uses_api_data(
         self, mock_search_class, mock_client_class, upload_service
     ):
@@ -367,8 +367,8 @@ class TestTitleGuessIsSkippedWhenSomethingAuthoritativeWillOverwriteIt:
         return client
 
     def test_an_arxiv_url_does_not_parse_the_pdf_for_a_title(self, service):
-        with patch('nlp_pillars.services.upload_service.arxiv.Search'), \
-             patch('nlp_pillars.services.upload_service.arxiv.Client',
+        with patch('nlp_pillars.services.paper_metadata.arxiv.Search'), \
+             patch('nlp_pillars.services.paper_metadata.arxiv.Client',
                    return_value=self._arxiv_answering()), \
              patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
              patch('nlp_pillars.services.upload_service.extract_text') as extract:
@@ -396,8 +396,8 @@ class TestTitleGuessIsSkippedWhenSomethingAuthoritativeWillOverwriteIt:
         client = Mock()
         client.results.return_value = iter([])  # StopIteration: not found
 
-        with patch('nlp_pillars.services.upload_service.arxiv.Search'), \
-             patch('nlp_pillars.services.upload_service.arxiv.Client', return_value=client), \
+        with patch('nlp_pillars.services.paper_metadata.arxiv.Search'), \
+             patch('nlp_pillars.services.paper_metadata.arxiv.Client', return_value=client), \
              patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
              patch('nlp_pillars.services.upload_service.extract_text',
                    return_value="The Title Only The PDF Knows\nmore body") as extract:
