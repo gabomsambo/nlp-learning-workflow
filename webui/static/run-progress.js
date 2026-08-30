@@ -1,9 +1,16 @@
 /*
  * Poll a pipeline run and render its stages.
  *
- * Shared by pipeline.html and discovery.html — both start long runs and both need
- * the same reattach, backoff and cleanup behaviour, and this is too much logic to
- * keep in two inline <script> blocks in sync.
+ * Shared by pipeline.html, discovery.html, podcast.html and the upload panel in
+ * pillar_detail.html — all of them start long runs and all need the same reattach,
+ * backoff and cleanup behaviour, and this is far too much logic to keep in four inline
+ * <script> blocks in sync.
+ *
+ * The active run id is stored under ONE key for every page. That is deliberate — a run
+ * started on Discovery is still yours when you reload on Pipeline — but it means a page
+ * that only renders one KIND of run must check `run.kind` in its onRun handler and
+ * detach otherwise, as pillar_detail.html does. Otherwise a discovery run's stages get
+ * rendered under the upload panel's heading.
  *
  * Deliberate choices, each of which has a failure mode behind it:
  *
@@ -170,6 +177,11 @@
     discover_semantic_scholar: 'Searching Semantic Scholar',
     discover_citations: 'Following citations from your recent papers',
     discover_rank: 'Ranking and removing duplicates',
+    // Manual upload. The six steps after these two are the same ones _process_paper
+    // runs, so they share the labels above rather than getting upload-flavoured
+    // duplicates.
+    upload_fetch: 'Downloading the PDF',
+    upload_metadata: 'Looking up paper details',
     tts_prepare: 'Preparing script and chunks',
     tts_synthesize: 'Synthesizing speech',
     tts_assemble: 'Assembling episode',
@@ -337,6 +349,26 @@
       return 'Step ' + Math.min(done + 1, total) + ' of ' + total + ' — ' +
              stageLabel(run.current_stage);
     }
+    if (run.kind === 'upload') {
+      // An upload reports two facts and they are not the same one: whether the paper
+      // reached the library, and whether the post-upload steps finished. `result.added`
+      // carries the first and is written whenever the papers row exists, INCLUDING on
+      // a failed run — a summariser that died does not un-add the paper, and telling
+      // the user "Failed" full stop sends them to re-upload something they already
+      // have. A run that failed before the paper was added has no result at all, and
+      // that one really is a plain failure.
+      var uploadTitle = (run.result && run.result.title) || 'the paper';
+      if (run.status === 'succeeded') {
+        return 'Done — added "' + uploadTitle + '" and finished processing';
+      }
+      if (run.status === 'failed' && run.result && run.result.added) {
+        return 'Added "' + uploadTitle + '" to the library, but some steps did not '
+               + 'finish' + (run.error ? ' — ' + run.error : '');
+      }
+      if (run.status === 'failed') {
+        return 'Failed — nothing was added' + (run.error ? ' — ' + run.error : '');
+      }
+    }
     if (run.kind === 'discover' && run.status === 'succeeded') {
       // A discovery run counts candidates, not processed papers, and it reports the
       // sources that failed even when it succeeded: "ten papers, but arXiv was
@@ -376,6 +408,13 @@
     // A succeeded run that still lost papers is not a clean success. Painting it the
     // same green as a perfect run is how a partial failure went unnoticed.
     if (status === 'succeeded') return partial ? 'darkorange' : 'green';
+    // ...and the mirror of that: a failed upload whose paper IS in the library is a
+    // partial failure, not a total one. Crimson there says "start again", which is
+    // the wrong instruction — the paper is already saved.
+    if (status === 'failed' && typeof run === 'object' && run
+        && run.result && run.result.added) {
+      return 'darkorange';
+    }
     if (status === 'failed') return 'crimson';
     if (status === 'interrupted' || status === 'cancelled') return 'darkorange';
     return '';

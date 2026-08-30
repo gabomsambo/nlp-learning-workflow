@@ -129,6 +129,21 @@ async def test_the_history_list_does_not_embed_stages_or_payloads():
     assert "status" in captured["select"].split(",")
 
 
+async def test_the_history_list_projects_the_two_scalars_an_upload_row_needs():
+    """The whole `result` payload stays out, but a bare upload row cannot name its
+    paper or say whether the paper was added — it printed the run's UUID and
+    "Done — added "the paper"". These two text fields cost nothing next to it."""
+    captured = {}
+
+    def handler(request):
+        captured["select"] = request.url.params.get("select")
+        return httpx.Response(200, json=[])
+
+    await _client(handler).list_pipeline_runs(limit=5)
+    assert "result_title:result->>title" in captured["select"]
+    assert "result_added:result->>added" in captured["select"]
+
+
 # ----------------------------------------------------------------- route mapping
 
 

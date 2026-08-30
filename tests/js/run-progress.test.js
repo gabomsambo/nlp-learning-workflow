@@ -41,6 +41,14 @@ function stages(done, extra = []) {
 
 /* ------------------------------------------------------------- isTerminal */
 
+test('the two upload-only stages have prose labels', () => {
+  // A user reading "upload_fetch" is reading a machine slug. The six steps after
+  // these two deliberately share _process_paper's existing labels.
+  assert.equal(stageLabel('upload_fetch'), 'Downloading the PDF');
+  assert.equal(stageLabel('upload_metadata'), 'Looking up paper details');
+  assert.equal(stageLabel('ingest'), 'Downloading and reading the PDF');
+});
+
 test('every terminal status stops polling', () => {
   for (const s of ['succeeded', 'failed', 'cancelled', 'interrupted']) {
     assert.equal(isTerminal(s), true, `${s} should be terminal`);
@@ -169,6 +177,74 @@ test('a missing or malformed payload counts as zero candidates, not a crash', ()
   assert.equal(candidateCount({ result: { candidates: [{}] } }), 1);
 });
 
+/* --------------------------------------------------- summarise: upload runs */
+
+/** Eight stages, the first `done` of them completed. */
+function uploadStages(done) {
+  const names = ['upload_fetch', 'upload_metadata', 'ingest', 'summarize',
+                 'synthesize', 'quiz', 'persist', 'vectors'];
+  return names.map((name, i) => ({
+    name,
+    status: i < done ? 'completed' : 'pending',
+  }));
+}
+
+test('an upload in flight names the step, not "1 paper(s) processed"', () => {
+  const run = {
+    kind: 'upload',
+    status: 'running',
+    current_stage: 'upload_fetch',
+    stages: uploadStages(0),
+  };
+  assert.equal(summarise(run), 'Step 1 of 8 — Downloading the PDF');
+});
+
+test('a clean upload says what it added', () => {
+  const run = {
+    kind: 'upload',
+    status: 'succeeded',
+    papers_processed: 1,
+    stages: uploadStages(8),
+    result: { added: true, title: 'Attention Is All You Need' },
+  };
+  assert.match(summarise(run), /Attention Is All You Need/);
+  assert.match(summarise(run), /finished processing/);
+});
+
+test('a failed upload whose paper WAS added does not tell the user to start over', () => {
+  // The paper is in the library. "Failed" full stop sends them to re-upload
+  // something they already have.
+  const run = {
+    kind: 'upload',
+    status: 'failed',
+    papers_failed: 1,
+    stages: uploadStages(8),
+    error: 'summarizer: model refused',
+    result: { added: true, title: 'A Paper' },
+  };
+  const text = summarise(run);
+  assert.match(text, /Added "A Paper" to the library/);
+  assert.match(text, /some steps did not finish/);
+  assert.match(text, /model refused/);
+});
+
+test('an upload that never reached the library says nothing was added', () => {
+  const run = {
+    kind: 'upload',
+    status: 'failed',
+    stages: uploadStages(1),
+    error: 'Could not download the PDF: 404',
+  };
+  const text = summarise(run);
+  assert.match(text, /nothing was added/);
+  assert.match(text, /404/);
+});
+
+test('an upload with no result payload never claims a paper was added', () => {
+  const run = { kind: 'upload', status: 'failed', stages: uploadStages(0) };
+  assert.doesNotMatch(summarise(run), /library/);
+});
+
 /* ------------------------------------------------------------- statusColor */
 
 test('a clean success is green but a partial success is not', () => {
@@ -182,6 +258,15 @@ test('failure is crimson, cancellation and interruption are orange', () => {
   assert.equal(statusColor({ status: 'failed' }), 'crimson');
   assert.equal(statusColor({ status: 'cancelled' }), 'darkorange');
   assert.equal(statusColor({ status: 'interrupted' }), 'darkorange');
+});
+
+test('a failed upload whose paper is in the library is a partial failure', () => {
+  // Crimson there says "start again", which is the wrong instruction.
+  assert.equal(
+    statusColor({ status: 'failed', result: { added: true } }), 'darkorange');
+  assert.equal(statusColor({ status: 'failed', result: {} }), 'crimson');
+  // Still safe for the string form, which several callers use.
+  assert.equal(statusColor('failed'), 'crimson');
 });
 
 /* ----------------------------------------------------------- displayStatus */

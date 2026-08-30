@@ -261,17 +261,24 @@ class TestUploadedPdfRetention:
     async def test_uploaded_pdf_is_retained_and_url_pdf_resolves(
         self, service, upload_file, request_obj
     ):
-        """After a successful upload the stored url_pdf still points at a file."""
+        """After a successful upload the stored url_pdf still points at a file.
+
+        Two steps now, because the route saves the bytes and the worker processes the
+        path — the request's file handle cannot cross the thread boundary.
+        """
+        saved_path = await service.save_uploaded_file(upload_file)
+
         with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
-             patch('nlp_pillars.services.upload_service.get_pillar_by_id', return_value=MagicMock()), \
              patch('nlp_pillars.services.upload_service.add_paper', return_value=True), \
-             patch.object(UploadService, '_run_full_pipeline', new_callable=AsyncMock) as pipeline:
+             patch.object(UploadService, '_run_full_pipeline') as pipeline:
             pipeline.return_value = PipelineOutcome()
 
-            response = await service.upload_from_file("nlp-fundamentals", upload_file, request_obj)
+            result = service.run_file_upload_job(
+                "nlp-fundamentals", saved_path, upload_file.filename, request_obj
+            )
 
-        assert response.paper.url_pdf.startswith("file://")
-        retained = Path(response.paper.url_pdf[len("file://"):])
+        assert result.paper.url_pdf.startswith("file://")
+        retained = Path(result.paper.url_pdf[len("file://"):])
         assert retained.exists(), "uploaded PDF was deleted; url_pdf is now dangling"
         assert retained.read_bytes() == b"%PDF-1.4 fake pdf bytes"
 
@@ -280,11 +287,14 @@ class TestUploadedPdfRetention:
         self, service, upload_file, request_obj
     ):
         """A file nothing can refer to is still discarded."""
+        saved_path = await service.save_uploaded_file(upload_file)
+
         with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
-             patch('nlp_pillars.services.upload_service.get_pillar_by_id', return_value=MagicMock()), \
              patch('nlp_pillars.services.upload_service.add_paper', return_value=False):
             with pytest.raises(UploadError):
-                await service.upload_from_file("nlp-fundamentals", upload_file, request_obj)
+                service.run_file_upload_job(
+                    "nlp-fundamentals", saved_path, upload_file.filename, request_obj
+                )
 
         assert list(service.upload_dir.glob("*.pdf")) == []
 
@@ -293,16 +303,33 @@ class TestUploadedPdfRetention:
         self, service, upload_file, request_obj
     ):
         """Once the papers row exists the file is referenced, so keep it."""
+        saved_path = await service.save_uploaded_file(upload_file)
+
         with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
-             patch('nlp_pillars.services.upload_service.get_pillar_by_id', return_value=MagicMock()), \
              patch('nlp_pillars.services.upload_service.add_paper', return_value=True), \
-             patch.object(UploadService, '_run_full_pipeline', new_callable=AsyncMock) as pipeline:
+             patch.object(UploadService, '_run_full_pipeline') as pipeline:
             pipeline.side_effect = RuntimeError("summarizer exploded")
 
-            with pytest.raises(UploadError):
-                await service.upload_from_file("nlp-fundamentals", upload_file, request_obj)
+            with pytest.raises(RuntimeError):
+                service.run_file_upload_job(
+                    "nlp-fundamentals", saved_path, upload_file.filename, request_obj
+                )
 
         assert len(list(service.upload_dir.glob("*.pdf"))) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_file_that_vanished_before_the_worker_ran_fails_loudly(
+        self, service, upload_file, request_obj
+    ):
+        """The gap between saving the bytes and the job starting is real, and an
+        empty upload directory must not surface three stages later as a broken PDF."""
+        saved_path = await service.save_uploaded_file(upload_file)
+        Path(saved_path).unlink()
+
+        with pytest.raises(UploadError, match="no longer on disk"):
+            service.run_file_upload_job(
+                "nlp-fundamentals", saved_path, upload_file.filename, request_obj
+            )
 
 
 class TestTitleGuessIsSkippedWhenSomethingAuthoritativeWillOverwriteIt:
@@ -339,14 +366,13 @@ class TestTitleGuessIsSkippedWhenSomethingAuthoritativeWillOverwriteIt:
         client.results.return_value = iter([result])
         return client
 
-    @pytest.mark.asyncio
-    async def test_an_arxiv_url_does_not_parse_the_pdf_for_a_title(self, service):
+    def test_an_arxiv_url_does_not_parse_the_pdf_for_a_title(self, service):
         with patch('nlp_pillars.services.upload_service.arxiv.Search'), \
              patch('nlp_pillars.services.upload_service.arxiv.Client',
                    return_value=self._arxiv_answering()), \
              patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
              patch('nlp_pillars.services.upload_service.extract_text') as extract:
-            paper = await service._create_paper_ref_from_url(
+            paper = service._create_paper_ref_from_url(
                 "https://arxiv.org/pdf/1706.03762", "/tmp/nonexistent.pdf", None, None
             )
 
@@ -354,20 +380,18 @@ class TestTitleGuessIsSkippedWhenSomethingAuthoritativeWillOverwriteIt:
         assert paper.title == "Attention Is All You Need"
         assert paper.id == "arxiv:1706.03762"
 
-    @pytest.mark.asyncio
-    async def test_a_non_arxiv_url_still_gets_its_title_from_the_pdf(self, service):
+    def test_a_non_arxiv_url_still_gets_its_title_from_the_pdf(self, service):
         with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
              patch('nlp_pillars.services.upload_service.extract_text',
                    return_value="A Perfectly Good Title From The Paper\nmore body") as extract:
-            paper = await service._create_paper_ref_from_url(
+            paper = service._create_paper_ref_from_url(
                 "https://example.com/paper.pdf", "/tmp/nonexistent.pdf", None, None
             )
 
         extract.assert_called_once()
         assert paper.title == "A Perfectly Good Title From The Paper"
 
-    @pytest.mark.asyncio
-    async def test_a_failed_arxiv_lookup_falls_back_to_the_pdf(self, service):
+    def test_a_failed_arxiv_lookup_falls_back_to_the_pdf(self, service):
         """Otherwise the saving becomes "titled after its hostname, forever"."""
         client = Mock()
         client.results.return_value = iter([])  # StopIteration: not found
@@ -377,18 +401,17 @@ class TestTitleGuessIsSkippedWhenSomethingAuthoritativeWillOverwriteIt:
              patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
              patch('nlp_pillars.services.upload_service.extract_text',
                    return_value="The Title Only The PDF Knows\nmore body") as extract:
-            paper = await service._create_paper_ref_from_url(
+            paper = service._create_paper_ref_from_url(
                 "https://arxiv.org/pdf/1706.03762", "/tmp/nonexistent.pdf", None, None
             )
 
         extract.assert_called_once()
         assert paper.title == "The Title Only The PDF Knows"
 
-    @pytest.mark.asyncio
-    async def test_a_title_override_never_parses_the_pdf(self, service):
+    def test_a_title_override_never_parses_the_pdf(self, service):
         with patch.object(UploadService, '_enrich_from_semantic_scholar', lambda self, p: p), \
              patch('nlp_pillars.services.upload_service.extract_text') as extract:
-            paper = await service._create_paper_ref_from_url(
+            paper = service._create_paper_ref_from_url(
                 "https://example.com/paper.pdf", "/tmp/nonexistent.pdf",
                 "The User's Own Title", None,
             )
@@ -413,12 +436,6 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
     @pytest.fixture
     def paper(self):
         return PaperRef(id="arxiv:1706.03762", title="A Paper", authors=[], url_pdf="x")
-
-    @pytest.fixture
-    def status(self):
-        from nlp_pillars.schemas import UploadStatus
-
-        return UploadStatus(id="u1", pillar_id="nlp-fundamentals", status="processing")
 
     @staticmethod
     def _parsed(text="body text"):
@@ -455,10 +472,7 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
             id="nlp-fundamentals", name="NLP", goal="learn", focus_areas=["a"]
         )
 
-    @pytest.mark.asyncio
-    async def test_a_summarizer_failure_is_reported_as_a_failure(
-        self, service, paper, status
-    ):
+    def test_a_summarizer_failure_is_reported_as_a_failure(self, service, paper):
         with patch.object(service.ingest_agent, 'ingest', return_value=self._parsed()), \
              patch('nlp_pillars.services.upload_service.db') as mock_db, \
              patch('nlp_pillars.services.upload_service.SummarizerAgent') as summarizer, \
@@ -467,8 +481,8 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
             summarizer.run.side_effect = RuntimeError("model refused")
             mock_vectors.upsert_text.return_value = 12
 
-            outcome = await service._run_full_pipeline(
-                paper=paper, pillar_id="nlp-fundamentals", status=status,
+            outcome = service._run_full_pipeline(
+                paper=paper, pillar_id="nlp-fundamentals",
                 run_summarizer=True, generate_quiz=False,
             )
 
@@ -479,35 +493,24 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
         assert all("summarizer" != a for a in outcome.actions_triggered)
         assert not any("pipeline_error" in a for a in outcome.actions_triggered)
 
-    @pytest.mark.asyncio
-    async def test_the_response_says_added_but_not_processed(
-        self, service, paper, status
-    ):
-        from nlp_pillars.services.upload_service import PipelineOutcome
+    def test_the_outcome_says_added_but_not_processed(self, service, paper):
+        """The two facts stay apart now that the run row carries them.
 
-        response = UploadService._upload_response(
-            paper=paper,
-            status=status,
-            outcome=PipelineOutcome(
-                actions_triggered=["text_extraction"],
-                errors=["summarizer: model refused"],
-            ),
-            source_description="from URL: x",
-            added_message="Paper uploaded successfully from URL",
+        ``UploadJobResult`` reaching the caller at all means the papers row exists —
+        the job raises otherwise — and ``outcome.ok`` says whether the follow-on steps
+        finished. run_service._finish_upload turns exactly this pair into a failed run
+        whose result payload still says ``added: true``.
+        """
+        outcome = PipelineOutcome(
+            actions_triggered=["text_extraction"],
+            errors=["summarizer: model refused"],
         )
+        assert outcome.ok is False
+        assert outcome.actions_triggered == ["text_extraction"]
+        # The failure is not smuggled in as a fifth kind of action.
+        assert not any("pipeline_error" in a for a in outcome.actions_triggered)
 
-        # The paper is in the library, so this stays true...
-        assert response.success is True
-        # ...but the message must not claim the processing worked.
-        assert response.pipeline_ok is False
-        assert response.pipeline_errors == ["summarizer: model refused"]
-        assert "successfully" not in response.message.lower()
-        assert status.status == "completed_with_errors"
-
-    @pytest.mark.asyncio
-    async def test_a_clean_run_still_reads_as_a_clean_success(
-        self, service, paper, status
-    ):
+    def test_a_clean_run_still_reads_as_a_clean_success(self, service, paper):
         with patch.object(service.ingest_agent, 'ingest', return_value=self._parsed()), \
              patch('nlp_pillars.services.upload_service.db') as mock_db, \
              patch('nlp_pillars.services.upload_service.SummarizerAgent') as summarizer, \
@@ -521,8 +524,8 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
             quiz.run.return_value = [Mock()]
             mock_vectors.upsert_text.return_value = 12
 
-            outcome = await service._run_full_pipeline(
-                paper=paper, pillar_id="nlp-fundamentals", status=status,
+            outcome = service._run_full_pipeline(
+                paper=paper, pillar_id="nlp-fundamentals",
                 run_summarizer=True, generate_quiz=True,
             )
 
@@ -532,45 +535,32 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
             "quiz_generation", "vector_storage",
         ]
 
-    @pytest.mark.asyncio
-    async def test_zero_vectors_from_a_non_empty_paper_is_a_failure(
-        self, service, paper, status
-    ):
+    def test_zero_vectors_from_a_non_empty_paper_is_a_failure(self, service, paper):
         """upsert_text returns 0 for an empty document and a dead Qdrant alike."""
         with patch.object(service.ingest_agent, 'ingest', return_value=self._parsed()), \
              patch('nlp_pillars.services.upload_service.db'), \
              patch('nlp_pillars.services.upload_service.vectors') as mock_vectors:
             mock_vectors.upsert_text.return_value = 0
 
-            outcome = await service._run_full_pipeline(
-                paper=paper, pillar_id="nlp-fundamentals", status=status,
+            outcome = service._run_full_pipeline(
+                paper=paper, pillar_id="nlp-fundamentals",
                 run_summarizer=False, generate_quiz=False,
             )
 
         assert not outcome.ok
         assert any("vector_storage" in e for e in outcome.errors)
 
-    @pytest.mark.asyncio
-    async def test_a_failed_ingest_stops_the_pipeline_but_keeps_the_paper(
-        self, service, paper, status
-    ):
+    def test_a_failed_ingest_stops_the_pipeline_but_keeps_the_paper(self, service, paper):
         with patch.object(service.ingest_agent, 'ingest',
                           side_effect=RuntimeError("pdf is garbage")):
-            outcome = await service._run_full_pipeline(
-                paper=paper, pillar_id="nlp-fundamentals", status=status,
+            outcome = service._run_full_pipeline(
+                paper=paper, pillar_id="nlp-fundamentals",
                 run_summarizer=True, generate_quiz=True,
             )
 
         assert not outcome.ok
         assert outcome.actions_triggered == []
         assert any("text_extraction" in e for e in outcome.errors)
-
-        response = UploadService._upload_response(
-            paper=paper, status=status, outcome=outcome,
-            source_description="from URL: x", added_message="ok",
-        )
-        assert response.success is True  # the papers row exists
-        assert response.pipeline_ok is False
 
 
 class TestUploadDefaultsMatchTheDiscoveryPath:
@@ -591,18 +581,14 @@ class TestUploadDefaultsMatchTheDiscoveryPath:
         assert uploaded.run_summarizer is True
         assert uploaded.generate_quiz is True
 
-    @pytest.mark.asyncio
-    async def test_a_quiz_without_a_summarizer_says_so_instead_of_doing_nothing(
+    def test_a_quiz_without_a_summarizer_says_so_instead_of_doing_nothing(
         self, tmp_path
     ):
         """The gating is real — the quiz is built from the summarizer's PaperNote —
         but it used to be enforced by the quiz block simply sitting inside
         ``if run_summarizer:``, so the cards never appeared and nothing said why."""
-        from nlp_pillars.schemas import UploadStatus
-
         service = UploadService(upload_dir=str(tmp_path / "uploads"))
         paper = PaperRef(id="arxiv:1706.03762", title="A Paper", authors=[], url_pdf="x")
-        status = UploadStatus(id="u1", pillar_id="nlp-fundamentals", status="processing")
 
         parsed = Mock()
         parsed.full_text = "body text"
@@ -614,8 +600,8 @@ class TestUploadDefaultsMatchTheDiscoveryPath:
              patch('nlp_pillars.services.upload_service.vectors') as mock_vectors:
             mock_vectors.upsert_text.return_value = 12
 
-            outcome = await service._run_full_pipeline(
-                paper=paper, pillar_id="nlp-fundamentals", status=status,
+            outcome = service._run_full_pipeline(
+                paper=paper, pillar_id="nlp-fundamentals",
                 run_summarizer=False, generate_quiz=True,
             )
 
@@ -651,6 +637,46 @@ class TestTheUploadFormSendsWhatTheUserChose:
         assert "formData.append('generate_quiz'" in template
 
     def test_the_page_no_longer_calls_a_failed_upload_a_success(self, template):
+        """No success alert at all now: completion is the progress panel reaching a
+        terminal state, and the outcome box distinguishes "added, some steps failed"
+        from "nothing was added"."""
         assert "showUploadSuccess" not in template
-        assert "showUploadResult" in template
-        assert "result.pipeline_ok === false" in template
+        assert "showUploadResult" not in template
+        assert "renderUploadOutcome" in template
+        assert "result.added" in template
+
+    def test_the_upload_panel_follows_a_run_instead_of_awaiting_a_result(
+        self, template
+    ):
+        """The whole point of the change: the routes answer 202 with a run id and the
+        page attaches the shared progress component to it."""
+        assert "/static/run-progress.js" in template
+        assert "RunProgress.attach(runId" in template
+        assert "RunProgress.reattach(" in template
+        # A run that is not an upload must not be rendered under this heading — the
+        # stored run id is shared with the Pipeline and Discovery pages.
+        assert "run.kind !== 'upload'" in template
+
+    def test_recent_uploads_reads_the_run_records(self, template):
+        """It used to read an in-memory dict that was empty on every page load."""
+        assert "/api/pipeline-runs?pillar_id=" in template
+        assert "${pillarId}/uploads/recent" not in template
+
+    def test_the_dead_status_endpoints_are_gone(self):
+        """Two endpoints served a process-local dict the scheduler could not see and
+        no page ever polled. Leaving them would leave two sources of truth."""
+        router = (
+            Path(__file__).resolve().parents[1]
+            / "webui" / "routers" / "api" / "uploads.py"
+        ).read_text()
+        assert '@router.get' not in router, "the upload router should only POST now"
+        assert 'uploads/status/' not in router
+        assert 'get_recent_uploads' not in router
+
+        from nlp_pillars import schemas
+        from nlp_pillars.services import upload_service as svc
+
+        assert not hasattr(schemas, "UploadStatus")
+        assert not hasattr(schemas, "UploadResponse")
+        assert not hasattr(svc.UploadService, "get_upload_status")
+        assert not hasattr(svc.UploadService, "get_recent_uploads")

@@ -141,7 +141,9 @@ Apply one with:
 
 There is no migration-tracking table. The only way to know what a database has is to look:
 compare `information_schema.columns` against `schema.sql`. Both 008 and 009 were applied to
-the captain's volume on 2026-08-29, which brought it level with `schema.sql`'s 13 tables.
+the captain's volume on 2026-08-29, which brought it level with `schema.sql`'s 13 tables;
+**015 was applied on 2026-08-30** (verified: `pipeline_runs_kind_check` admits `upload`
+and the one-active-per-pillar index carries `AND kind <> 'upload'`).
 **011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
 PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
 `add_podcast_script()` detects exactly that and retries without the key, so podcasts still
@@ -160,18 +162,79 @@ retention or cleanup policy yet — retained PDFs accumulate at ~1-5 MB/paper.
 Papers added by URL keep the http URL in `url_pdf` and are re-downloaded on demand, so
 only the file-upload path depends on this.
 
+### A manual upload is a background run
+
+Both upload routes answer **202 with a run id** and do the work on the same
+`pipeline_runs` machinery discovery uses (`kind='upload'`, `trigger_source='ui_upload'`,
+`UPLOAD_STAGES`). They used to run the whole upload inside the request handler: measured
+from the live logs, one 4.71 MB arXiv paper held `POST /upload/url` open for **3m20s**,
+and `GET /health` timed out at 5 seconds throughout — the single uvicorn process was
+frozen for every other request.
+
+**`docs/migrations/015_upload_runs.sql` must be run by hand.** Until it is, every upload
+fails the `pipeline_runs` CHECK constraints; the route answers 503 naming the file rather
+than a bare Postgres error. It was applied to the captain's volume on 2026-08-30.
+
+**Uploads are exempt from the one-active-run-per-pillar guard, by captain's ruling.**
+015 narrows the partial unique index to `... AND kind <> 'upload'`, so an upload is never
+refused because a discovery run is in flight on the same pillar — the guard is about two
+writers driving one pillar's *queue*, and an upload is scoped to the single paper the
+user handed over. Two uploads to one pillar may also run at once; concurrency is bounded
+by `webui/app.py::_MAX_CONCURRENT_RUNS` (2), and a run beyond that waits at `pending`
+with its row already visible. `tests/test_upload_runs.py` executes 015's own index DDL
+against sqlite, so a rewrite that drops the exemption fails there.
+
+Only two stage names are new — `upload_fetch` and `upload_metadata`. The rest are
+`_process_paper`'s own (`ingest`, `summarize`, `synthesize`, `quiz`, `persist`,
+`vectors`), reused verbatim so one label change fixes both pipelines. A step that will
+not run is marked `skipped` **with its reason**, never left `pending`: a pending row on a
+finished run reads as work that is still coming, which is the shape a silent failure
+takes on this page. `_Stages.stop_after_current()` does that close-out on every early
+exit — a hard failure and a cancellation alike — and it never re-marks a stage that
+already reached a terminal status, which is why the job and `_run_full_pipeline` share
+one `_Stages` instance rather than each building their own.
+
+Exception text reaches a stage detail through `upload_service._reason`, not
+`orchestrator._first_line` directly. `_first_line` strips tenacity's
+`RetryError[<Future …>]` wrapper when the RetryError *is* the exception;
+`pdf_loader.download_pdf` interpolates that repr into a message of its own, so it
+survives the trim. Measured on a 404: the panel read `RetryError[<Future at 0x7f29…
+state=finished raised HTTPStatusError>]`. `_reason` walks `__cause__`/`__context__`
+while the line still looks like a wrapper, which yields `Client error '404 Not Found'`.
+
+The file-upload route writes the bytes to disk **before** dispatch and hands the worker a
+path. Not an optimisation — Starlette closes the `UploadFile`'s spooled temp file when
+the response is sent, which is long before the job runs.
+
+`execute_run` builds **no Orchestrator** for `kind='upload'`: constructing one dials
+Qdrant (`VectorSearchTool.__init__` → `ensure_collections`), and an unreachable vector
+store must not stop a paper reaching the library. That failure belongs on the VECTORS
+stage.
+
 ### An upload reports two facts, and the checkboxes default on
 
-`UploadResponse.success` means the paper reached `papers`; `pipeline_ok` /
-`pipeline_errors` report the follow-on processing separately. They used to be one fact:
-`_run_full_pipeline` wrapped its whole body in `except Exception`, appended
-`pipeline_error: {e}` to `actions_triggered` as a pseudo-action, and the route still
-answered `success=True` — so the page printed "uploaded successfully! Triggered:
-pipeline_error: ...". Each stage now fails independently into `PipelineOutcome.errors`
-(a failed lesson no longer takes the quiz with it), and `upsert_text` returning 0 for a
-non-empty paper is recorded as a failure, matching `Orchestrator._process_paper`. A
-failed pipeline is **not** an upload error: the paper is in the library and re-uploading
-is the wrong remedy, which is what the page's `#upload-result` banner says.
+The paper reaching `papers` and the follow-on processing finishing are separate facts and
+must not be collapsed — this path has made that mistake twice. `_run_full_pipeline` once
+wrapped its whole body in `except Exception`, appended `pipeline_error: {e}` to
+`actions_triggered` as a pseudo-action, and the route still answered `success=True`, so
+the page printed "uploaded successfully! Triggered: pipeline_error: ...".
+
+Now: a failure that stops the paper being added **raises** out of the job, and
+`execute_run` records the run failed with the reason — nothing else. A failure *after* it
+is added leaves `outcome.errors` non-empty, which `_finish_upload` turns into a **failed**
+run whose `result` payload still carries `added: true`, so `summarise()` says "Added X to
+the library, but some steps did not finish" and `statusColor()` paints it darkorange
+rather than crimson. Crimson there reads as "start again", and the paper is already
+saved. Each stage still fails independently (a failed lesson does not take the quiz with
+it), and `upsert_text` returning 0 for a non-empty paper is a failure, matching
+`Orchestrator._process_paper`.
+
+The in-memory `UploadStatus` object, `UploadResponse`, and the
+`GET /uploads/status/{id}` and `GET /uploads/recent` endpoints are **gone**. They could
+never have worked: the status lived on a process-local singleton the scheduler container
+could not see, its id was returned only once the call it described had finished, and no
+page polled it. "Recent Uploads" on the pillar page now reads `GET /api/pipeline-runs`
+and filters `kind='upload'` client-side.
 
 `run_summarizer` and `generate_quiz` default **True** now, matching discovery's hardcoded
 `enable_quiz=True` at `run_service.py`. The quiz genuinely needs the summarizer — it is
@@ -370,6 +433,9 @@ inside the request handler — `/pipeline/run` by shelling out to
 `python -m nlp_pillars.cli run` and awaiting `proc.communicate()`, `/select` by calling
 `process_selected_papers` directly — so the browser sat on "Running..." for minutes and
 the single uvicorn process was frozen for every other request, `/health` included.
+
+Manual upload is a background job too, as of 2026-08-30 — see "A manual upload is a
+background run" above, including the migration it needs and the concurrency exemption.
 
 `POST /api/pillars/{id}/discover` is a background job too, as of 2026-08-29. It used to
 answer synchronously — deliberately, because the user needs the candidates in front of
