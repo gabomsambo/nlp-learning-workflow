@@ -44,6 +44,11 @@ MAX_FULL_TEXT_CHARS = 100000
 # headroom for metrics tables without accepting truncated material.
 EXTRACTION_MAX_TOKENS = 16000
 
+# Call-5 synthesis. Streaming requests should not lowball this — a 45–60
+# minute script needs several thousand words. Anthropic's streaming guidance
+# for current Sonnet is around 64000; the model max is 128K.
+SYNTHESIS_MAX_TOKENS = 64000
+
 # Per-call temperature. Nothing set one before, so every call ran at the API
 # default of 1.0 — including the two whose entire job is to copy facts out of a
 # document without embellishing them.
@@ -391,14 +396,15 @@ class PodcastAgent:
         system: str,
         user: str,
         max_tokens: int = EXTRACTION_MAX_TOKENS,
-        temperature: float = TEMPERATURE_ANALYSIS,
         *,
         model: Optional[str] = None,
     ) -> LLMCallResult:
         """Make streaming API call to Claude.
 
-        ``temperature`` is always passed explicitly. The API default is 1.0,
-        which is not what an extraction call wants; see the constants above.
+        Claude Sonnet 5 rejects ``temperature`` / ``top_p`` / ``top_k`` (HTTP
+        400). Sampling for Ground Pack fallback and synthesis is steered by
+        prompt text instead. DeepSeek extraction still takes an explicit
+        temperature — see ``_call_deepseek``.
         """
         model_id = model or self.synthesis_model
         full_text = ""
@@ -409,7 +415,6 @@ class PodcastAgent:
         async with self.client.messages.stream(
             model=model_id,
             max_tokens=max_tokens,
-            temperature=temperature,
             system=system,
             messages=[{"role": "user", "content": user}]
         ) as stream:
@@ -550,7 +555,6 @@ class PodcastAgent:
             system,
             user,
             max_tokens=max_tokens,
-            temperature=temperature,
             model=self.synthesis_model,
         )
         self._validate_extraction(claude_result)
@@ -662,8 +666,7 @@ LIMITATIONS & THREATS:
             # options, the Ground Pack and the paper are in the user message.
             system=FINAL_SYNTHESIS_SYSTEM,
             user=prompt,
-            max_tokens=16000,  # Longer output for full script
-            temperature=TEMPERATURE_SCRIPT,
+            max_tokens=SYNTHESIS_MAX_TOKENS,
         )).text
 
     def _extract_key_points(self, ground_pack: dict) -> list:

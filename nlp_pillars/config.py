@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         env="PODCAST_EXTRACTION_MODEL",
     )
     podcast_synthesis_model: str = Field(
-        "claude-sonnet-4-5-20250929",
+        "claude-sonnet-5",
         env="PODCAST_SYNTHESIS_MODEL",
     )
 

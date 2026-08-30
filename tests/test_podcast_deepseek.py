@@ -14,7 +14,6 @@ from nlp_pillars.agents.podcast_agent import (
     PodcastAgent,
     TEMPERATURE_ANALYSIS,
     TEMPERATURE_EXTRACTION,
-    TEMPERATURE_SCRIPT,
 )
 from nlp_pillars.schemas import GroundPackCallRecord
 
@@ -34,7 +33,7 @@ def _claude_result(text: str = "claude extraction", **kwargs) -> LLMCallResult:
     return LLMCallResult(
         text=text,
         provider="anthropic",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-5",
         input_tokens=kwargs.get("input_tokens", 200),
         output_tokens=kwargs.get("output_tokens", 80),
         finish_reason=kwargs.get("finish_reason", "end_turn"),
@@ -58,7 +57,7 @@ def agent():
         mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
         mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
         mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
-        mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
+        mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-5"
         yield PodcastAgent()
 
 
@@ -91,8 +90,8 @@ class TestExtractionRouting:
         assert "[HOST]: script" in script
         agent._call_claude.assert_awaited_once()
         agent._call_deepseek.assert_not_called()
-        assert agent._call_claude.call_args.kwargs.get("max_tokens") == 16000
-        assert agent._call_claude.call_args.kwargs.get("temperature") == TEMPERATURE_SCRIPT
+        assert agent._call_claude.call_args.kwargs.get("max_tokens") == 64000
+        assert "temperature" not in agent._call_claude.call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_truncated_deepseek_falls_back_to_claude(self, agent):

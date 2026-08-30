@@ -45,10 +45,13 @@ EXTRACTION_ROUTE = ModelRoute(
     settings_attr="podcast_extraction_model",
 )
 
-# Call 5: pacing and taste stay on Claude.
+# Call 5: pacing and taste stay on Claude. ``claude-sonnet-5`` is the current
+# Sonnet (1M context, 128K max output, $2/$10 per MTok) — cheaper and with a
+# far larger output ceiling than ``claude-sonnet-4-5-20250929``. Sonnet 5
+# rejects ``temperature`` / ``top_p`` / ``top_k``; see ``_call_claude``.
 SYNTHESIS_ROUTE = ModelRoute(
     kind="synthesis",
     provider="anthropic",
-    default_model="claude-sonnet-4-5-20250929",
+    default_model="claude-sonnet-5",
     settings_attr="podcast_synthesis_model",
 )
