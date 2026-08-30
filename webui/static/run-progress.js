@@ -187,6 +187,15 @@
     tts_assemble: 'Assembling episode',
     tts_encode: 'Encoding MP3',
     tts_save: 'Saving audio metadata',
+    // Podcast script generation (Ground Pack + synthesis). Prefixed so they do
+    // not inherit "Writing the lesson" from synthesize.
+    podcast_prepare: 'Loading paper and source material',
+    podcast_facts_outline: 'Extracting facts outline',
+    podcast_core_concepts: 'Extracting core concepts',
+    podcast_metrics: 'Extracting metrics and datasets',
+    podcast_limitations: 'Extracting limitations',
+    podcast_synthesize: 'Writing the podcast script',
+    podcast_persist: 'Saving the script',
   };
 
   function stageLabel(name) {
@@ -381,6 +390,20 @@
       if (run.error) msg += ' — ' + run.error;
       return msg;
     }
+    if (run.kind === 'podcast_script') {
+      var scriptTitle = (run.result && run.result.title) || 'script';
+      var words = run.result && run.result.word_count;
+      var wordBit = words != null ? ' (' + words + ' words)' : '';
+      if (run.status === 'succeeded' && run.result && run.result.saved === false) {
+        return 'Script generated' + wordBit + ' but NOT saved — download it now';
+      }
+      if (run.status === 'succeeded') {
+        return 'Done — "' + scriptTitle + '"' + wordBit;
+      }
+      if (run.status === 'failed') {
+        return 'Failed' + (run.error ? ' — ' + run.error : '');
+      }
+    }
     if (run.status === 'succeeded') {
       // A run that found nothing is recorded as succeeded (it is not a failure), but
       // "Done — 0 paper(s) processed" reads like something went wrong. Say what
@@ -405,6 +428,11 @@
   function statusColor(run) {
     var status = typeof run === 'string' ? run : run && run.status;
     var partial = typeof run === 'object' && run && run.papers_failed > 0;
+    // Generated but unsaved: not a clean green success, and not "start again".
+    if (status === 'succeeded' && typeof run === 'object' && run
+        && run.result && run.result.saved === false) {
+      return 'darkorange';
+    }
     // A succeeded run that still lost papers is not a clean success. Painting it the
     // same green as a perfect run is how a partial failure went unnoticed.
     if (status === 'succeeded') return partial ? 'darkorange' : 'green';

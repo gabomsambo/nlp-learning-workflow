@@ -653,6 +653,16 @@ class StageName(str, Enum):
     TTS_ENCODE = "tts_encode"
     TTS_SAVE = "tts_save"
 
+    # Podcast *script* generation (Ground Pack + synthesis). Prefixed so they do
+    # not inherit lesson/upload labels from SYNTHESIZE / PERSIST / INGEST.
+    PODCAST_PREPARE = "podcast_prepare"
+    PODCAST_FACTS_OUTLINE = "podcast_facts_outline"
+    PODCAST_CORE_CONCEPTS = "podcast_core_concepts"
+    PODCAST_METRICS = "podcast_metrics"
+    PODCAST_LIMITATIONS = "podcast_limitations"
+    PODCAST_SYNTHESIZE = "podcast_synthesize"
+    PODCAST_PERSIST = "podcast_persist"
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
 #:
@@ -728,6 +738,23 @@ PODCAST_AUDIO_STAGES: List[StageName] = [
     StageName.TTS_ASSEMBLE,
     StageName.TTS_ENCODE,
     StageName.TTS_SAVE,
+]
+
+#: Stages for one podcast *script* generation, in order.
+#:
+#: prepare covers paper/notes/PDF load and the insufficient-material gate (before
+#: any model call). The four Ground Pack extractions and final synthesis are the
+#: five model calls the fake progress bar used to hide. persist is the DB save —
+#: a save failure must not destroy the paid-for script, so the job can still
+#: succeed with ``saved: false`` in ``result`` while this stage reads failed.
+PODCAST_SCRIPT_STAGES: List[StageName] = [
+    StageName.PODCAST_PREPARE,
+    StageName.PODCAST_FACTS_OUTLINE,
+    StageName.PODCAST_CORE_CONCEPTS,
+    StageName.PODCAST_METRICS,
+    StageName.PODCAST_LIMITATIONS,
+    StageName.PODCAST_SYNTHESIZE,
+    StageName.PODCAST_PERSIST,
 ]
 
 
