@@ -1035,6 +1035,22 @@ red locally, for a reason that has nothing to do with the code under test.
 …from a copy of the tree with no `.env` in it, since `find_dotenv()` walks up from
 `config.py` and will find the repo's own regardless of your cwd.
 
+**CI pytest wall clock is dominated by waiting, not collection.** Measured 2026-08-30 on
+`ubuntu-latest`: pip install ~2m, then **~17m of pytest** (`638 passed` in 1017s). The
+same 639 tests finish in ~1m on a fast local machine once the suite is hermetic — the gap
+is not "639 tests take seventeen minutes of real CPU". Before optimising with xdist, run
+`pytest tests/ --durations=50` and look for:
+
+- **Live network calls that mocks missed.** Upload retention tests used to patch
+  `UploadService._enrich_from_semantic_scholar` while `_create_paper_ref_from_*` called
+  the module-level `enrich_from_semantic_scholar()` directly — six tests per run dialed
+  Semantic Scholar with tenacity backoff (~10s each locally, much worse on CI).
+- **Accidental heavy allocation.** `test_download_pdf_size_limit` used to build a 60 MiB
+  byte string to exercise the 50 MiB guard; patch `pdf_loader._PDF_MAX_DOWNLOAD_BYTES`
+  small instead.
+- **Tenacity without `time.sleep` patched** in error-path tests (`ArXivTool.search`,
+  `SearXNGTool.search_async`).
+
 The suite also only imports because `pyproject.toml` sets `pythonpath = ["."]`. There is no
 `conftest.py`, the project is not pip-installed into the test environment, and `tests/` has
 no `__init__.py`. Before that line, plain `pytest` failed every module with
