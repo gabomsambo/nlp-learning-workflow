@@ -844,10 +844,15 @@ were Claude — synthesis still dominates the bill.
 **Ground Pack extraction routes to DeepSeek; synthesis stays on Claude.** Model ids live
 in `nlp_pillars/podcast_models.py` and override through `PODCAST_EXTRACTION_MODEL` /
 `PODCAST_SYNTHESIS_MODEL` in `.env` (defaults: `deepseek-v4-flash` and
-`claude-sonnet-4-5-20250929`). Do not use `deepseek-v4-pro` for extraction — it is a
-reasoning model that burns `max_tokens` on thinking and truncates before writing the
-table. `DEEPSEEK_API_KEY` is required in compose (`:?` on `webui` and `scheduler`, same
-pattern as `QDRANT_API_KEY`); it lives only in `.env`, never in the repo.
+`claude-sonnet-5`). DeepSeek V4 **Flash** enables thinking by default; reasoning tokens
+share the `max_tokens` budget with `content`, so a long paper can return HTTP 200 with
+`reasoning_tokens=4000` and empty `content`. `_call_deepseek` therefore sends
+`thinking: {type: "disabled"}` — do not "restore" thinking for Ground Pack. The same
+budget trap is why `deepseek-v4-pro` is not the extraction default. Extraction
+`max_tokens` is `EXTRACTION_MAX_TOKENS` (16000); synthesis uses `SYNTHESIS_MAX_TOKENS`
+(64000). Sonnet 5 rejects `temperature` / `top_p` / `top_k` — `_call_claude` must not
+pass them. `DEEPSEEK_API_KEY` is required in compose (`:?` on `webui` and `scheduler`,
+same pattern as `QDRANT_API_KEY`); it lives only in `.env`, never in the repo.
 
 Each extraction call tries DeepSeek first and **falls back to Claude loudly** on any
 failure, recording `fallback=true` and `fallback_reason` on the row. Truncated

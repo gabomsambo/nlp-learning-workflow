@@ -14,7 +14,6 @@ from nlp_pillars.agents.podcast_agent import (
     PodcastAgent,
     TEMPERATURE_ANALYSIS,
     TEMPERATURE_EXTRACTION,
-    TEMPERATURE_SCRIPT,
 )
 from nlp_pillars.schemas import GroundPackCallRecord
 
@@ -34,7 +33,7 @@ def _claude_result(text: str = "claude extraction", **kwargs) -> LLMCallResult:
     return LLMCallResult(
         text=text,
         provider="anthropic",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-5",
         input_tokens=kwargs.get("input_tokens", 200),
         output_tokens=kwargs.get("output_tokens", 80),
         finish_reason=kwargs.get("finish_reason", "end_turn"),
@@ -58,7 +57,7 @@ def agent():
         mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
         mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
         mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
-        mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
+        mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-5"
         yield PodcastAgent()
 
 
@@ -91,8 +90,8 @@ class TestExtractionRouting:
         assert "[HOST]: script" in script
         agent._call_claude.assert_awaited_once()
         agent._call_deepseek.assert_not_called()
-        assert agent._call_claude.call_args.kwargs.get("max_tokens") == 16000
-        assert agent._call_claude.call_args.kwargs.get("temperature") == TEMPERATURE_SCRIPT
+        assert agent._call_claude.call_args.kwargs.get("max_tokens") == 64000
+        assert "temperature" not in agent._call_claude.call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_truncated_deepseek_falls_back_to_claude(self, agent):
@@ -182,6 +181,93 @@ class TestExtractionRouting:
             await agent._run_extraction_call(
                 "metrics_datasets", "sys", "user", TEMPERATURE_EXTRACTION, max_tokens=1,
             )
+
+    @pytest.mark.asyncio
+    async def test_deepseek_disables_thinking(self, agent):
+        """V4 Flash thinks by default; reasoning tokens share max_tokens with content."""
+        from nlp_pillars.agents.podcast_agent import EXTRACTION_MAX_TOKENS
+
+        payload = {
+            "choices": [{
+                "message": {"content": "outline bullets"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = payload
+        agent._deepseek_client = MagicMock()
+        agent._deepseek_client.post = AsyncMock(return_value=mock_response)
+
+        result = await agent._call_deepseek("sys", "user", max_tokens=EXTRACTION_MAX_TOKENS)
+
+        body = agent._deepseek_client.post.call_args.kwargs["json"]
+        assert body["thinking"] == {"type": "disabled"}
+        assert body["max_tokens"] == EXTRACTION_MAX_TOKENS
+        assert result.text == "outline bullets"
+        assert result.finish_reason == "stop"
+
+    @pytest.mark.asyncio
+    async def test_extraction_default_budget_reaches_providers(self, agent):
+        """Raised extraction budget (not 4000) is what both providers receive."""
+        from nlp_pillars.agents.podcast_agent import EXTRACTION_MAX_TOKENS
+
+        agent._call_deepseek = AsyncMock(return_value=_deepseek_result("ok"))
+        agent._call_claude = AsyncMock()
+
+        await agent._generate_facts_outline("PAPER")
+
+        assert agent._call_deepseek.call_args.kwargs["max_tokens"] == EXTRACTION_MAX_TOKENS
+        assert EXTRACTION_MAX_TOKENS > 4000
+
+    @pytest.mark.asyncio
+    async def test_captain_reproduction_still_fails_loudly_at_exhausted_cap(self, agent):
+        """DeepSeek-VL path: empty DeepSeek (reasoning burned budget) + Claude
+        truncated at a tight cap must still raise — never accept partial Ground Pack.
+        """
+        agent._call_deepseek = AsyncMock(
+            return_value=_deepseek_result(
+                "", finish_reason="length", output_tokens=4000,
+            ),
+        )
+        agent._call_claude = AsyncMock(
+            return_value=_claude_result(
+                "partial outline that was cut off mid-sentence",
+                finish_reason="max_tokens",
+                output_tokens=4000,
+            ),
+        )
+
+        with pytest.raises(GroundPackExtractionError, match="truncated the extraction"):
+            await agent._generate_facts_outline("PAPER " * 5000)
+
+    @pytest.mark.asyncio
+    async def test_captain_path_succeeds_when_fallback_has_headroom(self, agent):
+        """Same DeepSeek empty failure, but Claude finishes under a real budget."""
+        from nlp_pillars.agents.podcast_agent import EXTRACTION_MAX_TOKENS
+
+        agent._call_deepseek = AsyncMock(
+            return_value=_deepseek_result("", finish_reason="length", output_tokens=4000),
+        )
+        agent._call_claude = AsyncMock(
+            return_value=_claude_result(
+                "- Hook/Problem: ...\n- Methodology: ...",
+                finish_reason="end_turn",
+                output_tokens=5343,
+            ),
+        )
+
+        text, record = await agent._run_extraction_call(
+            "facts_outline", "sys", "user", TEMPERATURE_EXTRACTION,
+            max_tokens=EXTRACTION_MAX_TOKENS,
+        )
+
+        assert "Hook/Problem" in text
+        assert record.fallback is True
+        assert record.provider == "anthropic"
+        assert record.finish_reason == "end_turn"
+        assert agent._call_claude.call_args.kwargs["max_tokens"] == EXTRACTION_MAX_TOKENS
 
     @pytest.mark.asyncio
     async def test_generate_records_ground_pack_calls(self, agent, mock_ground_pack):

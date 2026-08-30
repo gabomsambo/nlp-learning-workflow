@@ -12,7 +12,7 @@ def test_default_extraction_is_deepseek_flash():
 
 def test_synthesis_stays_on_claude():
     assert SYNTHESIS_ROUTE.provider == "anthropic"
-    assert "claude" in SYNTHESIS_ROUTE.default_model
+    assert SYNTHESIS_ROUTE.default_model == "claude-sonnet-5"
 
 
 def test_env_override():

@@ -28,13 +28,26 @@ from .ingest_agent import IngestAgent, IngestError
 
 logger = logging.getLogger(__name__)
 
-# Full text is passed to five separate Claude calls (the four Ground Pack
-# prompts plus the final synthesis prompt), so this bound is multiplied by five
-# on the bill. Measured end to end on an 18K-char paper: 37.8K input + 9.6K
-# output tokens = $0.26 at Sonnet list price. A paper at this ceiling would be
-# ~128K input tokens, so ~$0.53. Output is roughly constant; only the input
-# side scales with the paper. _call_claude logs real per-call token usage.
+# Full text is passed to five separate LLM calls (four Ground Pack extractions
+# plus final synthesis), so this bound is multiplied by five on the bill.
+# Measured end to end on an 18K-char paper: 37.8K input + 9.6K output tokens
+# ≈ $0.26 at Sonnet list price. A paper at this ceiling would be ~128K input
+# tokens. Output is roughly constant; only the input side scales with the
+# paper. _call_claude / _call_deepseek log real per-call token usage.
 MAX_FULL_TEXT_CHARS = 100000
+
+# Ground Pack extraction output budget. The previous default of 4000 was
+# exhausted on paper 2403.05525 (87k chars): DeepSeek V4 Flash burned the
+# whole allotment on thinking (reasoning_tokens=4000, content empty), then
+# Claude fallback truncated at the same cap writing a real outline
+# (measured need ≈5343 output tokens at max_tokens=8000). 16000 leaves
+# headroom for metrics tables without accepting truncated material.
+EXTRACTION_MAX_TOKENS = 16000
+
+# Call-5 synthesis. Streaming requests should not lowball this — a 45–60
+# minute script needs several thousand words. Anthropic's streaming guidance
+# for current Sonnet is around 64000; the model max is 128K.
+SYNTHESIS_MAX_TOKENS = 64000
 
 # Per-call temperature. Nothing set one before, so every call ran at the API
 # default of 1.0 — including the two whose entire job is to copy facts out of a
@@ -382,15 +395,16 @@ class PodcastAgent:
         self,
         system: str,
         user: str,
-        max_tokens: int = 4000,
-        temperature: float = TEMPERATURE_ANALYSIS,
+        max_tokens: int = EXTRACTION_MAX_TOKENS,
         *,
         model: Optional[str] = None,
     ) -> LLMCallResult:
         """Make streaming API call to Claude.
 
-        ``temperature`` is always passed explicitly. The API default is 1.0,
-        which is not what an extraction call wants; see the constants above.
+        Claude Sonnet 5 rejects ``temperature`` / ``top_p`` / ``top_k`` (HTTP
+        400). Sampling for Ground Pack fallback and synthesis is steered by
+        prompt text instead. DeepSeek extraction still takes an explicit
+        temperature — see ``_call_deepseek``.
         """
         model_id = model or self.synthesis_model
         full_text = ""
@@ -401,7 +415,6 @@ class PodcastAgent:
         async with self.client.messages.stream(
             model=model_id,
             max_tokens=max_tokens,
-            temperature=temperature,
             system=system,
             messages=[{"role": "user", "content": user}]
         ) as stream:
@@ -434,10 +447,19 @@ class PodcastAgent:
         self,
         system: str,
         user: str,
-        max_tokens: int = 4000,
+        max_tokens: int = EXTRACTION_MAX_TOKENS,
         temperature: float = TEMPERATURE_ANALYSIS,
     ) -> LLMCallResult:
-        """OpenAI-compatible chat completion against DeepSeek."""
+        """OpenAI-compatible chat completion against DeepSeek.
+
+        Thinking is disabled explicitly. DeepSeek V4 Flash enables thinking by
+        default; reasoning tokens share the ``max_tokens`` budget with
+        ``content``. On a long paper the whole budget can land in
+        ``reasoning_content`` with empty ``content``, which this agent correctly
+        rejects as an empty extraction and then falls back to Claude — which
+        then hit the same low cap. Mechanical Ground Pack extraction does not
+        need chain-of-thought.
+        """
         if self._deepseek_client is None:
             raise GroundPackExtractionError("DEEPSEEK_API_KEY is not configured")
 
@@ -453,6 +475,7 @@ class PodcastAgent:
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "stream": False,
+                "thinking": {"type": "disabled"},
             },
         )
         response.raise_for_status()
@@ -506,7 +529,7 @@ class PodcastAgent:
         system: str,
         user: str,
         temperature: float,
-        max_tokens: int = 4000,
+        max_tokens: int = EXTRACTION_MAX_TOKENS,
     ) -> tuple[str, GroundPackCallRecord]:
         """Run one Ground Pack extraction: DeepSeek first, Claude on failure."""
         fallback_reason: Optional[str] = None
@@ -532,7 +555,6 @@ class PodcastAgent:
             system,
             user,
             max_tokens=max_tokens,
-            temperature=temperature,
             model=self.synthesis_model,
         )
         self._validate_extraction(claude_result)
@@ -644,8 +666,7 @@ LIMITATIONS & THREATS:
             # options, the Ground Pack and the paper are in the user message.
             system=FINAL_SYNTHESIS_SYSTEM,
             user=prompt,
-            max_tokens=16000,  # Longer output for full script
-            temperature=TEMPERATURE_SCRIPT,
+            max_tokens=SYNTHESIS_MAX_TOKENS,
         )).text
 
     def _extract_key_points(self, ground_pack: dict) -> list:

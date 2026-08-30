@@ -221,11 +221,11 @@ class TestPodcastAgent:
             mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
             mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
             mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
-            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
+            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-5"
 
             agent = PodcastAgent()
 
-            assert agent.synthesis_model == "claude-sonnet-4-5-20250929"
+            assert agent.synthesis_model == "claude-sonnet-5"
             assert agent.extraction_model == "deepseek-v4-flash"
             assert isinstance(agent.ingest_agent, IngestAgent)
             # Timeouts matter: without them a hung Anthropic call would pin a
@@ -690,7 +690,7 @@ class TestOptionsReachTheModelAndTheRow:
             mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
             mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
             mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
-            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
+            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-5"
 
             agent = PodcastAgent(options=resolve({"field": "economics"}))
 
@@ -706,13 +706,13 @@ class TestOptionsReachTheModelAndTheRow:
             mock_settings.return_value.deepseek_api_key = "sk-deepseek-test"
             mock_settings.return_value.deepseek_base_url = "https://api.deepseek.com"
             mock_settings.return_value.podcast_extraction_model = "deepseek-v4-flash"
-            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-4-5-20250929"
+            mock_settings.return_value.podcast_synthesis_model = "claude-sonnet-5"
 
             assert PodcastAgent().options == podcast_agent.DEFAULT_OPTIONS
 
     @pytest.mark.asyncio
     async def test_each_call_sets_its_own_temperature(self, mock_ground_pack):
-        """Extraction temperatures reach DeepSeek; synthesis reaches Claude."""
+        """Extraction temperatures reach DeepSeek; Claude no longer takes one."""
         with patch.object(PodcastAgent, '__init__', lambda x: None):
             agent = PodcastAgent()
             agent._call_deepseek = AsyncMock(
@@ -737,11 +737,12 @@ class TestOptionsReachTheModelAndTheRow:
             podcast_agent.TEMPERATURE_EXTRACTION,
             podcast_agent.TEMPERATURE_ANALYSIS,
         ]
-        assert agent._call_claude.call_args.kwargs["temperature"] == podcast_agent.TEMPERATURE_SCRIPT
+        assert "temperature" not in agent._call_claude.call_args.kwargs
+        assert agent._call_claude.call_args.kwargs["max_tokens"] == podcast_agent.SYNTHESIS_MAX_TOKENS
 
     @pytest.mark.asyncio
-    async def test_temperature_reaches_the_api_call(self):
-        """It has to reach the request, not just the helper's signature."""
+    async def test_claude_api_call_omits_temperature(self):
+        """Sonnet 5 rejects temperature; it must not reach the stream request."""
         with patch.object(PodcastAgent, '__init__', lambda x: None):
             agent = PodcastAgent()
 
@@ -760,11 +761,13 @@ class TestOptionsReachTheModelAndTheRow:
             mock_stream.get_final_message = AsyncMock(return_value=mock_final)
             agent.client = MagicMock()
             agent.client.messages.stream.return_value = mock_stream
-            agent.synthesis_model = "test-model"
+            agent.synthesis_model = "claude-sonnet-5"
 
-            await agent._call_claude("system", "user", temperature=0.1)
+            await agent._call_claude("system", "user")
 
-        assert agent.client.messages.stream.call_args.kwargs["temperature"] == 0.1
+        kwargs = agent.client.messages.stream.call_args.kwargs
+        assert "temperature" not in kwargs
+        assert kwargs["model"] == "claude-sonnet-5"
 
     @pytest.mark.asyncio
     async def test_free_text_stays_ahead_of_the_rules_in_the_real_message(self):
