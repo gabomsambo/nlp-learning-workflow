@@ -3,6 +3,37 @@
 # Read ONLY from the default branch at a pinned SHA, never from a pushed
 # branch, so a feature branch cannot change what executes here.
 
+# Pipeline agent for review/test/document.
+#
+# This repo previously had no `agent:` key, so it fell through to the global
+# `agent: auto` in ~/.no-mistakes/config.yaml -- and auto probes CLAUDE first.
+# Every pipeline run here was silently spending Claude plan quota.
+#
+# The list is an AVAILABILITY fallback resolved once at run startup, not
+# quota-aware routing. The FIRST available entry becomes the primary agent for
+# the whole run, so order is the only dial here.
+#
+# opencode leads as of 2026-09-05. It runs on OpenCode's free tier with no
+# credential at all (verified: `opencode run` answers on the free big-pickle
+# model, exit 0), so every run it takes is Claude and Codex quota preserved.
+#
+# Two known weaknesses, accepted deliberately -- codex sits directly behind it
+# and claude behind that, so the gate never fails for want of a runnable agent:
+#
+#   1. Structured output. codex has native structured-output parsing; opencode
+#      goes through no-mistakes' "prompt-only structured output fallback",
+#      which validates JSON out of the final assistant text. That is the
+#      weaker path for the review step's findings, and review is where 42 of
+#      46 lifetime fixes on these repos came from.
+#   2. No session reuse. `session_reuse` is supported for claude and codex
+#      only; other agents run cold, so opencode re-reads context on every
+#      review round rather than keeping a durable session.
+#
+# This repo runs [direct-PR +yolo], so firstmate merges green PRs without a
+# human read. The deterministic `test` gate below and CI are the backstops.
+# To revert, delete this whole `agent:` key and it falls back to global auto.
+agent: [opencode, codex, claude]
+
 commands:
   # The two cheap, stdlib-only checks from .github/workflows/tests.yml, which
   # both finish in well under a second and need no dependency install. The
