@@ -1437,7 +1437,9 @@ html[data-theme="cockpit"] .run-card-title { font-family: var(--font-ui); }
   bottom: var(--space-5);
   width: min(22rem, calc(100vw - 2 * var(--space-5)));
   max-width: none;
+  max-height: calc(100dvh - 32px);
   margin: 0;
+  overflow: auto;
 }
 
 .run-card.is-quiet:has(.run-card-summary:empty) {
@@ -1639,6 +1641,11 @@ html[data-theme="cockpit"] .run-card-title { font-family: var(--font-ui); }
     bottom: 84px;
     left: var(--space-3);
     width: auto;
+    max-height: calc(100dvh - 120px);
+  }
+  /* Room under the form so the primary button can scroll clear of a live card. */
+  .app-main:has(.run-card.is-floating.is-live) {
+    padding-bottom: 280px;
   }
   .run-card .btn-sm,
   .run-steps summary { min-height: 40px; }
