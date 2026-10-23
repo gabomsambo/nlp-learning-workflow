@@ -1,7 +1,8 @@
 """Lessons reading list.
 
 The paper page Lesson tab stays the reading surface. This page is the list
-that opens it, and every field the old table showed is still in the row.
+that opens it. Reading time and difficulty stay in words, the pillar is its
+name, and the paper id is a muted chip (or the title, when that is all we have).
 """
 
 from datetime import date
@@ -189,10 +190,12 @@ def test_lessons_page_is_a_reading_list_linked_to_the_paper(client):
     assert "+1 more" in body
     assert "15 min read" in body
     assert ">Medium<" in body
-    assert 'class="lesson-difficulty">2<' in body
-    assert 'class="lesson-time">15m<' in body
     assert 'class="lesson-paper-id">arxiv:2402.08593<' in body
-    assert 'class="lesson-pillar-id">ml-systems-production<' in body
+    assert 'title="arxiv:2402.08593"' in body
+    assert "lesson-record" not in body
+    assert "lesson-pillar-id" not in body
+    assert ">15m<" not in body
+    assert ">·<" not in body
     assert 'href="/papers/arxiv%3A2402.08593#lesson"' in body
     assert "15 Jan 2020" in body
     assert "2020-01-15T12:00:00" not in body
@@ -276,6 +279,6 @@ def test_missing_titles_keep_the_paper_id(client, monkeypatch):
     body = client.get("/lessons/").text
     assert "Paper titles could not be loaded" in body
     assert "Streams the graph and feeds counts to a booster." in body
-    assert 'class="lesson-paper-id">arxiv:2402.08593<' in body
+    assert 'class="lesson-paper-title" title="arxiv:2402.08593">arxiv:2402.08593<' in body
     assert "Graph Feature Preprocessor" not in body
     assert 'href="/papers/arxiv%3A2402.08593#lesson"' in body

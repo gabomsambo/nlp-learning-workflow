@@ -57,15 +57,17 @@
       <span class="lesson-main">
         <h2 class="lesson-title">{{ row.title }}</h2>
         <p class="lesson-source">
-          <span class="lesson-paper-title">{{ row.paper_title }}</span>
-          {% if row.pillar_name %}
-          <span class="pillar-inline {{ row.pillar_class }}">
-            <span aria-hidden="true">·</span>
-            {% if row.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
-            {{ row.pillar_name }}
-          </span>
+          <span class="lesson-paper-title"{% if row.paper_id %} title="{{ row.paper_id }}"{% endif %}>{{ row.paper_title }}</span>
+          {% if row.paper_id and row.paper_title != row.paper_id %}
+          <span class="lesson-paper-id">{{ row.paper_id }}</span>
           {% endif %}
         </p>
+        {% if row.pillar_name %}
+        <p class="lesson-pillar {{ row.pillar_class }}">
+          {% if row.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
+          {{ row.pillar_name }}
+        </p>
+        {% endif %}
         {% if row.preview %}
         <ul class="lesson-preview">
           {% for item in row.preview %}<li>{{ item }}</li>{% endfor %}
@@ -80,12 +82,6 @@
           {% if row.difficulty_label %}{{ chip(row.difficulty_label, row.difficulty_variant) }}{% endif %}
         </p>
         {% endif %}
-        <p class="lesson-record">
-          {% if row.paper_id %}<span>Paper <span class="lesson-paper-id">{{ row.paper_id }}</span></span>{% endif %}
-          {% if row.pillar_id %}<span>Pillar <span class="lesson-pillar-id">{{ row.pillar_id }}</span></span>{% endif %}
-          {% if row.time_compact %}<span class="lesson-time">{{ row.time_compact }}</span>{% endif %}
-          {% if row.difficulty_number %}<span>Difficulty <span class="lesson-difficulty">{{ row.difficulty_number }}</span></span>{% endif %}
-        </p>
       </span>
     {% if row.href %}</a>{% else %}</div>{% endif %}
   </li>
