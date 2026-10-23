@@ -4,8 +4,10 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
+
+from webui.services.postgrest_client import PostgrestClient
 
 from nlp_pillars.services.paper_metadata_refresh import (
     MetadataRefreshError,
@@ -17,6 +19,18 @@ from nlp_pillars.services.paper_metadata_refresh import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
+
+
+@router.get("/")
+async def list_papers(limit: int = Query(default=200, ge=1, le=500)) -> Dict[str, Any]:
+    """Papers for the shell search palette.
+
+    Same fields the library page already loads. The palette filters title and
+    author in the browser, so this stays a plain list.
+    """
+    client = PostgrestClient()
+    papers = await client.list_papers(limit=limit)
+    return {"papers": papers}
 
 
 class FieldChangeResponse(BaseModel):

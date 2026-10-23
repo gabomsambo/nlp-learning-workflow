@@ -204,6 +204,17 @@ const audioRunStatus = document.getElementById('audio-run-status');
 const audioProgressBar = document.getElementById('audio-progress-bar');
 const audioStages = document.getElementById('audio-stages');
 const episodePlayer = document.getElementById('episode-player');
+episodePlayer.addEventListener('play', () => {
+  if (!window.NlpPlayer || typeof window.NlpPlayer.attach !== 'function') return;
+  const title = (scriptTitle && scriptTitle.textContent) || 'Episode';
+  window.NlpPlayer.attach(episodePlayer, {
+    script_id: currentScriptId || '',
+    title,
+    href: currentScriptId
+      ? ('/podcast/?script=' + encodeURIComponent(currentScriptId))
+      : '/podcast/',
+  });
+});
 const audioFileHint = document.getElementById('audio-file-hint');
 const audioFilePath = document.getElementById('audio-file-path');
 

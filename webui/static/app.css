@@ -867,3 +867,305 @@ html[data-theme="journal"] .pillar-tile-meta { color: var(--on-deep); }
 @media (prefers-reduced-motion: reduce) {
   .skeleton-line { animation: none; }
 }
+
+/* Command palette, shortcut help, and the global mini player. */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nav-kbd,
+.palette kbd,
+.shortcut-list kbd,
+.palette-hint kbd {
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+}
+
+.palette-hint kbd,
+.shortcut-list kbd { margin-left: 0; }
+
+.palette::backdrop,
+.shortcuts-dialog::backdrop {
+  background: color-mix(in srgb, var(--text) 42%, transparent);
+}
+
+.palette > article,
+.shortcuts-dialog > article {
+  width: min(560px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+}
+
+.palette > article { margin-top: 12vh; }
+
+.shortcuts-dialog > article { padding: var(--space-5); }
+
+.palette-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.palette .dialog-close {
+  width: auto;
+  height: auto;
+  min-width: 44px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  font: 600 var(--fs-caption) / 1 var(--font-mono);
+  white-space: nowrap;
+}
+
+.palette-label { flex: 1; min-width: 0; margin: 0; }
+
+.palette .palette-input {
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: 500 var(--fs-ui) / 1.4 var(--font-ui);
+}
+
+.palette-status {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.palette-status:empty { display: none; }
+
+.palette-list {
+  max-height: min(420px, 50vh);
+  margin: 0;
+  padding: var(--space-2);
+  overflow: auto;
+  list-style: none;
+}
+
+.palette-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.palette-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-control);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.palette-option.is-active { background: var(--accent-soft); }
+
+.palette-option-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.palette-option-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-option-meta {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.palette-hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+html[data-theme="cockpit"] .palette-option { min-height: var(--row-h); }
+html[data-theme="journal"] .palette > article,
+html[data-theme="journal"] .shortcuts-dialog > article {
+  border-color: transparent;
+}
+
+.shortcut-list {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.shortcut-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--row-h);
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcuts-dialog h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shortcut-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.mini-player:not([hidden]) {
+  position: fixed;
+  z-index: 14;
+  right: 0;
+  bottom: 0;
+  left: var(--sidebar-w);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 64px;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+}
+
+.mini-title {
+  flex: 1 1 140px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.mini-title:hover { text-decoration: underline; }
+
+.mini-transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.mini-btn,
+.mini-player select {
+  min-width: 44px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  font: 600 var(--fs-caption) / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.mini-play {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.mini-scrub {
+  flex: 2 1 120px;
+  min-width: 80px;
+  margin: 0;
+}
+
+.mini-player input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.mini-time {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-rate { margin: 0; }
+
+html[data-theme="cockpit"] .mini-player:not([hidden]) {
+  min-height: var(--row-h);
+  box-shadow: none;
+  border-top-color: var(--border-strong);
+}
+
+html[data-theme="journal"] .mini-player:not([hidden]) {
+  right: var(--space-4);
+  bottom: var(--space-4);
+  left: calc(var(--sidebar-w) + var(--space-4));
+  border: 0;
+  border-radius: var(--r-card);
+}
+
+html[data-player="on"] .app-main { padding-bottom: 96px; }
+html[data-player="on"] .toasts { bottom: 80px; }
+
+.phone-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (max-width: 859px) {
+  .mini-player:not([hidden]) {
+    left: 0;
+    right: 0;
+    bottom: calc(59px + env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+    padding-bottom: var(--space-2);
+  }
+  html[data-theme="journal"] .mini-player:not([hidden]) {
+    right: 12px;
+    bottom: calc(71px + env(safe-area-inset-bottom));
+    left: 12px;
+  }
+  .mini-title { flex-basis: 100%; }
+  .mini-scrub { flex-basis: 100%; }
+  html[data-player="on"] .app-main { padding-bottom: 240px; }
+  html[data-player="on"] .toasts { bottom: 200px; }
+}
