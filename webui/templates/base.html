@@ -64,6 +64,12 @@
         {{ nav_link('/pipeline/', 'Activity', on_activity, 'activity') }}
       </nav>
       <div class="sidebar-foot">
+        <button type="button" class="nav-button" data-open-palette>
+          {{ icon('search') }}<span>Search</span><kbd class="nav-kbd" data-search-kbd>Ctrl K</kbd>
+        </button>
+        <button type="button" class="nav-button" data-open-shortcuts>
+          {{ icon('help') }}<span>Shortcuts</span><kbd class="nav-kbd">?</kbd>
+        </button>
         <button type="button" class="nav-button" data-open-settings>
           {{ icon('settings') }}<span>Settings</span>
         </button>
@@ -76,7 +82,10 @@
           <span class="brand-mark" aria-hidden="true">N</span>
           <span class="brand-name">NLP <em>Learning</em></span>
         </a>
-        <button type="button" class="menu-button btn btn-secondary btn-sm" id="menu-open" aria-haspopup="dialog" aria-controls="nav-drawer" aria-expanded="false" {% if on_more %}aria-current="page"{% endif %}>Menu</button>
+        <div class="phone-actions">
+          <button type="button" class="menu-button btn btn-secondary btn-sm" data-open-palette>Search</button>
+          <button type="button" class="menu-button btn btn-secondary btn-sm" id="menu-open" aria-haspopup="dialog" aria-controls="nav-drawer" aria-expanded="false" {% if on_more %}aria-current="page"{% endif %}>Menu</button>
+        </div>
       </div>
       {% block page_header %}{% endblock %}
       <main id="main" class="container">
@@ -109,6 +118,8 @@
         {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
         {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
         {{ nav_link('/pipeline/', 'Activity', on_activity, 'activity') }}
+        <button type="button" class="nav-button" data-open-palette>{{ icon('search') }}<span>Search</span></button>
+        <button type="button" class="nav-button" data-open-shortcuts>{{ icon('help') }}<span>Shortcuts</span></button>
         <button type="button" class="nav-button" data-open-settings>{{ icon('settings') }}<span>Settings</span></button>
       </nav>
     </article>
@@ -154,8 +165,60 @@
   </form>
   {% endcall %}
 
+  <dialog id="command-palette" class="dialog palette" aria-labelledby="palette-label">
+    <article>
+      <div class="palette-bar">
+        <label id="palette-label" class="palette-label">
+          <span class="visually-hidden">Search papers and commands</span>
+          <input id="palette-input" class="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search papers, or jump to a page" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+        </label>
+        <button type="button" class="dialog-close" data-dialog-close aria-label="Close">Esc</button>
+      </div>
+      <p id="palette-status" class="palette-status" role="status"></p>
+      <ul id="palette-list" class="palette-list" role="listbox" aria-label="Search results"></ul>
+      <p class="palette-hint"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> open · <kbd>Esc</kbd> close</p>
+    </article>
+  </dialog>
+
+  <dialog id="shortcuts-dialog" class="dialog shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <article>
+      <header>
+        <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+        <button type="button" class="dialog-close" data-dialog-close aria-label="Close">&times;</button>
+      </header>
+      <div id="shortcuts-body"></div>
+    </article>
+  </dialog>
+
+  <div id="mini-player" class="mini-player" hidden>
+    <audio id="mini-player-audio" preload="none"></audio>
+    <a id="mini-player-title" class="mini-title" href="/podcast/">Episode</a>
+    <div class="mini-transport">
+      <button type="button" class="mini-btn" id="mini-player-back" aria-label="Back 15 seconds">−15</button>
+      <button type="button" class="mini-btn mini-play" id="mini-player-toggle" aria-label="Play">Play</button>
+      <button type="button" class="mini-btn" id="mini-player-forward" aria-label="Forward 30 seconds">+30</button>
+    </div>
+    <label class="mini-scrub">
+      <span class="visually-hidden">Position</span>
+      <input id="mini-player-range" type="range" min="0" max="0" step="0.1" value="0" disabled>
+    </label>
+    <span id="mini-player-time" class="mini-time"></span>
+    <label class="mini-rate">
+      <span class="visually-hidden">Playback speed</span>
+      <select id="mini-player-rate" aria-label="Playback speed">
+        <option value="0.75">0.75×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="1.75">1.75×</option>
+        <option value="2">2×</option>
+      </select>
+    </label>
+  </div>
+
   <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
   <script src="/static/theme.js?v={{ asset_v | default('1', true) }}"></script>
+  <script src="/static/shell.js?v={{ asset_v | default('1', true) }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

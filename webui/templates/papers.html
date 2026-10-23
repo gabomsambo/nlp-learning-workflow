@@ -58,7 +58,9 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  PaperModal.init({ triggerSelector: '.paper-title-link' });
+  var modal = PaperModal.init({ triggerSelector: '.paper-title-link' });
+  var paperId = new URLSearchParams(window.location.search).get('paper');
+  if (paperId && modal && modal.open) modal.open(paperId);
 });
 </script>
 {% endblock %}
