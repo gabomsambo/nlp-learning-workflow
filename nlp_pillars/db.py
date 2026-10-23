@@ -1428,6 +1428,129 @@ def add_to_paper_queue(pillar_id: str, papers: List[PaperRef], priority: int = 5
     return added
 
 
+class LibraryEnqueueError(Exception):
+    """An explicit enqueue of a library paper could not be written.
+
+    ``code`` is ``not_found`` (no such paper in this pillar), ``unresolvable``
+    (nothing the next auto-run could download) or ``unavailable`` (the queue
+    could not be read or written).
+    """
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
+
+
+def enqueue_library_paper(pillar_id: str, paper_id: str, priority: int = 5) -> Dict[str, str]:
+    """Put a paper already in the library onto ``paper_queue``.
+
+    The daily auto-run pops unprocessed rows from that table
+    (``pop_from_paper_queue``). ``add_to_paper_queue`` refuses any id that is
+    already in ``papers`` — the right dedupe when discovery is filing new
+    candidates, and the wrong answer for an explicit Enqueue of a search hit,
+    which is a library paper by definition. This writes the same table without
+    that skip, and still refuses a second unprocessed row for the same paper.
+    """
+    if not paper_id or not str(paper_id).strip():
+        raise LibraryEnqueueError("not_found", "A paper id is required")
+
+    client = get_client()
+    try:
+        paper_response = (client.table('papers')
+                          .select('id,title,url_pdf')
+                          .eq('pillar_id', pillar_id)
+                          .eq('id', paper_id)
+                          .execute())
+    except Exception as e:
+        logger.error(f"Failed to read paper {paper_id} for enqueue: {e}")
+        raise LibraryEnqueueError("unavailable", f"Could not read the paper: {e}") from e
+
+    if paper_response['error']:
+        logger.error(f"Failed to read paper {paper_id} for enqueue: {paper_response['error']}")
+        raise LibraryEnqueueError(
+            "unavailable", f"Could not read the paper: {paper_response['error']}"
+        )
+
+    rows = paper_response['data'] or []
+    if not rows:
+        raise LibraryEnqueueError(
+            "not_found", f"Paper {paper_id!r} is not in pillar {pillar_id!r}"
+        )
+
+    paper = rows[0]
+    title = paper.get('title') or paper_id
+
+    try:
+        queue_response = (client.table('paper_queue')
+                          .select('paper_id')
+                          .eq('pillar_id', pillar_id)
+                          .eq('paper_id', paper_id)
+                          .eq('processed', False)
+                          .execute())
+    except Exception as e:
+        logger.error(f"Failed to read the queue for {paper_id}: {e}")
+        raise LibraryEnqueueError("unavailable", f"Could not read the queue: {e}") from e
+
+    if queue_response['error']:
+        logger.error(f"Failed to read the queue for {paper_id}: {queue_response['error']}")
+        raise LibraryEnqueueError(
+            "unavailable", f"Could not read the queue: {queue_response['error']}"
+        )
+
+    if queue_response['data']:
+        return {"status": "already_queued", "paper_id": paper_id, "title": title}
+
+    pdf_url = resolvable_pdf_url(paper_id, paper.get('url_pdf'))
+    if not pdf_url:
+        raise LibraryEnqueueError(
+            "unresolvable",
+            "This paper has no PDF the next auto-run could download",
+        )
+
+    queue_data = {
+        'paper_id': paper_id,
+        'pillar_id': pillar_id,
+        'title': title,
+        'source': 'arxiv' if is_arxiv_id(paper_id) else 'url',
+        'url_pdf': pdf_url,
+        'priority': priority,
+        'processed': False,
+    }
+
+    try:
+        response = client.table('paper_queue').insert(queue_data)
+    except Exception as e:
+        logger.error(f"Failed to enqueue paper {paper_id}: {e}")
+        raise LibraryEnqueueError("unavailable", f"Could not queue the paper: {e}") from e
+
+    if response['error'] and _is_missing_url_pdf_column(response['error']):
+        logger.error(
+            "paper_queue has no url_pdf column — run "
+            "docs/migrations/008_paper_queue_url_pdf.sql. Falling back to "
+            "queueing without it; non-arXiv papers will be refused."
+        )
+        if not is_arxiv_id(paper_id):
+            raise LibraryEnqueueError(
+                "unresolvable",
+                "The queue has no url_pdf column yet, so this paper cannot be queued",
+            )
+        queue_data.pop('url_pdf')
+        try:
+            response = client.table('paper_queue').insert(queue_data)
+        except Exception as e:
+            logger.error(f"Failed to enqueue paper {paper_id} without url_pdf: {e}")
+            raise LibraryEnqueueError("unavailable", f"Could not queue the paper: {e}") from e
+
+    if response['error']:
+        logger.error(f"Failed to enqueue paper {paper_id}: {response['error']}")
+        raise LibraryEnqueueError(
+            "unavailable", f"Could not queue the paper: {response['error']}"
+        )
+
+    logger.info(f"Queued library paper {paper_id} for pillar {pillar_id}")
+    return {"status": "queued", "paper_id": paper_id, "title": title}
+
+
 def pop_from_paper_queue(pillar_id: str, limit: int = 1) -> List[PaperRef]:
     """
     Get and mark papers from the queue as being processed.

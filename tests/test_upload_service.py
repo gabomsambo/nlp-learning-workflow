@@ -618,10 +618,13 @@ class TestTheUploadFormSendsWhatTheUserChose:
 
     @pytest.fixture
     def template(self):
+        root = Path(__file__).resolve().parents[1]
+        # The panel markup stays in the page; the behaviour lives in
+        # pillar-upload.js so the same contract is checked in both.
         return (
-            Path(__file__).resolve().parents[1]
-            / "webui" / "templates" / "pillar_detail.html"
-        ).read_text()
+            (root / "webui" / "templates" / "pillar_detail.html").read_text()
+            + (root / "webui" / "static" / "pillar-upload.js").read_text()
+        )
 
     def test_all_four_checkboxes_render_checked(self, template):
         for box_id in (

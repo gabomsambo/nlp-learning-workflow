@@ -8,15 +8,18 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 from nlp_pillars import vectors
 from nlp_pillars.db import (
+    LibraryEnqueueError,
     PillarCreateError,
     PillarExistsError,
     create_pillar,
     delete_pillar,
+    enqueue_library_paper,
     get_papers,
     get_pillar_by_id,
     get_pillars_or_empty,
@@ -26,6 +29,12 @@ from nlp_pillars.db import (
 from nlp_pillars.schemas import Pillar, PillarCreate, PillarUpdate
 
 router = APIRouter(prefix="/api/pillars", tags=["pillars"])
+
+
+class EnqueuePaperRequest(BaseModel):
+    """A library paper to place on paper_queue for the next auto-run."""
+
+    paper_id: str = Field(..., min_length=1)
 
 
 @router.post("/", response_model=Pillar, status_code=status.HTTP_201_CREATED)
@@ -276,6 +285,36 @@ async def search_pillar(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Search failed: {str(e)}"
         )
+
+
+@router.post("/{pillar_id}/queue")
+async def enqueue_pillar_paper(pillar_id: str, body: EnqueuePaperRequest) -> Dict[str, str]:
+    """Queue a paper already in this pillar for the next auto-run.
+
+    Search hits are library papers. ``add_to_paper_queue`` skips those, so this
+    route calls ``enqueue_library_paper``, which writes the same ``paper_queue``
+    table the orchestrator pops.
+    """
+    try:
+        if not pillar_exists(pillar_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pillar '{pillar_id}' not found",
+            )
+        return enqueue_library_paper(pillar_id, body.paper_id)
+    except LibraryEnqueueError as e:
+        code = {
+            "not_found": status.HTTP_404_NOT_FOUND,
+            "unresolvable": 422,
+        }.get(e.code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        raise HTTPException(status_code=code, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not queue the paper: {e}",
+        ) from e
 
 
 def _calculate_keyword_overlap(query: str, focus_areas: List[str]) -> float:

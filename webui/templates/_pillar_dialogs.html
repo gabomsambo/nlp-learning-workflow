@@ -1,0 +1,51 @@
+{# Shared New/Edit and Delete dialogs. Save is type="button": a submit control
+   also navigated to /pillars/?name=… while the fetch ran. #}
+<dialog id="pillar-modal" class="dialog" aria-labelledby="modal-title">
+  <article>
+    <header>
+      <h2 id="modal-title">New Pillar</h2>
+      <button type="button" class="dialog-close" id="modal-close" aria-label="Close">&times;</button>
+    </header>
+    <form id="pillar-form">
+      <div class="field">
+        <label for="pillar-name">Name</label>
+        <input type="text" id="pillar-name" name="name" placeholder="e.g. Advanced Transformers" required maxlength="100" autocomplete="off">
+        <p class="field-error" id="name-feedback" role="status"></p>
+      </div>
+      <div class="field">
+        <label for="pillar-goal">Learning goal</label>
+        <textarea id="pillar-goal" name="goal" placeholder="What you want to learn with this pillar" required maxlength="500" rows="3"></textarea>
+        <p class="field-help">At least 10 characters, at most 500.</p>
+        <p class="field-error" id="goal-feedback" role="status"></p>
+      </div>
+      <div class="field">
+        <label for="pillar-focus-areas">Focus areas</label>
+        <textarea id="pillar-focus-areas" name="focus_areas" placeholder="One topic per line" rows="4"></textarea>
+        <p class="field-help">One topic per line. These steer discovery.</p>
+      </div>
+      <div class="field">
+        <label for="pillar-papers-per-day">Papers per day</label>
+        <input type="number" id="pillar-papers-per-day" name="papers_per_day" min="1" max="10" value="2">
+        <p class="field-help">How many papers the auto-run aims to process (1–10).</p>
+      </div>
+    </form>
+    <footer class="dialog-actions">
+      <button type="button" class="btn btn-secondary" id="modal-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="modal-save">Save Pillar</button>
+    </footer>
+  </article>
+</dialog>
+
+<dialog id="delete-modal" class="dialog" aria-labelledby="delete-title">
+  <article>
+    <header>
+      <h2 id="delete-title">Delete pillar</h2>
+      <button type="button" class="dialog-close" id="delete-cancel" data-dialog-close aria-label="Close">&times;</button>
+    </header>
+    <p>Delete “<span id="delete-pillar-name"></span>”? This cannot be undone. A pillar that still has papers cannot be deleted.</p>
+    <footer class="dialog-actions">
+      <button type="button" class="btn btn-secondary" id="delete-cancel-btn">Cancel</button>
+      <button type="button" class="btn btn-danger" id="delete-confirm">Delete</button>
+    </footer>
+  </article>
+</dialog>
