@@ -60,7 +60,7 @@
 {%- endmacro %}
 
 {% macro chip(label, variant='neutral', pillar=None) -%}
-<span class="chip chip-{{ variant }}{% if pillar %} pillar-{{ pillar }}{% endif %}">{{ label }}</span>
+<span class="chip chip-{{ variant }}{% if pillar %} chip-pillar pillar-{{ pillar }}{% endif %}">{{ label }}</span>
 {%- endmacro %}
 
 {% macro card(title=None) -%}

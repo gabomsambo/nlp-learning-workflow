@@ -235,17 +235,52 @@ class PostgrestClient:
         items.sort(key=lambda x: (x.created_at is not None, x.created_at), reverse=True)
         return items[:limit]
 
-    async def list_papers(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        """List papers with basic fields."""
-        params: Dict[str, Any] = {"select": "id,title,authors,year,citation_count,pillar_id,added_at", "order": "added_at.desc", "limit": limit}
+    async def list_papers_checked(
+        self, pillar: Optional[str] = None, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """List papers, raising if the database cannot be read.
+
+        ``list_papers`` swallows that failure and returns ``[]``. The library
+        page has to tell an empty shelf from a database it could not ask.
+        """
+        params: Dict[str, Any] = {
+            "select": "id,title,authors,year,citation_count,pillar_id,added_at",
+            "order": "added_at.desc",
+            "limit": limit,
+        }
         if pillar:
             params["pillar_id"] = f"eq.{pillar}"
+        data, _ = await self._get("papers", params=params)
+        return data or []
+
+    async def list_papers(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """List papers with basic fields."""
         # Degrade to an empty list when the database is unreachable.
         try:
-            data, _ = await self._get("papers", params=params)
+            return await self.list_papers_checked(pillar=pillar, limit=limit)
         except Exception:
             return []
-        return data
+
+    async def paper_ids_with_rows(self, table: str) -> set[str]:
+        """Paper ids that have at least one row in ``table``.
+
+        A failure degrades to an empty set: a missing lessons table drops the
+        badge rather than taking down the library. Ten thousand rows is the
+        ceiling for this badge, which is a personal library, not a page.
+        """
+        try:
+            data, _ = await self._get(
+                table, params={"select": "paper_id", "limit": 10000}
+            )
+        except Exception as exc:
+            logger.warning("Could not read %s ids for library badges: %s", table, exc)
+            return set()
+        found: set[str] = set()
+        for row in data or []:
+            paper_id = row.get("paper_id")
+            if paper_id:
+                found.add(str(paper_id))
+        return found
 
     async def list_lessons(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """List lessons with display fields."""
@@ -357,6 +392,22 @@ class PostgrestClient:
         except Exception as e:
             print(f"Error fetching paper details: {e}")
             return None
+
+    async def scripts_for_paper(self, paper_id: str) -> List[Dict[str, Any]]:
+        """Podcast scripts for one paper, newest first.
+
+        Raises when the read fails. The paper page turns that into "could not
+        be loaded", which is a different fact from "this paper has no episode".
+        ``audio_metadata`` is not selected: migration 014 is applied by hand,
+        and a missing column must not hide the scripts that are already there.
+        """
+        params = {
+            "select": "id,paper_id,title,word_count,created_at",
+            "paper_id": f"eq.{paper_id}",
+            "order": "created_at.desc",
+        }
+        data, _ = await self._get("podcast_scripts", params=params)
+        return data or []
 
 
 

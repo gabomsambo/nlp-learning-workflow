@@ -1,16 +1,15 @@
 /*
  * Pillar search results. Built with createElement + textContent.
  *
- * paperPageHref is the single switch for the Library PR's paper page.
- * It returns null until GET /papers/{id} exists; View Paper then opens the
- * shared paper modal via .activity-item-link. Return
- * '/papers/' + encodeURIComponent(paperId) to navigate there instead.
+ * paperPageHref sends View Paper to the paper page. A missing id stays
+ * null so the caller can fall back to the quick-peek modal.
  */
 (function (global) {
   'use strict';
 
   function paperPageHref(paperId) {
-    return null;
+    if (typeof paperId !== 'string' || !paperId) return null;
+    return '/papers/' + encodeURIComponent(paperId);
   }
 
   function enqueueMessage(status) {

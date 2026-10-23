@@ -1,0 +1,280 @@
+{% extends 'base.html' %}
+{% from "_components.html" import page_header, button, chip, empty_state, callout %}
+{% block title %}{% if found %}{{ page.title }}{% else %}Paper not found{% endif %}{% endblock %}
+{% block content %}
+{% if not found %}
+<div class="paper-page">
+{% call page_header('Paper not found', 'Library') %}
+  {{ button('Back to the library', 'secondary', href='/papers/') }}
+{% endcall %}
+{{ empty_state('This paper is not in the library.', paper_id, '/papers/', 'Back to the library') }}
+</div>
+{% else %}
+<div class="paper-page" data-paper-id="{{ page.id }}">
+  <nav class="crumb" aria-label="Breadcrumb">
+    <a href="/papers/">Library</a>
+    {% if page.pillar_name %}
+    <span aria-hidden="true">/</span>
+    <a class="crumb-pillar {{ page.pillar_class }}" href="{{ page.pillar_href }}">
+      {% if page.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
+      {{ page.pillar_name }}
+    </a>
+    {% endif %}
+  </nav>
+
+  <div class="paper-layout">
+    <div class="paper-main">
+      <header class="paper-head">
+        <p class="paper-kicker">
+          <span class="paper-id">{{ page.id }}</span>
+          {% if page.year %}<span aria-hidden="true">·</span><span>{{ page.year }}</span>{% endif %}
+          {% if page.venue %}<span aria-hidden="true">·</span><span>{{ page.venue }}</span>{% endif %}
+          {% if page.processed %}{{ chip('Processed', 'ok') }}{% else %}{{ chip('Not processed', 'warn') }}{% endif %}
+        </p>
+        <h1 class="paper-title">{{ page.title }}</h1>
+        {% if page.authors %}<p class="paper-authors">{{ page.authors }}</p>{% endif %}
+        <div class="page-actions">
+          {% if page.pdf_href %}
+          <a class="btn btn-secondary btn-md" href="{{ page.pdf_href }}" target="_blank" rel="noopener noreferrer">Open PDF</a>
+          {% elif page.pdf_unsafe %}
+          <p class="paper-muted">PDF: {{ page.pdf_unsafe }}</p>
+          {% endif %}
+          <button type="button" class="btn btn-ghost btn-md" id="refresh-metadata" data-paper-id="{{ page.id }}">Refresh metadata</button>
+          <a class="btn btn-primary btn-md" href="{{ page.study_href }}">Study these cards</a>
+          <a class="btn btn-secondary btn-md" href="{{ page.make_episode_href }}">Make episode</a>
+        </div>
+        <p id="metadata-refresh-status" class="refresh-status" role="status" hidden></p>
+      </header>
+
+      <nav class="tabs" aria-label="Paper">
+        <a href="#summary">Summary</a>
+        <a href="#notes">Notes{% if page.notes %} · {{ page.notes|length }}{% endif %}</a>
+        <a href="#lesson">Lesson</a>
+        <a href="#cards">Cards{% if page.cards %} · {{ page.cards|length }}{% endif %}</a>
+        <a href="#episode">Episode{% if page.episodes %} · {{ page.episodes|length }}{% endif %}</a>
+      </nav>
+
+      <div class="paper-panels">
+        <section id="summary" class="paper-panel paper-prose">
+          <h2 class="visually-hidden">Summary</h2>
+          {% if page.tldr %}
+          {% call callout('tldr', 'In one paragraph') %}
+          {{ page.tldr }}
+          {% endcall %}
+          {% endif %}
+          {% if page.abstract %}
+          <h3>Abstract</h3>
+          <p>{{ page.abstract }}</p>
+          {% endif %}
+          {% if page.summary and page.summary.problem %}
+          <h3>The problem</h3>
+          <p>{{ page.summary.problem }}</p>
+          {% endif %}
+          {% if page.summary and page.summary.method %}
+          <h3>What they did</h3>
+          <p>{{ page.summary.method }}</p>
+          {% endif %}
+          {% if page.summary and page.summary.findings %}
+          <h3>Key findings</h3>
+          <ol>
+            {% for item in page.summary.findings %}<li>{{ item }}</li>{% endfor %}
+          </ol>
+          {% endif %}
+          {% if page.summary and page.summary.key_terms %}
+          <h3>Key terms</h3>
+          <div class="term-row">
+            {% for term in page.summary.key_terms %}{{ chip(term) }}{% endfor %}
+          </div>
+          {% endif %}
+          {% if not page.tldr and not page.abstract and not page.summary %}
+          <p class="paper-muted">No summary has been written for this paper yet.</p>
+          {% endif %}
+        </section>
+
+        <section id="notes" class="paper-panel paper-prose">
+          <h2>Notes</h2>
+          {% if page.notes %}
+          {% for note in page.notes %}
+          <article class="card note-card">
+            {% if note.problem %}<h3>Problem</h3><p>{{ note.problem }}</p>{% endif %}
+            {% if note.method %}<h3>Method</h3><p>{{ note.method }}</p>{% endif %}
+            {% if note.findings %}
+            <h3>Key findings</h3>
+            <ul>{% for item in note.findings %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+            {% if note.limitations %}
+            <h3>Limitations</h3>
+            <ul>{% for item in note.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+            {% if note.future_work %}
+            <h3>Future work</h3>
+            <ul>{% for item in note.future_work %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+            {% if note.key_terms %}
+            <h3>Key terms</h3>
+            <div class="term-row">{% for term in note.key_terms %}{{ chip(term) }}{% endfor %}</div>
+            {% endif %}
+            {% if note.related_papers %}
+            <h3>Related papers</h3>
+            <ul>{% for item in note.related_papers %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+            {% if note.confidence %}<p class="paper-muted">Confidence {{ note.confidence }}</p>{% endif %}
+          </article>
+          {% endfor %}
+          {% else %}
+          <p class="paper-muted">No research notes for this paper yet.</p>
+          {% endif %}
+        </section>
+
+        <section id="lesson" class="paper-panel paper-prose">
+          <h2>Lesson</h2>
+          <div class="read-progress" id="read-progress">
+            <div class="read-track" aria-hidden="true"><span id="read-bar"></span></div>
+            <p id="read-label">On this browser · not started</p>
+            <p class="paper-muted">Reading progress stays in this browser. It is not saved to your library.</p>
+          </div>
+          {% if page.lessons %}
+          {% for lesson in page.lessons %}
+          <article class="lesson-block">
+            {% if lesson.difficulty_label or lesson.minutes %}
+            <p class="lesson-meta">
+              {% if lesson.difficulty_label %}{{ chip(lesson.difficulty_label, lesson.difficulty_variant) }}{% endif %}
+              {% if lesson.minutes %}<span class="paper-muted">{{ lesson.minutes }} min read</span>{% endif %}
+            </p>
+            {% endif %}
+            {% if lesson.takeaways %}
+            <h3>Takeaways</h3>
+            <ul>{% for item in lesson.takeaways %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+            {% if lesson.practice_ideas %}
+            <h3>Try it yourself</h3>
+            <ul>{% for item in lesson.practice_ideas %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+            {% if lesson.connections %}
+            <h3>Connections</h3>
+            <ul>{% for item in lesson.connections %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% endif %}
+          </article>
+          {% endfor %}
+          {% else %}
+          <p class="paper-muted">No lesson for this paper yet.</p>
+          {% endif %}
+        </section>
+
+        <section id="cards" class="paper-panel">
+          <div class="section-head">
+            <h2>Cards</h2>
+            {% if page.cards %}
+            <button type="button" class="btn btn-secondary btn-sm" id="quiz-answers-toggle" aria-controls="paper-quiz-cards" aria-expanded="true">Hide answers</button>
+            {% endif %}
+          </div>
+          {% if page.cards %}
+          <div id="paper-quiz-cards" class="card-list">
+            {% for card in page.cards %}
+            <article class="card quiz-read">
+              <p class="quiz-question">{{ card.question }}</p>
+              <p class="quiz-answer" data-quiz-answer>{{ card.answer }}</p>
+              {% if card.difficulty_label %}
+              <p>{{ chip(card.difficulty_label, card.difficulty_variant) }}</p>
+              {% endif %}
+            </article>
+            {% endfor %}
+          </div>
+          <script>
+          (function () {
+            var show = true;
+            try { show = localStorage.getItem('nlp:quizAnswersVisible') !== 'false'; } catch (e) {}
+            document.querySelectorAll('[data-quiz-answer]').forEach(function (node) {
+              node.hidden = !show;
+            });
+            var toggle = document.getElementById('quiz-answers-toggle');
+            if (!toggle) return;
+            toggle.textContent = show ? 'Hide answers' : 'Show answers';
+            toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+          })();
+          </script>
+          {% else %}
+          <p class="paper-muted">No cards for this paper yet.</p>
+          {% endif %}
+        </section>
+
+        <section id="episode" class="paper-panel">
+          <h2>Episode</h2>
+          {% if page.episodes_unavailable %}
+          <p class="paper-muted">Episodes for this paper could not be loaded. This does not mean there are none.</p>
+          {% elif page.episodes %}
+          <ul class="episode-list">
+            {% for episode in page.episodes %}
+            <li>
+              <a class="episode-link" href="{{ episode.href }}">{{ episode.title }}</a>
+              <p class="list-row-meta">
+                {% if episode.words %}{{ episode.words }}{% endif %}
+                {% if episode.words and episode.when %} · {% endif %}
+                {% if episode.when %}{{ episode.when }}{% endif %}
+              </p>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="paper-muted">No episode for this paper yet.</p>
+          {{ button('Make episode', href=page.make_episode_href) }}
+          {% endif %}
+        </section>
+      </div>
+    </div>
+
+    <aside class="paper-rail" aria-label="About this paper">
+      <article class="card episode-card {{ page.pillar_class }}">
+        <h2 class="card-title">Episode</h2>
+        {% if page.episodes %}
+        {% for episode in page.episodes %}
+        <p><a href="{{ episode.href }}">{{ episode.title }}</a></p>
+        <p class="list-row-meta">Open in Listen{% if episode.words %} · {{ episode.words }}{% endif %}</p>
+        {% endfor %}
+        {% elif page.episodes_unavailable %}
+        <p class="paper-muted">Episodes could not be loaded.</p>
+        {% else %}
+        <p class="paper-muted">Nothing to play yet.</p>
+        {{ button('Make episode', href=page.make_episode_href) }}
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <h2 class="card-title">Quiz</h2>
+        {% if page.first_question %}
+        <p class="rail-question">{{ page.first_question }}</p>
+        <p class="list-row-meta">{{ page.cards|length }} card{{ 's' if page.cards|length != 1 else '' }}</p>
+        {% else %}
+        <p class="paper-muted">No cards for this paper yet.</p>
+        {% endif %}
+        {{ button('Study these cards', href=page.study_href) }}
+      </article>
+
+      <article class="card">
+        <h2 class="visually-hidden">Details</h2>
+        <dl class="paper-kv">
+          {% if page.pillar_name %}
+          <dt>Pillar</dt><dd>{{ page.pillar_name }}</dd>
+          {% endif %}
+          {% if page.added %}
+          <dt>Added</dt><dd>{{ page.added }}</dd>
+          {% endif %}
+          {% if page.citations %}
+          <dt>Citations</dt><dd>{{ page.citations }}</dd>
+          {% endif %}
+          {% if page.lessons and page.lessons[0].minutes %}
+          <dt>Lesson</dt>
+          <dd>{{ page.lessons[0].minutes }} min{% if page.lessons[0].difficulty_label %} · {{ page.lessons[0].difficulty_label }}{% endif %}</dd>
+          {% endif %}
+        </dl>
+      </article>
+    </aside>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if found %}
+<script src="/static/paper-page.js?v={{ asset_v | default('1', true) }}"></script>
+{% endif %}
+{% endblock %}

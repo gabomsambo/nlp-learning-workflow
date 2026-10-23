@@ -92,3 +92,45 @@ async def test_list_papers_success(monkeypatch):
     assert items[0]["id"] == "p1"
 
 
+@pytest.mark.asyncio
+async def test_list_papers_checked_raises_and_list_papers_degrades(monkeypatch):
+    client = PostgrestClient(base_url="http://example", token=None)
+
+    async def fake_get(path, params=None):
+        raise httpx.HTTPError("boom")
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    with pytest.raises(httpx.HTTPError):
+        await client.list_papers_checked()
+    assert await client.list_papers() == []
+
+
+@pytest.mark.asyncio
+async def test_paper_ids_with_rows_degrades_to_empty(monkeypatch):
+    client = PostgrestClient(base_url="http://example", token=None)
+
+    async def fake_get(path, params=None):
+        raise httpx.HTTPError("boom")
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    assert await client.paper_ids_with_rows("lessons") == set()
+
+
+@pytest.mark.asyncio
+async def test_scripts_for_paper_returns_rows(monkeypatch):
+    client = PostgrestClient(base_url="http://example", token=None)
+    seen = {}
+
+    async def fake_get(path, params=None):
+        seen["path"] = path
+        seen["params"] = params
+        return [{"id": "script-1", "title": "Episode"}], _Resp({})
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    rows = await client.scripts_for_paper("arxiv:2402.08593")
+    assert rows[0]["id"] == "script-1"
+    assert seen["path"] == "podcast_scripts"
+    assert seen["params"]["paper_id"] == "eq.arxiv:2402.08593"
+    assert "audio_metadata" not in seen["params"]["select"]
+
+
