@@ -523,3 +523,28 @@ class PostgrestClient:
             logger.warning(f"Could not list pipeline runs: {e}")
             return []
         return data
+
+    async def fetch_rows(
+        self, table: str, params: Optional[Dict[str, Any]] = None
+    ) -> Optional[Tuple[List[Dict[str, Any]], Optional[int]]]:
+        """Rows from one table, or None when the read failed.
+
+        An empty list means the table answered and had no matching rows. None
+        means the request failed, which a page must not render as zero. The
+        second value is the Content-Range total when PostgREST sent one.
+        """
+        try:
+            data, resp = await self._get(table, params=params or {})
+        except Exception as e:
+            logger.warning(f"Could not read {table}: {e}")
+            return None
+        if isinstance(data, dict):
+            rows = [data]
+        else:
+            rows = list(data or [])
+        total: Optional[int] = None
+        try:
+            total = self._require_count_from_content_range(resp)
+        except CountUnavailableError:
+            total = None
+        return rows, total

@@ -722,11 +722,50 @@
     window.addEventListener('pagehide', function () { if (activeStop) activeStop(); });
   }
 
+  /**
+   * Paint one run into a card without following it.
+   *
+   * attach() stores the id and rewrites ?run=. A page that only wants to show
+   * whatever is already running — Today, and any other global indicator — must
+   * not do that. The caller fetches /api/pipeline-runs/active itself and hands
+   * the body here. Passing null hides the card.
+   */
+  function preview(run, els) {
+    els = els || {};
+    var card = cardOf(els.status);
+    if (!run || !run.id) {
+      if (card) card.hidden = true;
+      if (els.progress) els.progress.hidden = true;
+      if (els.stages && els.stages.replaceChildren) els.stages.replaceChildren();
+      hideCancel(els);
+      return;
+    }
+    if (card) card.hidden = false;
+    if (els.status) {
+      els.status.textContent = summarise(run);
+      applyStatusClass(els.status, run);
+    }
+    markCard(els.status, run);
+    paintCount(els.status, run);
+    renderProgress(els.progress, run);
+    renderStages(els.stages, run);
+    if (els.cancel) {
+      if (!isTerminal(run.status)) {
+        els.cancel.hidden = false;
+        els.cancel.disabled = false;
+        els.cancel.dataset.runId = run.id;
+      } else {
+        hideCancel(els);
+      }
+    }
+  }
+
   global.RunProgress = {
     attach: attach,
     detach: detach,
     reattach: reattach,
     findActive: findActive,
+    preview: preview,
     cancel: cancel,
     isTerminal: isTerminal,
     escapeHtml: escapeHtml,
