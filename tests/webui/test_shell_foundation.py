@@ -52,9 +52,9 @@ def test_tokens_define_every_theme_mode_and_density():
         "ai-safety-alignment",
     ):
         assert f".pillar-{slug}" in css
-    assert "--pico-background-color: var(--bg)" in css
-    assert "--primary: var(--accent)" in css
-    assert "--muted-color: var(--muted)" in css
+    assert "--pico-" not in css
+    assert "--primary:" not in css
+    assert "color-scheme: var(--color-scheme)" in css
 
 
 def test_component_stylesheet_has_no_raw_colours():
@@ -67,12 +67,20 @@ def test_component_stylesheet_has_no_raw_colours():
             assert "var(--font" in line
 
 
-def test_pico_is_vendored_and_fonts_are_local():
+def test_pico_is_gone_and_fonts_are_local():
     base = (TEMPLATES / "base.html").read_text()
+    app = (STATIC / "app.css").read_text()
     assert "cdn.jsdelivr.net" not in base
-    assert "/static/vendor/pico.min.css" in base
-    assert (STATIC / "vendor" / "pico.min.css").is_file()
-    assert "Pico CSS" in (STATIC / "vendor" / "pico.min.css").read_text(encoding="utf-8")[:200]
+    assert "pico" not in base.lower()
+    assert not (STATIC / "vendor" / "pico.min.css").exists()
+    assert not (STATIC / "styles.css").exists()
+    assert not (TEMPLATES / "script_download_example.html").exists()
+    assert "<style" not in (TEMPLATES / "_paper_modal.html").read_text()
+    assert "inset 0 -2px 0 var(--accent)" in app
+    assert ".palette .palette-input:focus-visible" in app
+    assert "[hidden] { display: none !important; }" in app
+    assert "justify-content: center" in app
+    assert ".dialog:not([open])" in app
     for name in (
         "inter-latin.woff2",
         "source-serif-4-latin.woff2",

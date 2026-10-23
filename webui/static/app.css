@@ -14,6 +14,116 @@ body {
   line-height: 1.5;
 }
 
+/* Element defaults Pico used to supply. :where() stays at zero specificity so
+   component classes win. Colours, type and radii stay in tokens.css. */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+/* Author `display` rules must not defeat the hidden attribute. */
+[hidden] { display: none !important; }
+
+::selection { background: var(--accent-soft); color: var(--text); }
+
+:where(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 var(--space-3);
+  color: var(--text);
+  font-family: var(--font-read);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+:where(p, ul, ol) { margin: 0 0 var(--space-4); }
+:where(ul, ol) { padding-left: 1.25rem; }
+
+:where(a) {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 0.15em;
+}
+:where(a:hover) { text-decoration: underline; }
+
+:where(small) { color: var(--muted); font-size: var(--fs-caption); }
+
+:where(hr) {
+  height: 0;
+  margin: var(--space-4) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+:where(code, kbd, samp) {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+:where(button, input, select, textarea) { font: inherit; color: inherit; }
+
+:where(fieldset) {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="hidden"], [type="button"], [type="submit"], [type="reset"]),
+  select,
+  textarea
+) {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background-color: var(--surface);
+  color: var(--text);
+  line-height: 1.4;
+  min-height: 40px;
+}
+
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="hidden"], [type="button"], [type="submit"], [type="reset"]),
+  select,
+  textarea
+)::placeholder { color: var(--muted); }
+
+:where(select) {
+  appearance: none;
+  padding-right: 2rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 1.1rem) 55%, calc(100% - 0.75rem) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+:where(input[type="checkbox"], input[type="radio"]) {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+:where(input[type="range"]) { accent-color: var(--accent); width: 100%; }
+
+:where(input, select, textarea):disabled { opacity: 0.6; }
+
+:where(table) { width: 100%; border-collapse: collapse; }
+:where(th, td) {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+td small { color: var(--muted); }
+
+dialog::backdrop {
+  background: color-mix(in srgb, var(--text) 42%, transparent);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
@@ -449,7 +559,7 @@ html[data-theme="cockpit"] .data-table,
   margin: 0;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
-  background: var(--surface);
+  background-color: var(--surface);
   color: var(--text);
   font: inherit;
 }
@@ -937,16 +1047,30 @@ html[data-theme="cockpit"] .pillar-band {
 }
 
 .dialog {
+  display: flex;
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
   width: 100%;
   min-width: 100%;
+  height: 100%;
+  min-height: 100%;
   max-width: none;
-  max-height: 100%;
+  max-height: none;
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--text);
   box-shadow: none;
+}
+
+.dialog:not([open]) {
+  display: none;
 }
 
 .dialog > article {
@@ -957,6 +1081,15 @@ html[data-theme="cockpit"] .pillar-band {
   border-radius: var(--r-card);
   background: var(--surface);
   box-shadow: var(--shadow-card);
+}
+
+.dialog > article > footer {
+  margin: var(--space-4) calc(var(--space-5) * -1) calc(var(--space-5) * -1);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border);
+  border-bottom-right-radius: var(--r-card);
+  border-bottom-left-radius: var(--r-card);
+  background: var(--surface-2);
 }
 
 .dialog header {
@@ -1408,6 +1541,239 @@ html[data-theme="cockpit"] .pillar-band {
   .run-segs.is-indeterminate i { animation: none; }
 }
 
+/* Paper quick-peek. Scoped so quiz.html keeps its own .quiz-card rules. */
+#paper-details-modal > article {
+  width: min(880px, calc(100vw - 32px));
+  max-height: min(80vh, 880px);
+  overflow: auto;
+}
+
+#paper-details-modal > article > header {
+  display: block;
+  margin-bottom: var(--space-4);
+}
+
+#paper-details-modal .modal-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+#paper-details-modal .modal-title-line {
+  margin: 0;
+  min-width: 0;
+}
+
+#paper-details-modal .modal-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+#paper-details-modal .metadata-refresh-btn {
+  width: auto;
+  min-height: 32px;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+#paper-details-modal .metadata-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#paper-details-modal .metadata-refresh-status {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-card);
+  white-space: pre-wrap;
+}
+
+#paper-details-modal .metadata-refresh-status.is-success {
+  background: var(--ok-soft);
+  color: var(--text);
+}
+
+#paper-details-modal .metadata-refresh-status.is-info {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+#paper-details-modal .metadata-refresh-status.is-error {
+  background: var(--danger-soft);
+  color: var(--text);
+}
+
+#paper-details-modal .paper-section {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+
+#paper-details-modal .paper-section h4 {
+  margin-top: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+}
+
+#paper-details-modal .modal-card,
+#paper-details-modal .metadata-item,
+#paper-details-modal .json-list li,
+#paper-details-modal .quiz-card {
+  background: var(--surface-2);
+  border-radius: var(--r-control);
+}
+
+#paper-details-modal .modal-card {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+}
+
+#paper-details-modal .modal-field { margin-bottom: var(--space-4); }
+#paper-details-modal .modal-field > p { margin-bottom: 0; }
+
+#paper-details-modal .modal-message {
+  padding: var(--space-7);
+  text-align: center;
+}
+
+#paper-details-modal .modal-muted { color: var(--muted); }
+
+#paper-details-modal .quiz-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+#paper-details-modal .quiz-section-header h4 {
+  margin-bottom: var(--space-2);
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+#paper-details-modal .quiz-answers-toggle {
+  width: auto;
+  min-height: 32px;
+  margin-bottom: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+#paper-details-modal .quiz-card {
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border-left: 4px solid var(--accent);
+}
+
+#paper-details-modal .quiz-question {
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+
+#paper-details-modal .quiz-answer {
+  margin-left: var(--space-4);
+  color: var(--muted);
+}
+
+#paper-details-modal .metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+#paper-details-modal .metadata-item {
+  padding: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+#paper-details-modal .metadata-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#paper-details-modal .json-list {
+  margin-bottom: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#paper-details-modal .json-list li {
+  margin-bottom: var(--space-2);
+  padding: var(--space-2);
+  border-left: 3px solid var(--accent);
+}
+
+#paper-details-modal .lesson-tldr {
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--r-card);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+#paper-details-modal .term-list { margin-top: var(--space-2); }
+
+#paper-details-modal .term-chip {
+  display: inline-block;
+  margin: 2px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-caption);
+}
+
+#paper-details-modal .modal-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+#paper-details-modal .difficulty-badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: 999px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+#paper-details-modal .difficulty-1 { background: var(--ok-soft); color: var(--ok); }
+#paper-details-modal .difficulty-2 { background: var(--warn-soft); color: var(--warn); }
+#paper-details-modal .difficulty-3 { background: var(--danger-soft); color: var(--danger); }
+
+#paper-details-modal .time-badge {
+  padding: var(--space-1) var(--space-2);
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+  font-size: var(--fs-caption);
+}
+
 /* Run card — inline in the page, or floating bottom-right.
    Colour, type and radius come from tokens.css only. */
 
@@ -1719,9 +2085,11 @@ html[data-theme="journal"][data-player="on"] .run-card.is-floating {
 .palette-hint kbd,
 .shortcut-list kbd { margin-left: 0; }
 
-.palette::backdrop,
-.shortcuts-dialog::backdrop {
-  background: color-mix(in srgb, var(--text) 42%, transparent);
+.palette .dialog-close {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  background: var(--surface);
 }
 
 .palette > article,
@@ -1758,14 +2126,23 @@ html[data-theme="journal"][data-player="on"] .run-card.is-floating {
 
 .palette .palette-input {
   width: 100%;
+  min-height: 0;
   margin: 0;
   padding: var(--space-3) var(--space-4);
   border: 0;
   border-radius: 0;
   background: transparent;
+  background-image: none;
   box-shadow: none;
   color: var(--text);
   font: 500 var(--fs-ui) / 1.4 var(--font-ui);
+}
+
+/* The focus mark stays inside the field. An outer ring runs into the Esc button. */
+.palette .palette-input:focus,
+.palette .palette-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .palette-status {
@@ -1914,7 +2291,7 @@ html[data-theme="journal"] .shortcuts-dialog > article {
   padding: 0 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
-  background: var(--surface);
+  background-color: var(--surface);
   color: var(--text);
   font: 600 var(--fs-caption) / 1 var(--font-ui);
   cursor: pointer;

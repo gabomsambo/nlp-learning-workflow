@@ -685,15 +685,12 @@ unavailable"), never as `0`. Do not "simplify" the raising pair into the lenient
 progress-bar denominators are display goals (`PROGRESS_GOALS` in
 `webui/routers/pillars.py`), nothing enforces them, and the bar is clamped to 100%.
 
-### Pico v2 is vendored, and the shell themes it from tokens
+### The shell does not use Pico
 
-`base.html` loads `webui/static/vendor/pico.min.css` (Pico v2.1.1, no CDN) and then
-`tokens.css`, which remaps `--pico-*` from the Paper / Cockpit / Journal tokens and
-aliases the bare names page CSS already uses (`--primary`, `--muted-color`,
-`--border-color`, `--card-background-color`, `--secondary-background`, and the rest
-listed in that file). Those aliases are why existing pages pick up the active theme
-before they are rebuilt. Pico itself is removed in the cleanup PR. New colour, font
-and radius values belong in `tokens.css` only.
+`base.html` loads `tokens.css` then `app.css`. Form controls, buttons, tables,
+dialogs, typography and focus rings live in `app.css` and read those tokens.
+`webui/static/vendor/pico.min.css` and the `--pico-*` aliases are gone. New colour,
+font and radius values belong in `tokens.css` only.
 
 ## Sharp edges
 

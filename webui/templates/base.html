@@ -25,10 +25,8 @@
       root.setAttribute("data-density", density);
     })();
   </script>
-  <link rel="stylesheet" href="/static/vendor/pico.min.css?v={{ asset_v | default('1', true) }}">
   <link rel="stylesheet" href="/static/tokens.css?v={{ asset_v | default('1', true) }}">
   <link rel="stylesheet" href="/static/app.css?v={{ asset_v | default('1', true) }}">
-  <link rel="stylesheet" href="/static/styles.css?v={{ asset_v | default('1', true) }}">
   {% block head %}{% endblock %}
 </head>
 <body>
