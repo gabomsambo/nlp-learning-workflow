@@ -124,7 +124,7 @@ def test_page_titles_are_distinct():
         "quiz.html": "Review",
         "pipeline.html": "Activity",
         "analytics.html": "Analytics",
-        "pillars.html": "Learning Pillars",
+        "pillars.html": "Pillars",
     }
     for name, expected in titles.items():
         text = (TEMPLATES / name).read_text()
