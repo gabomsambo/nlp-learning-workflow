@@ -69,14 +69,9 @@ def test_pages_that_show_runs_pass_their_element_ids():
             "stages_id='run-progress'",
             "cancel_id='cancel-btn'",
             'id="queries-panel"',
-        ],
-        "pipeline.html": [
-            "run_panel",
-            "status_id='status'",
-            "stages_id='progress'",
-            "progress_id='run-bar'",
-            "cancel_id='cancel-btn'",
-            "floating=True",
+            "quiet=True",
+            'id="run-form"',
+            'href="/activity/"',
         ],
         "podcast.html": [
             "run_panel",
@@ -89,6 +84,9 @@ def test_pages_that_show_runs_pass_their_element_ids():
             "cancel_id='cancel-audio-btn'",
         ],
         "pillar_detail.html": [
+            '{% include "_upload_panel.html" %}',
+        ],
+        "_upload_panel.html": [
             "run_panel",
             "status_id='upload-run-status'",
             "progress_id='upload-run-bar'",
@@ -101,6 +99,10 @@ def test_pages_that_show_runs_pass_their_element_ids():
         body = _text(name)
         for needle in needles:
             assert needle in body, f"{name} lost {needle}"
+
+    # Add papers keeps the card in the page. A floating card sat on top of the
+    # candidate list it had just produced.
+    assert "floating=True" not in _text("discovery.html")
 
 
 def test_run_card_styles_use_tokens():

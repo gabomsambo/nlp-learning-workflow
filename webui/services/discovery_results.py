@@ -17,7 +17,7 @@ Measured on the captain's library: ``2403.05525`` (discovery-ingested) carries e
 the same pillar carries all 319 authors and the complete 1538-character abstract.
 
 The rule now: **this module carries the record; the renderer decides what fits.** If a
-future table wants a preview, truncate it in ``discovery.html`` at render time, where
+future table wants a preview, truncate it in ``add-papers.js`` at render time, where
 the shortened string cannot escape into a database write. Do not reintroduce a cap
 here.
 
@@ -33,7 +33,7 @@ from nlp_pillars.schemas import DiscoveryCandidate
 
 
 def candidate_to_dict(candidate: DiscoveryCandidate) -> Dict[str, Any]:
-    """One candidate, in the shape discovery.html renders and posts back.
+    """One candidate, in the shape add-papers.js renders and posts back.
 
     Every metadata field the source gave us, in full. ``venue`` is included for the
     same reason as the rest: it survives the round trip into ``papers.venue``, which

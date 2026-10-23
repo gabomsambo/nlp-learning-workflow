@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from nlp_pillars.db import get_pillars_or_empty
 from nlp_pillars.pillar_utils import validate_pillar_id
+from webui.routers.discovery import add_papers_context
 from webui.services.run_service import (
     KIND_RUN_DAILY,
     RunAlreadyActiveError,
@@ -14,11 +14,14 @@ router = APIRouter(prefix="/pipeline")
 
 @router.get("/", response_class=HTMLResponse)
 async def pipeline_home(request: Request) -> HTMLResponse:
-    """Render the pipeline page, pre-selecting ``?pillar=`` when one is given."""
-    pillars = get_pillars_or_empty(limit=100)
-    selected = request.query_params.get("pillar", "")
+    """Auto-run mode of Add papers.
+
+    ``/pipeline/?pillar=&run=`` keeps working: same page as ``/discovery/``,
+    opened on the pipeline form unless ``?mode=`` asks for another one.
+    ``?run=`` is read by the page script, so it is left on this URL.
+    """
     return request.app.state.templates.TemplateResponse(
-        request, "pipeline.html", {"pillars": pillars, "selected_pillar": selected}
+        request, "discovery.html", add_papers_context(request, "auto")
     )
 
 

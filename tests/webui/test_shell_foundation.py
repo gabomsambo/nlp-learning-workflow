@@ -127,8 +127,8 @@ def test_page_titles_are_distinct():
         "papers.html": "Library",
         "lessons.html": "Lessons",
         "quiz.html": "Review",
-        "pipeline.html": "Pipeline",
         "activity.html": "Activity",
+        "discovery.html": "Add papers",
         "analytics.html": "Analytics",
         "pillars.html": "Pillars",
     }

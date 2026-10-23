@@ -865,6 +865,7 @@ html[data-theme="cockpit"] .pillar-band {
 }
 
 .drop-zone {
+  position: relative;
   display: grid;
   place-items: center;
   min-height: 120px;
@@ -3117,4 +3118,89 @@ html[data-theme="journal"] .status-row {
   border: 0;
   border-radius: var(--r-card);
   background: var(--surface);
+}
+
+/* Add papers: three modes, readable candidates, shared upload panel. */
+
+.add-page .btn,
+.upload-panel .btn { width: auto; }
+.add-page .segmented { margin: var(--space-5) 0 var(--space-4); }
+.add-page .segmented label { min-height: 40px; text-align: center; }
+.add-pillar { max-width: 420px; }
+.add-status { min-height: 1.4em; }
+.add-status:empty { display: none; }
+
+.candidate-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+.candidate-toolbar .btn { margin-left: auto; }
+
+.candidate-list { display: grid; }
+.candidate {
+  display: grid;
+  grid-template-columns: 40px 4.5rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+.candidate-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  margin: 0;
+}
+.candidate-year {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.candidate-main { display: grid; gap: var(--space-2); min-width: 0; }
+.candidate-title {
+  margin: 0;
+  font-family: var(--font-read);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.candidate-authors { overflow-wrap: anywhere; }
+.candidate-authors,
+.candidate-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.candidate-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.candidate-meta a { color: var(--accent); }
+.candidate-abstract summary {
+  min-height: 40px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.candidate-abstract p {
+  margin: var(--space-2) 0 0;
+  max-width: var(--read-max);
+  font-family: var(--font-read);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+}
+
+.session-summary { margin-top: var(--space-5); }
+
+@media (max-width: 859px) {
+  .candidate { grid-template-columns: 40px minmax(0, 1fr); }
+  .candidate-year { grid-column: 2; margin-top: 0; }
+  .candidate-toolbar .btn { margin-left: 0; width: 100%; }
 }

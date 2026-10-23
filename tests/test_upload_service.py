@@ -619,10 +619,11 @@ class TestTheUploadFormSendsWhatTheUserChose:
     @pytest.fixture
     def template(self):
         root = Path(__file__).resolve().parents[1]
-        # The panel markup stays in the page; the behaviour lives in
-        # pillar-upload.js so the same contract is checked in both.
+        # The panel markup is the shared partial; the behaviour lives in
+        # pillar-upload.js. Both pages include the partial.
         return (
             (root / "webui" / "templates" / "pillar_detail.html").read_text()
+            + (root / "webui" / "templates" / "_upload_panel.html").read_text()
             + (root / "webui" / "static" / "pillar-upload.js").read_text()
         )
 
