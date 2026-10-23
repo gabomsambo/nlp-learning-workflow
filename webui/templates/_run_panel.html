@@ -25,7 +25,8 @@
     progress_label='Run progress',
     floating=False,
     hidden=False,
-    quiet=False
+    quiet=False,
+    summary=''
 ) %}
 <article class="run-card{% if floating %} is-floating{% endif %}{% if quiet %} is-quiet{% endif %}"
          {% if panel_id %}id="{{ panel_id }}"{% endif %}
@@ -39,7 +40,7 @@
       <button type="button" class="btn btn-ghost btn-sm" id="{{ cancel_id }}" hidden disabled>{{ cancel_label }}</button>
     </div>
   </header>
-  <p class="run-card-summary" id="{{ status_id }}" role="status" aria-live="polite" aria-atomic="true"></p>
+  <p class="run-card-summary" id="{{ status_id }}" role="status" aria-live="polite" aria-atomic="true">{{ summary }}</p>
   <div class="run-segs" id="{{ progress_id }}" role="progressbar"
        aria-label="{{ progress_label }}" aria-valuemin="0" hidden></div>
   <p class="run-card-note">You can keep working; this card stays while you browse.</p>

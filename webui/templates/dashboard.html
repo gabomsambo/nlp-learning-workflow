@@ -1,43 +1,203 @@
 {% extends 'base.html' %}
+{% from "_components.html" import stat_tile %}
+{% from "_run_panel.html" import run_panel %}
 {% block title %}Today{% endblock %}
 {% block content %}
-<h2>Dashboard</h2>
+<div class="today-page">
+  <header class="today-hello">
+    <div class="today-date-row">
+      <p class="today-date">{{ view.date_line }}</p>
+      <p id="service-status-slot" class="status-chip" data-status-endpoint="/api/system/status" hidden></p>
+    </div>
+    <h1 class="today-greet">{{ view.greeting }}</h1>
+    <p class="today-summary">{{ view.summary }}</p>
+  </header>
 
-<section>
-  <div class="grid">
-    <article>
-      <header>Total Papers</header>
-      <h3>{{ stats.total_papers }}</h3>
+  <div class="today-grid">
+    <article class="card today-plan" aria-labelledby="plan-heading">
+      <h2 id="plan-heading" class="card-title">Today's plan</h2>
+      <p class="plan-lede">Picked from what is already due, written, or recorded. Nothing here starts new work.</p>
+      <ol class="plan-list">
+        <li class="plan-row{% if view.review_done %} is-done{% endif %}" id="plan-review" data-plan="review">
+          <span class="plan-check" aria-hidden="true"></span>
+          <span class="plan-copy">
+            <span class="plan-title">{{ view.review_title }}</span>
+            <span class="plan-detail">{{ view.review_detail }}</span>
+            <span class="visually-hidden plan-state">{% if view.review_done %}Done{% else %}Not done yet{% endif %}</span>
+          </span>
+          {% if not (view.due.known and view.due.count == 0) %}
+          <a class="btn {% if view.primary == 'review' %}btn-primary{% else %}btn-secondary{% endif %}" href="/quiz/">Start review</a>
+          {% endif %}
+        </li>
+        {% if view.up_next %}
+        <li class="plan-row" id="plan-next" data-plan="read" data-paper-id="{{ view.up_next.paper_id }}">
+          <span class="plan-check" aria-hidden="true"></span>
+          <span class="plan-copy">
+            <span class="plan-title">{{ view.up_next.title }}</span>
+            <span class="plan-detail">Up next · {{ view.up_next.pillar_name }}{% if view.up_next.minutes %} · {{ view.up_next.minutes }} min{% endif %}{% if view.up_next.authors %} · {{ view.up_next.authors }}{% endif %} <span id="read-progress"></span></span>
+            <span class="visually-hidden plan-state">Not done yet</span>
+          </span>
+          <a class="btn {% if view.primary == 'lesson' %}btn-primary{% else %}btn-secondary{% endif %}" href="{{ view.up_next.href }}">Continue</a>
+        </li>
+        {% endif %}
+        {% if view.episode %}
+        <li class="plan-row" id="plan-listen" data-plan="listen" data-script-id="{{ view.episode.script_id }}" data-duration="{{ view.episode.duration_seconds or '' }}">
+          <span class="plan-check" aria-hidden="true"></span>
+          <span class="plan-copy">
+            <span class="plan-title">{{ view.episode.title }}</span>
+            <span class="plan-detail">Listen · {{ view.episode.pillar_name }}{% if view.episode.length %} · {{ view.episode.length }}{% endif %}</span>
+            <span class="visually-hidden plan-state">Not done yet</span>
+          </span>
+          <button type="button" class="btn {% if view.primary == 'episode' %}btn-primary{% else %}btn-secondary{% endif %}" data-play-episode data-src="{{ view.episode.src }}" data-script-id="{{ view.episode.script_id }}" data-title="{{ view.episode.title }}" data-href="{{ view.episode.listen_href }}">Play</button>
+        </li>
+        {% endif %}
+      </ol>
     </article>
-    <article>
-      <header>Total Lessons</header>
-      <h3>{{ stats.total_lessons }}</h3>
-    </article>
-    <article>
-      <header>Total Quiz Cards</header>
-      <h3>{{ stats.total_quiz_cards }}</h3>
-    </article>
+
+    {% if view.streak is not none %}
+    <aside id="streak" class="card streak" aria-label="{{ view.streak.aria }}">
+      <p class="streak-kicker">Review streak</p>
+      <p class="streak-count"><span id="streak-count">{{ view.streak.count }}</span> <span id="streak-unit">{% if view.streak.count == 1 %}day{% else %}days{% endif %}</span></p>
+      <ol class="streak-dots" id="streak-dots">
+        {% for dot in view.streak.dots %}
+        <li class="streak-dot{% if dot.reviewed %} is-done{% endif %}{% if dot.is_today %} is-today{% endif %}{% if dot.is_future %} is-future{% endif %}"><span>{{ dot.label }}</span></li>
+        {% endfor %}
+      </ol>
+      <p class="streak-note">A day counts once you review a card. The dots are this week.</p>
+    </aside>
+    {% endif %}
   </div>
-</section>
 
-<section>
-  <h3>Recent Activity</h3>
-  <table>
-    <thead>
-      <tr><th>Type</th><th>Title</th><th>Pillar</th><th>When</th></tr>
-    </thead>
-    <tbody>
-    {% for item in recent %}
-      <tr>
-        <td>{{ item.type }}</td>
-        <td>{{ item.title }}</td>
-        <td>{{ item.pillar_id or '-' }}</td>
-        <td>{{ item.created_at or '-' }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</section>
+  <section class="today-section" aria-labelledby="running-heading">
+    <div class="section-head">
+      <h2 id="running-heading" class="section-title">In progress</h2>
+      <a href="/pipeline/">Activity</a>
+    </div>
+    {{ run_panel(
+      "today-run-status",
+      "today-run-stages",
+      "today-run-bar",
+      "today-run-cancel",
+      panel_id="today-run-card",
+      title=view.active_title or "Run",
+      summary=view.active_sentence,
+      hidden=not view.active_run,
+      progress_label="Run in progress"
+    ) }}
+    {% if not view.runs_known %}
+    <p class="section-lede">Recent runs could not be loaded.</p>
+    {% elif not view.recent and not view.active_run %}
+    <p class="section-lede">Nothing running, and nothing finished in the last day.</p>
+    {% elif view.recent %}
+    <ul class="outcome-list">
+      {% for item in view.recent %}
+      <li>
+        {% if item.href %}<a class="outcome{% if item.tone %} outcome-{{ item.tone }}{% endif %}" href="{{ item.href }}">{% else %}<div class="outcome{% if item.tone %} outcome-{{ item.tone }}{% endif %}">{% endif %}
+          <span class="outcome-sentence">{{ item.sentence }}</span>
+          {% if item.relative %}<span class="outcome-when" {% if item.absolute %}title="{{ item.absolute }}"{% endif %}>{{ item.relative }}</span>{% endif %}
+        {% if item.href %}</a>{% else %}</div>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+
+  <section class="today-section" aria-labelledby="continue-heading">
+    <div class="section-head">
+      <h2 id="continue-heading" class="section-title">Continue learning</h2>
+      <a href="/lessons/">Lessons</a>
+    </div>
+    {% if not view.lessons_known %}
+    <p class="section-lede">Lessons could not be loaded.</p>
+    {% elif not view.continue_rows %}
+    <p class="section-lede">No lessons yet. They show up after a paper is processed.</p>
+    {% else %}
+    <div class="activity-list">
+      {% for item in view.continue_rows %}
+      <a class="activity-item activity-item-link" href="{{ item.href }}">
+        <span class="activity-main">
+          <span class="activity-title">{{ item.title }}</span>
+          <span class="activity-sub">{{ item.pillar_name }}{% if item.minutes %} · {{ item.minutes }} min{% endif %}{% if item.authors %} · {{ item.authors }}{% endif %}</span>
+        </span>
+        {% if item.relative %}<span class="activity-meta" {% if item.absolute %}title="{{ item.absolute }}"{% endif %}>{{ item.relative }}</span>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="today-section" aria-labelledby="episodes-heading">
+    <div class="section-head">
+      <h2 id="episodes-heading" class="section-title">New episodes</h2>
+      <a href="/podcast/">Listen</a>
+    </div>
+    {% if not view.episodes_known %}
+    <p class="section-lede">Episodes could not be loaded.</p>
+    {% elif not view.episodes %}
+    <p class="section-lede">No episodes with audio yet.</p>
+    {% else %}
+    <ul class="episode-list">
+      {% for item in view.episodes %}
+      <li class="episode-row">
+        <a class="episode-copy" href="{{ item.paper_href }}">
+          <span class="episode-title">{{ item.title }}</span>
+          <span class="episode-meta">{{ item.pillar_name }}{% if item.length %} · {{ item.length }}{% endif %}{% if item.relative %} · {{ item.relative }}{% endif %}</span>
+        </a>
+        <button type="button" class="btn btn-secondary" data-play-episode data-src="{{ item.src }}" data-script-id="{{ item.script_id }}" data-title="{{ item.title }}" data-href="{{ item.listen_href }}">Play</button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+
+  <section class="today-section" aria-labelledby="pillars-heading">
+    <div class="section-head">
+      <h2 id="pillars-heading" class="section-title">Pillars at a glance</h2>
+      <a href="/pillars/">All pillars</a>
+    </div>
+    {% with glance=view.glance %}
+      {% include "_today_glance.html" %}
+    {% endwith %}
+  </section>
+
+  <section class="today-section" aria-labelledby="activity-heading">
+    <div class="section-head">
+      <h2 id="activity-heading" class="section-title">Recent activity</h2>
+    </div>
+    {% if view.activity is none %}
+    <p class="section-lede">Recent activity could not be loaded.</p>
+    {% elif not view.activity %}
+    <p class="section-lede">Nothing in the library yet.</p>
+    {% else %}
+    <div class="activity-list">
+      {% for item in view.activity %}
+      {% if item.href %}<a class="activity-item activity-item-link" href="{{ item.href }}">{% else %}<div class="activity-item">{% endif %}
+        <span class="activity-main">
+          <span class="activity-title">{{ item.title }}</span>
+          <span class="activity-sub">{{ item.kind }} · {{ item.pillar_name }}</span>
+        </span>
+        <span class="activity-meta" {% if item.absolute %}title="{{ item.absolute }}"{% endif %}>{{ item.relative }}</span>
+      {% if item.href %}</a>{% else %}</div>{% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="today-section" aria-labelledby="library-heading">
+    <div class="section-head">
+      <h2 id="library-heading" class="section-title">Library</h2>
+      <a href="/analytics/">By pillar</a>
+    </div>
+    <div class="stat-grid">
+      {{ stat_tile("Papers", view.stats.total_papers) }}
+      {{ stat_tile("Lessons", view.stats.total_lessons) }}
+      {{ stat_tile("Quiz cards", view.stats.total_quiz_cards) }}
+    </div>
+  </section>
+</div>
+<script id="today-data" type="application/json">{{ view.payload_json | safe }}</script>
 {% endblock %}
-
-
+{% block scripts %}
+<script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/today.js?v={{ asset_v | default('1', true) }}"></script>
+{% endblock %}

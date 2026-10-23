@@ -850,6 +850,41 @@
     return state;
   }
 
+  function play(meta) {
+    meta = meta || {};
+    var src = toStoredSrc(meta.src || '', global.location && global.location.href);
+    if (!isSafeAudioSrc(src)) return null;
+    if (!shellAudio && typeof document !== 'undefined') {
+      shellAudio = document.getElementById('mini-player-audio');
+    }
+    if (pageAudio && pageAudio !== shellAudio && pageAudio.pause) pageAudio.pause();
+    pageAudio = null;
+    var stored = readStored();
+    var same = !!(stored && stored.src === src);
+    var scriptId = typeof meta.script_id === 'string' ? meta.script_id.slice(0, 80) : '';
+    var state = {
+      script_id: scriptId,
+      src: src,
+      time: same ? stored.time : 0,
+      rate: same ? stored.rate : normalizeRate(meta.rate),
+      title: cleanTitle(meta.title),
+      href: isSafeAppHref(meta.href) ? meta.href : fallbackHref(scriptId),
+    };
+    writeStored(state);
+    showPlayer(state);
+    if (!shellAudio) return state;
+    var current = toStoredSrc(shellAudio.currentSrc || shellAudio.src || '', global.location.href);
+    if (current !== src) {
+      pendingSeek = state.time;
+      shellAudio.preload = 'auto';
+      shellAudio.src = src;
+      try { shellAudio.playbackRate = state.rate; } catch (e) {}
+    }
+    var pending = shellAudio.play();
+    if (pending && typeof pending.catch === 'function') pending.catch(function () {});
+    return state;
+  }
+
   function wirePlayer() {
     shellAudio = document.getElementById('mini-player-audio');
     var back = document.getElementById('mini-player-back');
@@ -963,6 +998,7 @@
   global.NlpShortcuts = shortcuts;
   global.NlpPlayer = {
     attach: attach,
+    play: play,
     read: readStored,
   };
 

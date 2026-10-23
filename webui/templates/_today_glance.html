@@ -1,0 +1,22 @@
+{# Pillar covers. papers/lessons/cards/due. A missing count is an em dash. #}
+{% if not glance %}
+<p class="section-lede">No pillars yet. <a href="/pillars/">Create one</a> to start a shelf.</p>
+{% else %}
+<div class="glance-grid">
+  {% for tile in glance %}
+  <a class="pillar-tile pillar-{{ tile.slug }}{% if tile.papers == 0 %} is-empty{% endif %}" href="/pillars/{{ tile.slug }}">
+    <span class="pillar-tile-name">{{ tile.name }}</span>
+    {% if tile.papers is none and tile.lessons is none and tile.cards is none %}
+    <span class="pillar-tile-stats"><span class="pillar-stat-n">—</span> Count unavailable</span>
+    {% else %}
+    <span class="pillar-tile-stats">
+      <span><span class="pillar-stat-n">{% if tile.papers is none %}—{% else %}{{ tile.papers }}{% endif %}</span> papers</span>
+      <span><span class="pillar-stat-n">{% if tile.lessons is none %}—{% else %}{{ tile.lessons }}{% endif %}</span> lessons</span>
+      <span><span class="pillar-stat-n">{% if tile.cards is none %}—{% else %}{{ tile.cards }}{% endif %}</span> cards</span>
+      <span><span class="pillar-stat-n">{% if tile.due is none %}—{% else %}{{ tile.due }}{% endif %}</span> due</span>
+    </span>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}

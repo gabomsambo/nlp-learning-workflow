@@ -1,32 +1,62 @@
 {% extends 'base.html' %}
+{% from "_components.html" import stat_tile %}
 {% block title %}Analytics{% endblock %}
 {% block content %}
-<h2>Analytics</h2>
+<div class="today-page">
+  <header class="page-header">
+    <div>
+      <p class="page-eyebrow"><a href="/">Today</a></p>
+      <h1 class="page-title">Analytics</h1>
+    </div>
+  </header>
+  <p class="section-lede">Papers, lessons, and cards by pillar. The same counts are on Today. A dash means the count could not be read.</p>
 
-<section>
-  <div class="grid">
-    <article><header>Papers</header><h3>{{ total.papers }}</h3></article>
-    <article><header>Lessons</header><h3>{{ total.lessons }}</h3></article>
-    <article><header>Quizzes</header><h3>{{ total.quizzes }}</h3></article>
+  <div class="stat-grid">
+    {{ stat_tile("Papers", view.stats.total_papers) }}
+    {{ stat_tile("Lessons", view.stats.total_lessons) }}
+    {{ stat_tile("Quiz cards", view.stats.total_quiz_cards) }}
   </div>
-</section>
 
-<section>
-  <h3>By Pillar</h3>
-  <table>
-    <thead><tr><th>Pillar</th><th>Papers</th><th>Lessons</th><th>Quizzes</th></tr></thead>
-    <tbody>
-      {% for pillar in pillars %}
-      <tr>
-        <td>{{ pillar.name }}</td>
-        <td>{{ counts[pillar.id].papers if pillar.id in counts else 0 }}</td>
-        <td>{{ counts[pillar.id].lessons if pillar.id in counts else 0 }}</td>
-        <td>{{ counts[pillar.id].quizzes if pillar.id in counts else 0 }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+  <section class="today-section" aria-labelledby="by-pillar-heading">
+    <div class="section-head">
+      <h2 id="by-pillar-heading" class="section-title">By pillar</h2>
+    </div>
+    {% if not view.glance %}
+    <p class="section-lede">No pillars yet.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="data-table by-pillar">
+        <caption class="visually-hidden">Counts by pillar</caption>
+        <thead>
+          <tr>
+            <th scope="col">Pillar</th>
+            <th scope="col">Papers</th>
+            <th scope="col">Lessons</th>
+            <th scope="col">Quizzes</th>
+            <th scope="col">Due</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tile in view.glance %}
+          <tr>
+            <td data-label="Pillar"><a href="/pillars/{{ tile.slug }}">{{ tile.name }}</a></td>
+            <td data-label="Papers">{% if tile.papers is none %}—{% else %}{{ tile.papers }}{% endif %}</td>
+            <td data-label="Lessons">{% if tile.lessons is none %}—{% else %}{{ tile.lessons }}{% endif %}</td>
+            <td data-label="Quizzes">{% if tile.cards is none %}—{% else %}{{ tile.cards }}{% endif %}</td>
+            <td data-label="Due">{% if tile.due is none %}—{% else %}{{ tile.due }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="today-section" aria-labelledby="glance-heading">
+    <h2 id="glance-heading" class="section-title">Covers</h2>
+    {% with glance=view.glance %}
+      {% include "_today_glance.html" %}
+    {% endwith %}
+  </section>
+</div>
 {% endblock %}
-
-
