@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, List
@@ -90,17 +91,25 @@ class PDFParseError(Exception):
     pass
 
 
-def download_pdf(url: str, cache_dir: str = ".cache/pdfs") -> str:
+def download_pdf(
+    url: str,
+    cache_dir: str = ".cache/pdfs",
+    *,
+    use_cache: bool = True,
+) -> str:
     """
     Download a PDF from URL with caching and retries.
-    
+
     Args:
         url: URL to download PDF from
         cache_dir: Directory to cache downloaded PDFs
-        
+        use_cache: When False, an http(s) URL is fetched again even if a
+            cached file exists. ``file://`` URLs never use the cache. The
+            backfill passes False for URL papers so they are re-downloaded.
+
     Returns:
         Local file path to the downloaded PDF
-        
+
     Raises:
         PDFDownloadError: If download fails after retries
     """
@@ -122,8 +131,8 @@ def download_pdf(url: str, cache_dir: str = ".cache/pdfs") -> str:
     final_filename = cache_path / f"{url_hash}.pdf"
     temp_filename = cache_path / f"{url_hash}.pdf.tmp"
 
-    # Return cached file if it exists
-    if final_filename.exists():
+    # Return cached file if it exists. use_cache=False re-fetches URL papers.
+    if use_cache and final_filename.exists():
         logger.info(f"Using cached PDF: {final_filename}")
         return str(final_filename)
 
@@ -217,17 +226,31 @@ def _validate_pdf_content(content: bytes, url: str) -> None:
         logger.warning(f"Content doesn't start with PDF magic bytes, but proceeding: {url}")
 
 
+@dataclass(frozen=True)
+class ExtractedText:
+    """Text plus the library that actually produced it."""
+
+    text: str
+    extractor: str
+
+
 def extract_text(pdf_path: str, min_len_threshold: int = 800) -> str:
+    """Extract text from a PDF. See ``extract_document`` for the extractor name."""
+    return extract_document(pdf_path, min_len_threshold=min_len_threshold).text
+
+
+def extract_document(pdf_path: str, min_len_threshold: int = 800) -> ExtractedText:
     """
     Extract text from PDF with fallback strategy.
-    
+
     Args:
         pdf_path: Path to PDF file
         min_len_threshold: Minimum text length to consider extraction successful
-        
+
     Returns:
-        Extracted and normalized text
-        
+        Extracted and normalized text, and the extractor that produced it
+        (``layout-parser``, ``pymupdf4llm``, ``pypdf``, or ``pdfminer``).
+
     Raises:
         PDFParseError: If text extraction fails
     """
@@ -237,15 +260,20 @@ def extract_text(pdf_path: str, min_len_threshold: int = 800) -> str:
     logger.info(f"Extracting text from: {pdf_path}")
     start_time = time.time()
 
+    def _done(text: str, extractor: str) -> ExtractedText:
+        duration = time.time() - start_time
+        logger.info(
+            f"Extracted {len(text)} chars with {extractor} in {duration:.2f}s"
+        )
+        return ExtractedText(_normalize_whitespace(text), extractor)
+
     try:
         # Primary: Try Layout-aware extraction (best for multi-column academic PDFs)
         if layout_parser_available:
             try:
                 text = _extract_with_layout_parser(pdf_path)
                 if len(text.strip()) >= min_len_threshold:
-                    duration = time.time() - start_time
-                    logger.info(f"Extracted {len(text)} chars with layout-parser in {duration:.2f}s")
-                    return _normalize_whitespace(text)
+                    return _done(text, "layout-parser")
                 else:
                     logger.info(f"layout-parser extracted only {len(text.strip())} chars, trying fallback")
             except Exception as e:
@@ -261,9 +289,7 @@ def extract_text(pdf_path: str, min_len_threshold: int = 800) -> str:
             try:
                 text = _extract_with_pymupdf4llm(pdf_path)
                 if len(text.strip()) >= min_len_threshold:
-                    duration = time.time() - start_time
-                    logger.info(f"Extracted {len(text)} chars with pymupdf4llm in {duration:.2f}s")
-                    return _normalize_whitespace(text)
+                    return _done(text, "pymupdf4llm")
                 else:
                     logger.info(f"pymupdf4llm extracted only {len(text.strip())} chars, trying fallback")
             except Exception as e:
@@ -273,18 +299,14 @@ def extract_text(pdf_path: str, min_len_threshold: int = 800) -> str:
         if pypdf:
             text = _extract_with_pypdf(pdf_path)
             if len(text.strip()) >= min_len_threshold:
-                duration = time.time() - start_time
-                logger.info(f"Extracted {len(text)} chars with pypdf in {duration:.2f}s")
-                return _normalize_whitespace(text)
+                return _done(text, "pypdf")
             else:
                 logger.info(f"pypdf extracted only {len(text.strip())} chars, trying final fallback")
 
         # Fallback 3: Try pdfminer.six
         if pdfminer_extract_text:
             text = _extract_with_pdfminer(pdf_path)
-            duration = time.time() - start_time
-            logger.info(f"Extracted {len(text)} chars with pdfminer in {duration:.2f}s")
-            return _normalize_whitespace(text)
+            return _done(text, "pdfminer")
 
         # No extraction libraries available
         raise PDFParseError(f"No PDF extraction libraries available (layout-parser: {layout_parser_available}, pymupdf4llm: {pymupdf4llm is not None}, pypdf: {pypdf is not None}, pdfminer: {pdfminer_extract_text is not None})")
@@ -730,6 +752,11 @@ def _normalize_whitespace(text: str) -> str:
 # text-embedding-3-small (see nlp_pillars/vectors.py::_embed), which tokenizes
 # with cl100k_base, so a cl100k_base count is the size the downstream model sees.
 EMBEDDING_ENCODING = "cl100k_base"
+
+# The one cut vectors.upsert_text embeds, and the one cut paper_chunks stores.
+# chunk_text()'s own default (750/50) is a different budget and is not persisted.
+VECTOR_CHUNK_SIZE = 250
+VECTOR_CHUNK_OVERLAP = 25
 
 # Only used to translate a token budget into a character budget for the naive
 # fallback, which cannot count tokens. ~4 characters per token is the usual

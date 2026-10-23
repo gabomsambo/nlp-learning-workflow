@@ -827,11 +827,28 @@ class UploadService:
 
             # Update the paper in the database with enhanced metadata
             db.upsert_paper(pillar_id, paper)
-            stages.done(StageName.PERSIST, f"{len(paper.authors)} author(s) recorded")
         except Exception as e:
             logger.error(f"Metadata persistence failed for {paper.id}: {e}")
             errors.append(f"metadata_persistence: {e}")
             stages.failed(StageName.PERSIST, _reason(e))
+        else:
+            # Same chunker config as the vector upsert below, which is unchanged.
+            # A failure is a failed persist stage, not a swallowed exception.
+            try:
+                n_chunks = db.replace_paper_text(
+                    paper.id,
+                    parsed_paper.full_text,
+                    parsed_paper.extractor,
+                )
+                stages.done(
+                    StageName.PERSIST,
+                    f"{len(paper.authors)} author(s) recorded, "
+                    f"{n_chunks} text chunk(s) stored",
+                )
+            except Exception as e:
+                logger.error(f"Paper text persistence failed for {paper.id}: {e}")
+                errors.append(f"paper_text: {e}")
+                stages.failed(StageName.PERSIST, _reason(e))
 
         # Step 5f: Store in vector database for semantic search
         stages.start(StageName.VECTORS, "Embedding the paper for semantic search")

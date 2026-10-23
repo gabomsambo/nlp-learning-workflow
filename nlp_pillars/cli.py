@@ -1344,5 +1344,53 @@ def pillars_list():
     raise typer.Exit(0)
 
 
+text_app = typer.Typer(
+    help="Paper text and chunks stored in Postgres",
+    add_completion=False,
+)
+app.add_typer(text_app, name="text")
+
+
+@text_app.command("backfill")
+def text_backfill(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print counts only. Do not download, extract, or write.",
+    ),
+):
+    """Re-extract retained uploads and re-download URL papers into Postgres.
+
+    Idempotent: each paper's chunks are replaced (delete then insert), so a
+    second run does not append. Apply docs/migrations/017_paper_text.sql before
+    running this against a database. ``--dry-run`` only prints counts.
+    """
+    from .paper_text import load_paper_body, run_backfill
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        papers = db.list_all_papers()
+        stored_ids = db.list_stored_paper_text_ids()
+        report = run_backfill(
+            papers,
+            stored_ids,
+            dry_run=dry_run,
+            extract=load_paper_body,
+            write=None if dry_run else db.replace_paper_text,
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("text backfill failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    if report.failed:
+        raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

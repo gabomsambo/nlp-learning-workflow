@@ -14,7 +14,7 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from openai import OpenAI
 
-from .tools.pdf_loader import chunk_text
+from .tools.pdf_loader import VECTOR_CHUNK_OVERLAP, VECTOR_CHUNK_SIZE, chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -297,8 +297,8 @@ def upsert_text(
     pillar_id: str,
     paper_id: str,
     full_text: str,
-    chunk_size: int = 250,
-    overlap: int = 25
+    chunk_size: int = VECTOR_CHUNK_SIZE,
+    overlap: int = VECTOR_CHUNK_OVERLAP,
 ) -> int:
     """
     Chunk text, embed chunks, and upsert to vector store with pillar isolation.

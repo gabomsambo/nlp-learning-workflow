@@ -15,8 +15,8 @@ from nlp_pillars.schemas import PaperRef, ParsedPaper
 from nlp_pillars.agents.ingest_agent import IngestAgent, IngestError, ingest_paper_from_url
 from nlp_pillars.tools import pdf_loader
 from nlp_pillars.tools.pdf_loader import (
-    download_pdf, extract_text, chunk_text, 
-    PDFDownloadError, PDFParseError,
+    download_pdf, extract_text, chunk_text,
+    PDFDownloadError, PDFParseError, ExtractedText,
     _normalize_whitespace, _validate_pdf_content, _clean_pdf_header_noise
 )
 
@@ -444,13 +444,15 @@ class TestIngestAgent:
     """Test cases for the IngestAgent."""
     
     @patch('nlp_pillars.agents.ingest_agent.download_pdf')
-    @patch('nlp_pillars.agents.ingest_agent.extract_text')
+    @patch('nlp_pillars.agents.ingest_agent.extract_document')
     @patch('nlp_pillars.agents.ingest_agent.chunk_text')
     def test_ingest_success(self, mock_chunk, mock_extract, mock_download, sample_paper_ref):
         """Test successful paper ingestion."""
         # Mock the pipeline
         mock_download.return_value = "/fake/path/paper.pdf"
-        mock_extract.return_value = "This is extracted text. " * 100
+        mock_extract.return_value = ExtractedText(
+            "This is extracted text. " * 100, "pymupdf4llm"
+        )
         mock_chunks = ["Chunk 1 content", "Chunk 2 content", "Chunk 3 content"]
         mock_chunk.return_value = mock_chunks
         
@@ -460,7 +462,8 @@ class TestIngestAgent:
         # Verify result structure
         assert isinstance(result, ParsedPaper)
         assert result.paper_ref == sample_paper_ref
-        assert result.full_text == mock_extract.return_value
+        assert result.full_text == mock_extract.return_value.text
+        assert result.extractor == "pymupdf4llm"
         assert result.chunks == mock_chunks
         assert result.figures_count == 0
         assert result.tables_count == 0
@@ -469,7 +472,7 @@ class TestIngestAgent:
         # Verify function calls
         mock_download.assert_called_once_with(sample_paper_ref.url_pdf, agent.cache_dir)
         mock_extract.assert_called_once_with("/fake/path/paper.pdf")
-        mock_chunk.assert_called_once_with(mock_extract.return_value)
+        mock_chunk.assert_called_once_with(mock_extract.return_value.text)
     
     @patch('nlp_pillars.agents.ingest_agent.download_pdf')
     def test_ingest_custom_pdf_url(self, mock_download, sample_paper_ref):
@@ -478,10 +481,10 @@ class TestIngestAgent:
         mock_download.return_value = "/fake/path/paper.pdf"
         
         # Also need to mock the rest of the pipeline
-        with patch('nlp_pillars.agents.ingest_agent.extract_text') as mock_extract, \
+        with patch('nlp_pillars.agents.ingest_agent.extract_document') as mock_extract, \
              patch('nlp_pillars.agents.ingest_agent.chunk_text') as mock_chunk:
             
-            mock_extract.return_value = "Sample text"
+            mock_extract.return_value = ExtractedText("Sample text", "pypdf")
             mock_chunk.return_value = ["Sample chunk"]
             
             agent = IngestAgent()
@@ -514,7 +517,7 @@ class TestIngestAgent:
             agent.ingest(sample_paper_ref)
     
     @patch('nlp_pillars.agents.ingest_agent.download_pdf')
-    @patch('nlp_pillars.agents.ingest_agent.extract_text')
+    @patch('nlp_pillars.agents.ingest_agent.extract_document')
     def test_ingest_extraction_failure(self, mock_extract, mock_download, sample_paper_ref):
         """Test handling of text extraction failures."""
         mock_download.return_value = "/fake/path/paper.pdf"
@@ -526,11 +529,11 @@ class TestIngestAgent:
             agent.ingest(sample_paper_ref)
     
     @patch('nlp_pillars.agents.ingest_agent.download_pdf')
-    @patch('nlp_pillars.agents.ingest_agent.extract_text')
+    @patch('nlp_pillars.agents.ingest_agent.extract_document')
     def test_ingest_empty_text(self, mock_extract, mock_download, sample_paper_ref):
         """Test handling of empty text extraction."""
         mock_download.return_value = "/fake/path/paper.pdf"
-        mock_extract.return_value = "   \n\n   "  # Only whitespace
+        mock_extract.return_value = ExtractedText("   \n\n   ", "pypdf")
         
         agent = IngestAgent()
         
@@ -538,12 +541,12 @@ class TestIngestAgent:
             agent.ingest(sample_paper_ref)
     
     @patch('nlp_pillars.agents.ingest_agent.download_pdf')
-    @patch('nlp_pillars.agents.ingest_agent.extract_text')
+    @patch('nlp_pillars.agents.ingest_agent.extract_document')
     @patch('nlp_pillars.agents.ingest_agent.chunk_text')
     def test_ingest_chunking_failure(self, mock_chunk, mock_extract, mock_download, sample_paper_ref):
         """Test handling of chunking failures."""
         mock_download.return_value = "/fake/path/paper.pdf"
-        mock_extract.return_value = "Valid text content"
+        mock_extract.return_value = ExtractedText("Valid text content", "pypdf")
         mock_chunk.return_value = []  # No chunks created
         
         agent = IngestAgent()
@@ -552,13 +555,13 @@ class TestIngestAgent:
             agent.ingest(sample_paper_ref)
     
     @patch('nlp_pillars.agents.ingest_agent.download_pdf')
-    @patch('nlp_pillars.agents.ingest_agent.extract_text')
+    @patch('nlp_pillars.agents.ingest_agent.extract_document')
     @patch('nlp_pillars.agents.ingest_agent.chunk_text')
     def test_ingest_batch(self, mock_chunk, mock_extract, mock_download):
         """Test batch ingestion with mixed success/failure."""
         # Setup mocks
         mock_download.side_effect = ["/path1.pdf", PDFDownloadError("Failed"), "/path3.pdf"]
-        mock_extract.return_value = "Sample text"
+        mock_extract.return_value = ExtractedText("Sample text", "pypdf")
         mock_chunk.return_value = ["Sample chunk"]
         
         # Test papers

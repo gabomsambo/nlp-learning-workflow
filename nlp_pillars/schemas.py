@@ -164,6 +164,9 @@ class ParsedPaper(BaseIOSchema):
     paper_ref: PaperRef = Field(..., description="Paper metadata")
     full_text: str = Field(..., description="Complete paper text")
     chunks: List[str] = Field(..., description="Text chunks for processing")
+    # Which library produced full_text. The default covers rows built before
+    # extract_document recorded a name. paper_texts.extractor stores this.
+    extractor: str = Field(default="pdf_loader", description="Library that produced full_text")
     figures_count: int = Field(default=0, description="Number of figures")
     tables_count: int = Field(default=0, description="Number of tables")
     references: List[str] = Field(default_factory=list, description="Paper references")
