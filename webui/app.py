@@ -1,6 +1,8 @@
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
@@ -26,6 +28,16 @@ logger = logging.getLogger(__name__)
 #: enough for a single-user tool and keeps memory sane given each run holds a parsed
 #: PDF.
 _MAX_CONCURRENT_RUNS = 2
+
+
+def static_asset_version() -> str:
+    """Short hash of static files so CSS and JS URLs change when the files do."""
+    root = Path(__file__).resolve().parent / "static"
+    digest = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(path.stat().st_mtime_ns.to_bytes(8, "little", signed=False))
+    return digest.hexdigest()[:12]
 
 
 def create_app() -> FastAPI:
@@ -81,6 +93,7 @@ def create_app() -> FastAPI:
 
     app.mount("/static", StaticFiles(directory="webui/static"), name="static")
     templates = Jinja2Templates(directory="webui/templates")
+    templates.env.globals["asset_v"] = static_asset_version()
     app.state.templates = templates
 
     # Include API routers

@@ -90,7 +90,7 @@
   <p>Papers failed: <span id="total-failed" style="color: red;">0</span></p>
 </div>
 
-<script src="/static/run-progress.js"></script>
+<script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
 <script>
 // State
 let candidates = [];

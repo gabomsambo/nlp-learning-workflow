@@ -5,7 +5,7 @@
 }
 
 table td small {
-  color: #666;
+  color: var(--muted);
 }
 
 

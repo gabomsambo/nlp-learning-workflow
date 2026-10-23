@@ -660,17 +660,15 @@ unavailable"), never as `0`. Do not "simplify" the raising pair into the lenient
 progress-bar denominators are display goals (`PROGRESS_GOALS` in
 `webui/routers/pillars.py`), nothing enforces them, and the bar is clamped to 100%.
 
-### Pico v2 namespaces its CSS variables, so most of the templates' colours do nothing
+### Pico v2 is vendored, and the shell themes it from tokens
 
-`base.html` loads `@picocss/pico@2`, whose custom properties are all `--pico-`
-prefixed. Every bare `var(--primary)`, `var(--muted-color)`, `var(--border-color)`,
-`var(--card-background-color)` and `var(--secondary-background)` in
-`webui/templates/` is therefore undefined: the declaration is dropped at computed-value
-time and the element falls back to inherited or transparent. Measured on
-`pillar_detail.html` — the Progress Overview bars rendered as nothing at all, and the
-"cards" have no background or border. `webui/static/styles.css` defines no variables of
-its own. The fix per declaration is `var(--primary, var(--pico-primary))`; only the
-progress-bar rules carry it so far. Repointing the rest is a separate change.
+`base.html` loads `webui/static/vendor/pico.min.css` (Pico v2.1.1, no CDN) and then
+`tokens.css`, which remaps `--pico-*` from the Paper / Cockpit / Journal tokens and
+aliases the bare names page CSS already uses (`--primary`, `--muted-color`,
+`--border-color`, `--card-background-color`, `--secondary-background`, and the rest
+listed in that file). Those aliases are why existing pages pick up the active theme
+before they are rebuilt. Pico itself is removed in the cleanup PR. New colour, font
+and radius values belong in `tokens.css` only.
 
 ## Sharp edges
 
