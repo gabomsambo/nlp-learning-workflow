@@ -659,16 +659,19 @@ class Orchestrator:
         db.insert_lesson(lesson)
         if quiz_cards:
             db.insert_quiz_cards(quiz_cards)
-        # Stored text is the source of truth. A failure here raises, the in-flight
-        # PERSIST stage is marked failed, and the queue row stays unprocessed.
+        # Stored text is the source of truth. Embeddings for the new chunks
+        # are the next write. Either failure raises, the in-flight PERSIST
+        # stage is marked failed, and the queue row stays unprocessed.
         # upsert_text below is unchanged.
         n_chunks = db.replace_paper_text(
             paper.id, parsed_paper.full_text, parsed_paper.extractor,
         )
+        n_embedded = db.embed_paper_chunks(paper.id)
         db.mark_processed(pillar_id, paper.id)
         self._stage(
             StageName.PERSIST, StageStatus.COMPLETED.value,
-            f"{paper.id}: {n_chunks} text chunk(s) stored",
+            f"{paper.id}: {n_chunks} text chunk(s) stored, "
+            f"{n_embedded} embedding(s)",
         )
 
         # Step 5f: Store in vector database

@@ -102,9 +102,9 @@ def test_migration_declares_both_tables_grants_and_reloads_postgrest():
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON paper_chunks TO web_anon;" in MIGRATION_SQL
     assert "GRANT EXECUTE ON FUNCTION replace_paper_text_and_chunks" in MIGRATION_SQL
     assert MIGRATION_SQL.rstrip().endswith("NOTIFY pgrst, 'reload schema';")
-    # Embeddings are the next change. Comments may say so; a column must not.
+    # 017 stores text only. The embedding column arrives in 018 / schema.sql.
     assert re.search(r"(?m)^\s+embedding\s", MIGRATION_SQL) is None
-    assert re.search(r"(?m)^\s+embedding\s", SCHEMA_SQL) is None
+    assert "CREATE TABLE chunk_embeddings" in SCHEMA_SQL
 
 
 def test_migration_replaces_chunks_in_one_function():

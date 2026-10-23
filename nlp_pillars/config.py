@@ -49,7 +49,14 @@ class Settings(BaseSettings):
 
     # Application Settings with defaults
     default_model: str = Field("gpt-4o", env="DEFAULT_MODEL")
-    embedding_model: str = Field("text-embedding-3-small", env="EMBEDDING_MODEL")
+    # Postgres chunk embeddings. Default is the pinned local bge model.
+    # vectors.py does not read this field: it still calls OpenAI for the
+    # Qdrant upsert, using EMBEDDING_MODEL from the environment when that
+    # value is set (see nlp_pillars/embeddings.py). A text-embedding-* value
+    # left in the environment keeps that Qdrant path and does not switch the
+    # Postgres store off bge unless EMBEDDING_PROVIDER=openai.
+    embedding_provider: str = Field("local", env="EMBEDDING_PROVIDER")
+    embedding_model: str = Field("BAAI/bge-base-en-v1.5", env="EMBEDDING_MODEL")
     log_level: str = Field("INFO", env="LOG_LEVEL")
 
     # Daily-run scheduler. Consumed by nlp_pillars/scheduler.py, which runs as the

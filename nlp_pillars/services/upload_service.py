@@ -833,22 +833,32 @@ class UploadService:
             stages.failed(StageName.PERSIST, _reason(e))
         else:
             # Same chunker config as the vector upsert below, which is unchanged.
-            # A failure is a failed persist stage, not a swallowed exception.
+            # A text failure and an embedding failure are each a failed persist
+            # stage, not a swallowed exception. The Qdrant upsert still runs.
             try:
                 n_chunks = db.replace_paper_text(
                     paper.id,
                     parsed_paper.full_text,
                     parsed_paper.extractor,
                 )
-                stages.done(
-                    StageName.PERSIST,
-                    f"{len(paper.authors)} author(s) recorded, "
-                    f"{n_chunks} text chunk(s) stored",
-                )
             except Exception as e:
                 logger.error(f"Paper text persistence failed for {paper.id}: {e}")
                 errors.append(f"paper_text: {e}")
                 stages.failed(StageName.PERSIST, _reason(e))
+            else:
+                try:
+                    n_embedded = db.embed_paper_chunks(paper.id)
+                except Exception as e:
+                    logger.error(f"Chunk embeddings failed for {paper.id}: {e}")
+                    errors.append(f"embeddings: {e}")
+                    stages.failed(StageName.PERSIST, _reason(e))
+                else:
+                    stages.done(
+                        StageName.PERSIST,
+                        f"{len(paper.authors)} author(s) recorded, "
+                        f"{n_chunks} text chunk(s) stored, "
+                        f"{n_embedded} embedding(s)",
+                    )
 
         # Step 5f: Store in vector database for semantic search
         stages.start(StageName.VECTORS, "Embedding the paper for semantic search")

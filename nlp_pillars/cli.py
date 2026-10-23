@@ -1392,5 +1392,89 @@ def text_backfill(
     raise typer.Exit(0)
 
 
+embeddings_app = typer.Typer(
+    help="Chunk embeddings stored in Postgres",
+    add_completion=False,
+)
+app.add_typer(embeddings_app, name="embeddings")
+
+
+@embeddings_app.command("backfill")
+def embeddings_backfill(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print counts only. Do not load a model or write embeddings.",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help=(
+            "Model id to fill. Default: the active provider. "
+            "text-embedding-* selects OpenAI; BAAI/bge-base-en-v1.5 selects "
+            "the pinned local ONNX model."
+        ),
+    ),
+):
+    """Embed paper chunks that have no row yet for the chosen model.
+
+    Idempotent: a chunk that already has this model_id is left alone, so a
+    second run writes nothing. Apply docs/migrations/018_chunk_embeddings.sql
+    before running this against a database. ``--dry-run`` only prints counts
+    and does not download model weights.
+    """
+    from .chunk_embeddings import embed_chunk_rows, run_embedding_backfill
+    from .config import get_settings
+    from .embeddings import (
+        EmbeddingError,
+        get_embedding_provider,
+        selection_for_backfill,
+    )
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        settings = get_settings()
+        _provider_name, model_id = selection_for_backfill(
+            model,
+            settings.embedding_provider,
+            settings.embedding_model,
+        )
+        chunks = db.list_chunks_missing_embeddings(model_id)
+        embed = None
+        if not dry_run and chunks:
+            provider = get_embedding_provider(
+                provider=_provider_name,
+                model=model_id,
+            )
+
+            def embed_missing(batch, _provider=provider):
+                return embed_chunk_rows(batch, _provider, db.insert_chunk_embeddings)
+
+            embed = embed_missing
+
+        report = run_embedding_backfill(
+            model_id=model_id,
+            dry_run=dry_run,
+            chunks=chunks,
+            embed=embed,
+        )
+    except typer.Exit:
+        raise
+    except EmbeddingError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("embeddings backfill failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("embeddings backfill failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    if report.failed:
+        raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

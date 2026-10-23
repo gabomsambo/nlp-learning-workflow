@@ -187,6 +187,13 @@ services:
       QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
       QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
+      # Local embedding weights (pinned BAAI/bge-base-en-v1.5 ONNX, about 208 MB
+      # on first use). On the uploads volume so a restart or image rebuild does
+      # not fetch them again and the image does not carry the weights.
+      # EMBEDDING_MODEL is intentionally not set here: vectors.py still reads it
+      # for the OpenAI Qdrant upsert, which this change does not replace.
+      EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-local}"
+      EMBEDDING_CACHE_DIR: /app/data/embedding-models
       #
       # The three database variables below ARE overridden, and all three are
       # needed. Nothing is deleted from .env — these only shadow it for this
@@ -280,6 +287,10 @@ services:
       QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
       QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
+      # Same embedding cache as webui. A scheduled ingest writes chunk
+      # embeddings, and the weights have to be the ones webui already downloaded.
+      EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-local}"
+      EMBEDDING_CACHE_DIR: /app/data/embedding-models
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
     volumes:
       # A scheduled run can ingest PDFs, so it needs the same retained uploads

@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
+from .embeddings import EmbeddingError, MIGRATION as EMBEDDINGS_MIGRATION
 from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
@@ -910,6 +911,162 @@ def replace_paper_text(paper_id: str, full_text: str, extractor: str) -> int:
         )
     logger.info("Stored %s chunks of text for paper %s", count, paper_id)
     return count
+
+
+def _embedding_store_error(error: Any, action: str) -> EmbeddingError:
+    """Name migration 018 when the table or the lookup function is missing."""
+    text = str(error)
+    lowered = text.lower()
+    missing = (
+        "chunk_embeddings" in lowered or "chunks_missing_embeddings" in lowered
+    ) and any(
+        token in lowered
+        for token in ("pgrst202", "pgrst205", "pgrst204", "does not exist", "schema cache", "404")
+    )
+    hint = f" Apply {EMBEDDINGS_MIGRATION} by hand." if missing else ""
+    return EmbeddingError(f"{action}: {text}.{hint}")
+
+
+def _missing_embeddings_page(
+    model_id: str,
+    paper_id: Optional[str],
+    limit: int,
+    offset: int,
+) -> List[Dict[str, Any]]:
+    try:
+        client = get_client()
+        params: Dict[str, Any] = {
+            'p_model_id': model_id,
+            'p_limit': limit,
+            'p_offset': offset,
+        }
+        if paper_id is not None:
+            params['p_paper_id'] = paper_id
+        response = client.rpc('chunks_missing_embeddings', params)
+    except Exception as e:
+        raise _embedding_store_error(
+            e, f"Could not list chunks missing embeddings for {model_id}"
+        ) from e
+    if response['error']:
+        raise _embedding_store_error(
+            response['error'],
+            f"Could not list chunks missing embeddings for {model_id}",
+        )
+    data = response['data']
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        raise EmbeddingError(
+            f"chunks_missing_embeddings returned {data!r}, not a row list. "
+            f"Apply {EMBEDDINGS_MIGRATION} by hand."
+        )
+    return data
+
+
+def list_chunks_missing_embeddings(
+    model_id: str,
+    paper_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Chunks with no ``chunk_embeddings`` row for ``model_id``.
+
+    ``paper_id`` limits the scan to one paper. The walk pages the SQL
+    function so a long library is not one response.
+
+    Raises:
+        EmbeddingError: the read failed. A missing function names the migration.
+    """
+    if not model_id or not str(model_id).strip():
+        raise EmbeddingError("embeddings lookup missing model_id")
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    previous_first = None
+    while True:
+        page = _missing_embeddings_page(model_id, paper_id, _PAGE_SIZE, offset)
+        if not page:
+            return rows
+        marker = page[0].get('chunk_id')
+        if marker is not None and marker == previous_first:
+            raise EmbeddingError(
+                f"Reading chunks missing embeddings for {model_id} "
+                f"did not advance past offset {offset}"
+            )
+        previous_first = marker
+        rows.extend(page)
+        if len(page) < _PAGE_SIZE:
+            return rows
+        offset += len(page)
+
+
+def paper_has_chunks(paper_id: str) -> bool:
+    """True when ``paper_id`` has at least one ``paper_chunks`` row.
+
+    Raises:
+        EmbeddingError: the read failed.
+    """
+    try:
+        client = get_client()
+        response = (
+            client.table('paper_chunks')
+            .select('id')
+            .eq('paper_id', paper_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise EmbeddingError(
+            f"Could not read chunks for {paper_id}: {e}. "
+            "Apply docs/migrations/017_paper_text.sql by hand."
+        ) from e
+    if response['error']:
+        raise EmbeddingError(
+            f"Could not read chunks for {paper_id}: {response['error']}. "
+            "Apply docs/migrations/017_paper_text.sql by hand."
+        )
+    return bool(response['data'])
+
+
+def insert_chunk_embeddings(rows: List[Dict[str, Any]]) -> int:
+    """Insert embedding rows. Does not update a pair that already exists.
+
+    The caller selects missing pairs first. A conflict (409) is an error so
+    a raced insert is visible; the next backfill skips rows that landed.
+
+    Raises:
+        EmbeddingError: the insert failed. A missing table names the migration.
+    """
+    if not rows:
+        return 0
+    try:
+        client = get_client()
+        response = client.client.post(
+            f"{client.base_url}/chunk_embeddings",
+            json=rows,
+            headers={**client.headers, 'Prefer': 'return=minimal'},
+        )
+    except Exception as e:
+        raise _embedding_store_error(
+            e, f"Could not store {len(rows)} embedding(s)"
+        ) from e
+    if response.status_code >= 400:
+        try:
+            error = response.json()
+        except Exception:
+            error = response.text[:500]
+        raise _embedding_store_error(
+            error, f"Could not store {len(rows)} embedding(s)"
+        )
+    return len(rows)
+
+
+def embed_paper_chunks(paper_id: str) -> int:
+    """Embed ``paper_id``'s chunks that lack the active model. See ``embed_paper``.
+
+    Raises:
+        EmbeddingError: nothing was computed, or the write failed.
+    """
+    from .chunk_embeddings import embed_paper
+
+    return embed_paper(paper_id)
 
 
 def update_paper_metadata(paper_id: str, fields: Dict[str, Any]) -> bool:

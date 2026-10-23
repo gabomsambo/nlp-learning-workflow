@@ -317,6 +317,44 @@ def test_a_failed_text_write_fails_persist_and_is_recorded(
 @patch("nlp_pillars.orchestrator.SynthesisAgent")
 @patch("nlp_pillars.orchestrator.SummarizerAgent")
 @patch("nlp_pillars.orchestrator.DiscoveryAgent")
+def test_a_failed_embedding_fails_persist_and_does_not_upsert(
+    mock_discovery, mock_summ, mock_synth, mock_quiz, mock_db, mock_vectors,
+    paper, parsed, note, lesson, cards,
+):
+    """Chunk embeddings are part of persist. A model error is not a green paper.
+
+    The Qdrant upsert is not reached: the source-of-truth embedding failed,
+    and the queue row stays unprocessed.
+    """
+    from nlp_pillars.embeddings import EmbeddingError
+
+    mock_db.get_recent_notes.return_value = []
+    mock_db.queue_add_candidates.return_value = 1
+    mock_db.queue_pop_next.return_value = [paper]
+    mock_db.replace_paper_text.return_value = 2
+    mock_db.embed_paper_chunks.side_effect = EmbeddingError("model weights missing")
+    mock_summ.run.return_value = note
+    mock_synth.run.return_value = lesson
+    mock_quiz.run.return_value = cards
+
+    recorder = StageRecorder()
+    orch = _build(on_stage=recorder, parsed=parsed, paper=paper)
+    result = orch.run_daily(PILLAR, papers_limit=1)
+
+    assert result.papers_processed == []
+    assert result.errors
+    assert "model weights missing" in result.errors[0]["message"]
+    assert StageName.PERSIST.value in recorder.failed()
+    mock_db.mark_processed.assert_not_called()
+    mock_vectors.upsert_text.assert_not_called()
+
+
+@patch("nlp_pillars.orchestrator.vectors")
+@patch("nlp_pillars.orchestrator.db")
+@patch("nlp_pillars.orchestrator.QuizAgent")
+@patch("nlp_pillars.orchestrator.SynthesisAgent")
+@patch("nlp_pillars.orchestrator.SummarizerAgent")
+@patch("nlp_pillars.orchestrator.DiscoveryAgent")
 def test_empty_paper_still_completes_the_vectors_stage(
     mock_discovery, mock_summ, mock_synth, mock_quiz, mock_db, mock_vectors,
     paper, note, lesson, cards,

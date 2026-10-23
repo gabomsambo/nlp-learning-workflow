@@ -356,10 +356,20 @@ extracted_at) and `paper_chunks` (text, token count, the semchunk 250/25 cl100k 
 and version, content hash; unique on paper_id, chunk_index, chunker version).
 `docs/migrations/017_paper_text.sql` is hand-applied. Ingest, daily processing and
 upload write both tables with the chunker config `upsert_text` uses, replacing a
-paper's chunks in one transaction on re-ingest. Embeddings are not on `paper_chunks`
-yet. Qdrant stays a rebuildable copy of those rows; `upsert_text` itself is unchanged.
-After the migration is applied, `python -m nlp_pillars.cli text backfill` re-extracts
-retained uploads and re-downloads URL papers (`--dry-run` prints counts only).
+paper's chunks in one transaction on re-ingest. Vectors for those chunks are
+`chunk_embeddings` (`docs/migrations/018_chunk_embeddings.sql`, also hand-applied):
+one `real[]` (float32) per `(chunk_id, model_id)`, not a column on `paper_chunks`
+and not pgvector. The default provider is local `BAAI/bge-base-en-v1.5` (fastembed
+ONNX, 768-d, revision pinned in `nlp_pillars/embeddings.py`);
+`EMBEDDING_PROVIDER=openai` stores `text-embedding-3-small` instead. Weights
+download to `EMBEDDING_CACHE_DIR` (compose: `/app/data/embedding-models` on the
+uploads volume, about 208 MB the first time), not into the image. `upsert_text`
+still embeds for Qdrant with OpenAI and is not a projection of these rows.
+Ingest and upload embed new chunks after the text write and fail the persist
+stage if that errors. `python -m nlp_pillars.cli embeddings backfill` fills chunks
+that lack a row for the active model (`--dry-run` prints counts only).
+`python -m nlp_pillars.cli text backfill` re-extracts retained uploads and
+re-downloads URL papers (`--dry-run` prints counts only).
 
 ## The discovery candidate payload is the paper's permanent record
 
