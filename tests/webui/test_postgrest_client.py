@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from webui.services.postgrest_client import PostgrestClient
+from webui.services.postgrest_client import PostgrestClient, quote_in_filter
 
 
 class _Resp:
@@ -132,5 +132,50 @@ async def test_scripts_for_paper_returns_rows(monkeypatch):
     assert seen["path"] == "podcast_scripts"
     assert seen["params"]["paper_id"] == "eq.arxiv:2402.08593"
     assert "audio_metadata" not in seen["params"]["select"]
+
+
+def test_quote_in_filter_quotes_colons_and_escapes():
+    assert quote_in_filter(["arxiv:2402.08593"]) == 'in.("arxiv:2402.08593")'
+    assert quote_in_filter(['say "hi"', "a,b", "a\\b"]) == 'in.("say \\"hi\\"","a,b","a\\\\b")'
+
+
+@pytest.mark.asyncio
+async def test_list_lessons_checked_raises_and_list_lessons_degrades(monkeypatch):
+    client = PostgrestClient(base_url="http://example", token=None)
+
+    async def fake_get(path, params=None):
+        raise httpx.HTTPError("boom")
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    with pytest.raises(httpx.HTTPError):
+        await client.list_lessons_checked()
+    assert await client.list_lessons() == []
+
+
+@pytest.mark.asyncio
+async def test_paper_titles_quotes_ids_and_skips_blanks(monkeypatch):
+    client = PostgrestClient(base_url="http://example", token=None)
+    seen = {}
+
+    async def fake_get(path, params=None):
+        seen["path"] = path
+        seen["params"] = params
+        return [
+            {"id": "arxiv:2402.08593", "title": "Graph Feature Preprocessor"},
+            {"id": "missing-title", "title": ""},
+        ], _Resp({})
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    titles = await client.paper_titles(
+        ["arxiv:2402.08593", "", "arxiv:2402.08593", "missing-title"]
+    )
+    assert seen["path"] == "papers"
+    assert seen["params"]["id"] == 'in.("arxiv:2402.08593","missing-title")'
+    assert seen["params"]["limit"] == 2
+    assert titles == {
+        "arxiv:2402.08593": "Graph Feature Preprocessor",
+        "missing-title": "",
+    }
+    assert await client.paper_titles([]) == {}
 
 

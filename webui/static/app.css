@@ -3204,3 +3204,121 @@ html[data-theme="journal"] .status-row {
   .candidate-year { grid-column: 2; margin-top: 0; }
   .candidate-toolbar .btn { margin-left: 0; width: 100%; }
 }
+
+/* Lessons reading list. The paper page Lesson tab is where a lesson is read. */
+.lessons-column { max-width: var(--read-max); }
+
+.lesson-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lesson-row { border-bottom: 1px solid var(--border); }
+
+.lesson-row.is-current {
+  background: var(--accent-soft);
+  border-radius: var(--r-control);
+}
+
+.lesson-open {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-5) var(--space-2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.lesson-open:hover .lesson-title { color: var(--accent); }
+
+.lesson-date {
+  margin: 0;
+  padding-top: var(--space-1);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+}
+
+.lesson-main { min-width: 0; }
+
+.lesson-title {
+  margin: 0;
+  font-family: var(--font-read);
+  font-size: var(--fs-card);
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+html[data-theme="cockpit"] .lesson-title {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+
+.lesson-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+}
+
+.lesson-paper-title { color: var(--text); }
+
+.lesson-source .pillar-inline { color: var(--text); }
+
+.lesson-preview {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text);
+  font-family: var(--font-read);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+html[data-theme="cockpit"] .lesson-preview {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  line-height: 1.5;
+}
+
+.lesson-preview li + li { margin-top: var(--space-2); }
+
+.lesson-more {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.lesson-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin: var(--space-3) 0 0;
+}
+
+.lesson-record {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 859px) {
+  .lesson-open { grid-template-columns: minmax(0, 1fr); }
+  .lesson-title { font-size: var(--fs-tldr); }
+  html[data-theme="cockpit"] .lesson-title { font-size: var(--fs-ui); }
+}

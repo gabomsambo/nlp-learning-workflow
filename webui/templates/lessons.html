@@ -1,39 +1,104 @@
 {% extends 'base.html' %}
+{% from "_components.html" import page_header, button, chip, empty_state, callout %}
 {% block title %}Lessons{% endblock %}
 {% block content %}
-<h2>Lessons{% if pillar %} ({{ pillar }}){% endif %}</h2>
+{# The paper page Lesson tab is the reading surface. This list links to #lesson. #}
+<div class="lessons-page">
+{% call page_header('Lessons', 'Library') %}
+  {{ button('Add papers', href=view.add_href) }}
+  {{ button('Browse papers', 'secondary', href=view.papers_href) }}
+{% endcall %}
 
-<form method="get">
-  <label>
-    Pillar
-    <select name="pillar">
-      <option value="">All</option>
-      {% for p in pillars %}
-      <option value="{{ p.id }}" {% if pillar==p.id %}selected{% endif %}>{{ p.name }}</option>
+{% if load_error %}
+{% call callout('error', 'Lessons unavailable') %}
+{{ load_error }}
+{% endcall %}
+{% endif %}
+{% if titles_note %}
+{% call callout('warn', 'Paper titles unavailable') %}
+{{ titles_note }}
+{% endcall %}
+{% endif %}
+
+<div class="library-toolbar">
+  <div class="filter-row">
+    <div class="filter-chips" role="group" aria-label="Pillar">
+      {% for chip_item in view.chips %}
+      <a class="filter-chip{% if chip_item.pillar_class %} {{ chip_item.pillar_class }}{% endif %}"
+         href="{{ chip_item.href }}"
+         data-pillar="{{ chip_item.id }}"
+         {% if chip_item.current %}aria-current="true"{% endif %}>
+        {% if chip_item.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
+        {{ chip_item.name }}
+      </a>
       {% endfor %}
-    </select>
-  </label>
-  <button type="submit">Filter</button>
-  <a role="button" href="/lessons/">Reset</a>
-  <a role="button" class="secondary" href="/papers/">Browse Papers</a>
-</form>
+    </div>
+    {{ button('Reset', 'ghost', href='/lessons/') }}
+  </div>
+  <p class="library-hint">
+    {% if view.count_label %}<span>{{ view.count_label }}</span><span>Newest first</span>{% endif %}
+    {% if view.rows %}
+    <span class="library-keys">Press <kbd class="kbd">j</kbd> <kbd class="kbd">k</kbd> to move, <kbd class="kbd">Enter</kbd> to open</span>
+    {% endif %}
+  </p>
+</div>
 
-<table>
-  <thead>
-    <tr><th>Paper</th><th>TL;DR</th><th>Difficulty</th><th>Time</th><th>Pillar</th></tr>
-  </thead>
-  <tbody>
-  {% for l in lessons %}
-    <tr>
-      <td><small>{{ l.paper_id }}</small></td>
-      <td>{{ l.tl_dr }}</td>
-      <td>{{ l.difficulty }}</td>
-      <td>{{ l.estimated_time }}m</td>
-      <td>{{ l.pillar_id }}</td>
-    </tr>
+<div class="lessons-column">
+{% if view.rows %}
+<ul class="lesson-list" id="lesson-list">
+  {% for row in view.rows %}
+  <li class="lesson-row">
+    {% if row.href %}<a class="lesson-open" href="{{ row.href }}">{% else %}<div class="lesson-open">{% endif %}
+      {% if row.when_iso %}
+      <time class="lesson-date" datetime="{{ row.when_iso }}">{{ row.when }}</time>
+      {% else %}
+      <span class="lesson-date">{{ row.when }}</span>
+      {% endif %}
+      <span class="lesson-main">
+        <h2 class="lesson-title">{{ row.title }}</h2>
+        <p class="lesson-source">
+          <span class="lesson-paper-title">{{ row.paper_title }}</span>
+          {% if row.pillar_name %}
+          <span aria-hidden="true">·</span>
+          <span class="pillar-inline {{ row.pillar_class }}">
+            {% if row.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
+            {{ row.pillar_name }}
+          </span>
+          {% endif %}
+        </p>
+        {% if row.preview %}
+        <ul class="lesson-preview">
+          {% for item in row.preview %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% if row.more_takeaways %}
+        <span class="lesson-more">+{{ row.more_takeaways }} more</span>
+        {% endif %}
+        {% if row.minutes is not none or row.difficulty_label %}
+        <p class="lesson-facts">
+          {% if row.minutes is not none %}<span>{{ row.minutes }} min read</span>{% endif %}
+          {% if row.difficulty_label %}{{ chip(row.difficulty_label, row.difficulty_variant) }}{% endif %}
+        </p>
+        {% endif %}
+        <p class="lesson-record">
+          {% if row.paper_id %}<span>Paper <span class="lesson-paper-id">{{ row.paper_id }}</span></span>{% endif %}
+          {% if row.pillar_id %}<span>Pillar <span class="lesson-pillar-id">{{ row.pillar_id }}</span></span>{% endif %}
+          {% if row.time_compact %}<span class="lesson-time">{{ row.time_compact }}</span>{% endif %}
+          {% if row.difficulty_number %}<span>Difficulty <span class="lesson-difficulty">{{ row.difficulty_number }}</span></span>{% endif %}
+        </p>
+      </span>
+    {% if row.href %}</a>{% else %}</div>{% endif %}
+  </li>
   {% endfor %}
-  </tbody>
-  </table>
+</ul>
+{% elif not load_error %}
+{{ empty_state(view.empty_title, view.empty_message, view.add_href, 'Add papers') }}
+{% endif %}
+</div>
+</div>
 {% endblock %}
-
-
+{% block scripts %}
+{% if view.rows %}
+<script src="/static/lessons.js?v={{ asset_v | default('1', true) }}"></script>
+{% endif %}
+{% endblock %}
