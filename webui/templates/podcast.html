@@ -1,765 +1,265 @@
 {% extends 'base.html' %}
+{% from "_components.html" import page_header, callout %}
 {% from "_run_panel.html" import run_panel %}
+{% block title %}Listen{% endblock %}
 {% block content %}
-<h2>Podcast Script Generation</h2>
-<p>Generate educational podcast scripts from papers using AI.</p>
+{% call page_header('Listen', 'Studio' if studio else 'Episodes') %}
+  {% if studio %}
+  <a class="btn btn-secondary" href="{{ episodes_href }}">All episodes</a>
+  {% else %}
+  <a class="btn btn-primary" href="{{ studio_href }}">New episode</a>
+  {% endif %}
+{% endcall %}
+
+{% if studio %}
+<p class="page-lede">Write a script from a paper you already have, then record it. Nothing starts until you press a button.</p>
+{% else %}
+<p class="page-lede">Newest episodes first, grouped by pillar. Play continues in the bar at the bottom when you leave this page.</p>
+{% endif %}
 
 {% if load_errors %}
 {# The database could not be read. Say so — an empty dropdown and "no scripts
    yet" are what an unreachable database used to look like. #}
-<article style="border-left: 4px solid #b00; padding-left: 1rem;">
-  <strong>Some of this page could not be loaded.</strong>
-  <ul>
-    {% for err in load_errors %}<li>{{ err }}</li>{% endfor %}
-  </ul>
-  <small>The database could not be read. This is not the same as having no data — try reloading.</small>
-</article>
+{% call callout('error', 'Some of this page could not be loaded.') %}
+<ul>
+  {% for err in load_errors %}<li>{{ err }}</li>{% endfor %}
+</ul>
+<p>The database could not be read. This is not the same as having no data — try reloading.</p>
+{% endcall %}
 {% endif %}
 
-<form id="generate-form">
-  <div class="grid">
-    <label>
-      Pillar (filter)
-      <select name="pillar" id="pillar-select">
-        <option value="">All Pillars</option>
-        {% for pillar in pillars %}
-        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      Paper
-      <select name="paper" id="paper-select" required>
-        <option value="">Select a paper...</option>
-        {% for paper in papers %}
-        <option value="{{ paper.id }}" data-pillar="{{ paper.pillar_id }}">{{ paper.title[:60] }}{% if paper.title|length > 60 %}...{% endif %}</option>
-        {% endfor %}
-      </select>
-    </label>
+<article id="tts-status-panel" class="card listen-engine" aria-label="IndexTTS">
+  <div class="listen-engine-head">
+    <h2 class="card-title">IndexTTS</h2>
+    <span id="tts-status-chip" class="chip">Checking</span>
   </div>
-
-  {# The four aiming options, rendered from nlp_pillars/podcast_options.py.
-     Preset dropdown plus a free-text escape, not a wall of empty boxes; the
-     defaults are pre-selected, so someone who touches nothing gets exactly the
-     behaviour the prompts hardcoded before they were configurable. #}
-  <details id="episode-options" open>
-    <summary><strong>Episode settings</strong></summary>
-    <div class="grid">
-      {% for spec in option_specs %}
-      <label for="option-{{ spec.key }}">
-        {{ spec.label }}
-        <select name="{{ spec.key }}" id="option-{{ spec.key }}"
-                class="podcast-option" data-option-key="{{ spec.key }}">
-          {% for preset in spec.presets %}
-          <option value="{{ preset.value }}" {% if preset.value == spec.default %}selected{% endif %}>{{ preset.label }}</option>
-          {% endfor %}
-          {% if spec.free_text %}
-          <option value="{{ custom_value }}">Something else…</option>
-          {% endif %}
-        </select>
-        {% if spec.free_text %}
-        <input type="text" id="option-{{ spec.key }}-custom" name="{{ spec.key }}_custom"
-               class="podcast-option-custom" data-option-key="{{ spec.key }}"
-               placeholder="{{ spec.free_text_placeholder }}" maxlength="120" hidden
-               aria-label="{{ spec.label }} (custom)">
-        {% endif %}
-        <small>{{ spec.help }}</small>
-      </label>
-      {% endfor %}
-    </div>
-    <small>Settings choose what the episode is aimed at. They never change what it
-      is allowed to say: the script is still written only from the paper.</small>
-  </details>
-
-  <button type="submit" id="generate-btn">Generate Podcast Script</button>
-</form>
-
-<div id="status-area">
-  {{ run_panel(
-      title='Script',
-      status_id='status',
-      stages_id='script-stages',
-      progress_id='progress-bar',
-      cancel_id='cancel-script-btn',
-      cancel_label='Cancel',
-      progress_label='Script progress',
-      quiet=True
-  ) }}
-  {# Caveats about what the script was written from, and the "not saved" alarm. #}
-  <div id="script-warnings" role="status" aria-live="polite" hidden
-       style="margin-top: 0.75rem; border-left: 4px solid #b00; padding: 0.5rem 0 0.5rem 1rem;"></div>
-</div>
-
-<article id="tts-status-panel" style="margin: 1rem 0; border-left: 4px solid #888; padding-left: 1rem;">
-  <strong>IndexTTS</strong>
   <p id="tts-status-message">Checking speech engine…</p>
-  <pre id="tts-start-command" style="display: none; white-space: pre-wrap; background: #f5f5f5; padding: 0.5rem;"></pre>
+  <pre id="tts-start-command" class="listen-command" hidden></pre>
 </article>
 
-<div id="script-area" style="display: none; margin-top: 1rem;">
-  <div style="display: flex; justify-content: space-between; align-items: center;">
-    <h3 id="script-title">Generated Script</h3>
-    <button type="button" id="download-btn" class="secondary">Download .txt</button>
-  </div>
-  <p><small>Word count: <span id="word-count">0</span></small></p>
-  {# What this script was aimed at. Without it, two scripts for the same paper
-     differ for no visible reason. #}
-  <p id="script-settings" hidden><small>Settings: <span id="script-settings-text"></span></small></p>
+<nav class="tabs" aria-label="Listen">
+  <a href="{{ episodes_href }}" {% if not studio %}aria-current="page"{% endif %}>Episodes</a>
+  <a href="{{ studio_href }}" {% if studio %}aria-current="page"{% endif %}>Studio</a>
+</nav>
 
-  <div id="key-points" style="margin-bottom: 1rem;">
-    <strong>Key Points:</strong>
-    <ul id="key-points-list"></ul>
+<div class="listen-stack{% if studio %} is-studio{% else %} is-episodes{% endif %}">
+  <section id="listen-studio" aria-label="Episode studio" {% if not studio %}hidden{% endif %}>
+    {% call callout('warn', 'This spends money') %}
+    <p>Generating a script calls paid models — about $0.26 for a short paper. Recording audio uses IndexTTS on your GPU and does not call a paid model. Neither runs when this page opens.</p>
+    {% endcall %}
+
+    <form id="generate-form" data-custom-value="{{ custom_value }}">
+      <div class="listen-form-grid">
+        <div class="field">
+          <label for="pillar-select">Pillar (filter)</label>
+          <select name="pillar" id="pillar-select">
+            <option value="">All Pillars</option>
+            {% for pillar in pillars %}
+            <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field" id="paper-field">
+          <label for="paper-select">Paper</label>
+          <select name="paper" id="paper-select" required>
+            <option value="">Select a paper...</option>
+            {% if missing_paper %}
+            <option value="{{ missing_paper }}" data-pillar="" selected>{{ missing_paper }}</option>
+            {% endif %}
+            {% for paper in papers %}
+            <option value="{{ paper.id }}" data-pillar="{{ paper.pillar_id or '' }}" {% if paper.id == selected_paper %}selected{% endif %}>{{ paper.title[:60] }}{% if paper.title|length > 60 %}...{% endif %}</option>
+            {% endfor %}
+          </select>
+          <p id="paper-error" class="field-error" role="alert" hidden>Select a paper.</p>
+        </div>
+      </div>
+
+      {# The four aiming options, rendered from nlp_pillars/podcast_options.py.
+         Preset dropdown plus a free-text escape, not a wall of empty boxes; the
+         defaults are pre-selected, so someone who touches nothing gets exactly the
+         behaviour the prompts hardcoded before they were configurable. #}
+      <details id="episode-options" class="listen-options" open>
+        <summary>Episode settings</summary>
+        <div class="listen-form-grid">
+          {% for spec in option_specs %}
+          <div class="field">
+            <label for="option-{{ spec.key }}">{{ spec.label }}</label>
+            <select name="{{ spec.key }}" id="option-{{ spec.key }}"
+                    class="podcast-option" data-option-key="{{ spec.key }}">
+              {% for preset in spec.presets %}
+              <option value="{{ preset.value }}" {% if preset.value == spec.default %}selected{% endif %}>{{ preset.label }}</option>
+              {% endfor %}
+              {% if spec.free_text %}
+              <option value="{{ custom_value }}">Something else…</option>
+              {% endif %}
+            </select>
+            {% if spec.free_text %}
+            <input type="text" id="option-{{ spec.key }}-custom" name="{{ spec.key }}_custom"
+                   class="podcast-option-custom" data-option-key="{{ spec.key }}"
+                   placeholder="{{ spec.free_text_placeholder }}" maxlength="120" hidden
+                   aria-label="{{ spec.label }} (custom)">
+            {% endif %}
+            <p class="field-help">{{ spec.help }}</p>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="field-help">Settings choose what the episode is aimed at. They never change what it
+          is allowed to say: the script is still written only from the paper.</p>
+      </details>
+
+      <button type="submit" class="btn btn-primary" id="generate-btn">Generate Podcast Script</button>
+    </form>
+  </section>
+
+  <div class="listen-runs" data-run-kind="podcast_script">
+    {{ run_panel(
+        title='Script',
+        status_id='status',
+        stages_id='script-stages',
+        progress_id='progress-bar',
+        cancel_id='cancel-script-btn',
+        cancel_label='Cancel',
+        progress_label='Script progress',
+        quiet=True
+    ) }}
+    {# Caveats about what the script was written from, and the "not saved" alarm. #}
+    <div id="script-warnings" class="callout callout-warn script-warnings" role="status" aria-live="polite" hidden></div>
+    <div data-run-kind="podcast_audio">
+      {{ run_panel(
+          title='Audio',
+          status_id='audio-run-status',
+          stages_id='audio-stages',
+          progress_id='audio-progress-bar',
+          cancel_id='cancel-audio-btn',
+          cancel_label='Cancel',
+          progress_label='Audio progress',
+          quiet=True
+      ) }}
+    </div>
   </div>
 
-  <div id="script-content" style="background: #f5f5f5; padding: 1rem; border-radius: 8px; max-height: 500px; overflow-y: auto; font-family: monospace; white-space: pre-wrap;">
-  </div>
+  <div id="script-area" class="listen-script" hidden>
+    <article class="card player-card" id="player-card">
+      <div class="player-cover" id="player-cover" aria-hidden="true"><span id="player-initial">E</span></div>
+      <div class="player-body">
+        <div class="player-head">
+          <h3 id="script-title" class="player-title">Episode</h3>
+          <a class="btn btn-ghost btn-sm" id="download-btn" href="#">Download .txt</a>
+        </div>
+        <p class="episode-meta" id="player-meta"></p>
+        <p><small>Word count: <span id="word-count">0</span></small></p>
+        <p id="script-settings" hidden><small>Settings: <span id="script-settings-text"></span></small></p>
+        <div class="player-transport" id="player-transport">
+          <button type="button" class="btn btn-secondary btn-sm" id="player-back" aria-label="Back 15 seconds">−15</button>
+          <button type="button" class="btn btn-primary btn-sm" id="player-toggle" aria-label="Play" disabled>Play</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="player-forward" aria-label="Forward 30 seconds">+30</button>
+          <label class="player-scrub">
+            <span class="visually-hidden">Position</span>
+            <input id="player-range" type="range" min="0" max="0" step="0.1" value="0" disabled>
+          </label>
+          <span id="player-time" class="player-time"></span>
+          <select id="player-rate" aria-label="Playback speed">
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="1.75">1.75×</option>
+            <option value="2">2×</option>
+          </select>
+        </div>
+        <p id="player-no-audio" class="field-help" hidden>No audio yet. Record it below when IndexTTS is ready.</p>
+        <audio id="episode-player" preload="none"></audio>
+        <p id="audio-file-hint" hidden><small>Saved under <code id="audio-file-path"></code> on disk.</small></p>
+      </div>
+    </article>
 
-  <section id="audio-section" style="margin-top: 1.5rem; display: none;">
-    <h4>Episode audio</h4>
-    <p><small>Single narrator via IndexTTS on your GPU. Pick a reference voice, preview it, then generate.</small></p>
-    <div class="grid">
-      <label>
-        Voice
+    <div id="key-points">
+      <h3 class="section-title">Key points</h3>
+      <ul id="key-points-list"></ul>
+    </div>
+
+    <h3 class="section-title">Script</h3>
+    <div id="script-content" class="script-body"></div>
+
+    <section id="audio-section" hidden>
+      <h3 class="section-title">Record this episode</h3>
+      <p class="field-help">Single narrator via IndexTTS on your GPU. Pick a reference voice, preview it, then generate. Preview and generation wait for a button.</p>
+      <div class="field">
+        <label for="voice-select">Voice</label>
         <select id="voice-select" disabled>
           <option value="">Loading voices…</option>
         </select>
-        <small id="voice-reason"></small>
-      </label>
+        <p class="field-help" id="voice-reason"></p>
+      </div>
+      <div class="listen-actions">
+        <button type="button" class="btn btn-secondary" id="preview-voice-btn" disabled>Preview voice</button>
+        <button type="button" class="btn btn-primary" id="generate-audio-btn" disabled>Generate audio</button>
+      </div>
+      <audio id="voice-preview" class="voice-preview" controls hidden preload="none"></audio>
+    </section>
+  </div>
+
+  <section id="listen-library" aria-label="Episode library" {% if studio %}hidden{% endif %}>
+    <div class="listen-library-head">
+      <h2 class="section-title">Episodes</h2>
+      <div class="field listen-filter">
+        <label for="library-pillar">Pillar</label>
+        <select id="library-pillar">
+          <option value="">All pillars</option>
+          {% for pillar in pillars %}
+          <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
     </div>
-    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.75rem 0;">
-      <button type="button" id="preview-voice-btn" class="secondary" disabled>Preview voice</button>
-      <button type="button" id="generate-audio-btn" disabled>Generate audio</button>
+    <div id="existing-scripts">
+      {% if scripts is none %}
+      <p id="listen-scripts-error"><em>Existing scripts could not be loaded — see the error above. This does not mean there are none.</em></p>
+      {% elif not scripts %}
+      <p id="listen-empty">No podcast scripts generated yet.</p>
+      {% endif %}
+      <p id="listen-filter-empty" hidden>No episodes in this pillar yet.</p>
+      <div id="episode-groups">
+        {% for group in episode_groups %}
+        <section class="episode-group pillar-{{ group.pillar_id }}" data-pillar="{{ group.pillar_id }}">
+          <h3 class="episode-group-title"><span class="episode-mark" aria-hidden="true"></span>{{ group.pillar_name }}</h3>
+          <ul class="episode-list">
+            {% for ep in group.episodes %}
+            <li class="episode-row">
+              <span class="episode-cover pillar-{{ ep.pillar_id }}" aria-hidden="true">{{ ep.initial }}</span>
+              <div class="episode-main">
+                <button type="button" class="episode-open" data-script-id="{{ ep.id }}">{{ ep.title }}</button>
+                <p class="episode-meta">
+                  {% if ep.paper_href %}<a href="{{ ep.paper_href }}">{{ ep.paper_title }}</a>{% else %}{{ ep.paper_title }}{% endif %}
+                  <span> · {{ ep.word_count }} words</span>
+                  {% if ep.duration_label %}<span> · {{ ep.duration_label }}</span>{% endif %}
+                  {% if ep.created_label %}<span> · {{ ep.created_label }}</span>{% endif %}
+                </p>
+              </div>
+              <div class="episode-actions">
+                {% if ep.audio_href %}
+                <button type="button" class="btn btn-primary btn-sm episode-play" data-script-id="{{ ep.id }}" data-src="{{ ep.audio_href }}" data-title="{{ ep.title }}">Play</button>
+                <a class="btn btn-ghost btn-sm" href="{{ ep.audio_href }}" download>MP3</a>
+                {% else %}
+                <a class="btn btn-secondary btn-sm" href="{{ ep.studio_href }}">Make audio</a>
+                {% endif %}
+                {% if ep.script_download_href %}
+                <a class="btn btn-ghost btn-sm" href="{{ ep.script_download_href }}">Script</a>
+                {% endif %}
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        {% endfor %}
+      </div>
     </div>
-    <audio id="voice-preview" controls hidden style="width: 100%; margin-bottom: 0.5rem;"></audio>
-    {{ run_panel(
-        title='Audio',
-        status_id='audio-run-status',
-        stages_id='audio-stages',
-        progress_id='audio-progress-bar',
-        cancel_id='cancel-audio-btn',
-        cancel_label='Cancel',
-        progress_label='Audio progress',
-        quiet=True
-    ) }}
-    <audio id="episode-player" controls hidden style="width: 100%; margin-top: 0.75rem;"></audio>
-    <p id="audio-file-hint" hidden><small>Saved under <code id="audio-file-path"></code> on disk.</small></p>
   </section>
 </div>
 
-<div id="existing-scripts" style="margin-top: 2rem;">
-  <h3>Existing Scripts</h3>
-  {% if scripts %}
-  <table>
-    <thead>
-      <tr>
-        <th>Title</th>
-        <th>Paper ID</th>
-        <th>Words</th>
-        <th>Created</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for script in scripts %}
-      <tr>
-        <td>{{ script.title[:40] }}{% if script.title|length > 40 %}...{% endif %}</td>
-        <td>{{ script.paper_id[:20] }}{% if script.paper_id|length > 20 %}...{% endif %}</td>
-        <td>{{ script.word_count }}</td>
-        <td>{{ script.created_at.strftime('%Y-%m-%d') if script.created_at else 'N/A' }}</td>
-        <td>
-          <button type="button" class="secondary outline" onclick="loadScript('{{ script.id }}')">View</button>
-          <a href="/api/podcast/{{ script.id }}/download" class="secondary outline">Download</a>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% elif scripts is none %}
-  <p><em>Existing scripts could not be loaded — see the error above. This does not mean there are none.</em></p>
-  {% else %}
-  <p>No podcast scripts generated yet.</p>
-  {% endif %}
-</div>
-
+<script type="application/json" id="listen-catalog">{{ catalog_json | safe }}</script>
+{% endblock %}
+{% block scripts %}
 <script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
-<script>
-// State
-let currentScriptId = null;
-
-// Elements
-const generateForm = document.getElementById('generate-form');
-const pillarSelect = document.getElementById('pillar-select');
-const paperSelect = document.getElementById('paper-select');
-const statusEl = document.getElementById('status');
-const progressBar = document.getElementById('progress-bar');
-const scriptStages = document.getElementById('script-stages');
-const cancelScriptBtn = document.getElementById('cancel-script-btn');
-const scriptArea = document.getElementById('script-area');
-const scriptTitle = document.getElementById('script-title');
-const wordCount = document.getElementById('word-count');
-const keyPointsList = document.getElementById('key-points-list');
-const scriptContent = document.getElementById('script-content');
-const downloadBtn = document.getElementById('download-btn');
-const warningsEl = document.getElementById('script-warnings');
-const settingsEl = document.getElementById('script-settings');
-const settingsTextEl = document.getElementById('script-settings-text');
-const ttsStatusMessage = document.getElementById('tts-status-message');
-const ttsStartCommand = document.getElementById('tts-start-command');
-const ttsStatusPanel = document.getElementById('tts-status-panel');
-const audioSection = document.getElementById('audio-section');
-const voiceSelect = document.getElementById('voice-select');
-const voiceReason = document.getElementById('voice-reason');
-const previewVoiceBtn = document.getElementById('preview-voice-btn');
-const generateAudioBtn = document.getElementById('generate-audio-btn');
-const cancelAudioBtn = document.getElementById('cancel-audio-btn');
-const voicePreview = document.getElementById('voice-preview');
-const audioRunStatus = document.getElementById('audio-run-status');
-const audioProgressBar = document.getElementById('audio-progress-bar');
-const audioStages = document.getElementById('audio-stages');
-const episodePlayer = document.getElementById('episode-player');
-episodePlayer.addEventListener('play', () => {
-  if (!window.NlpPlayer || typeof window.NlpPlayer.attach !== 'function') return;
-  const title = (scriptTitle && scriptTitle.textContent) || 'Episode';
-  window.NlpPlayer.attach(episodePlayer, {
-    script_id: currentScriptId || '',
-    title,
-    href: currentScriptId
-      ? ('/podcast/?script=' + encodeURIComponent(currentScriptId))
-      : '/podcast/',
-  });
-});
-const audioFileHint = document.getElementById('audio-file-hint');
-const audioFilePath = document.getElementById('audio-file-path');
-
-let ttsReady = false;
-let voicesCatalog = [];
-let audioRunId = null;
-let scriptRunId = null;
-
-const scriptEls = {
-  status: statusEl,
-  stages: scriptStages,
-  progress: progressBar,
-  cancel: cancelScriptBtn,
-};
-
-const audioEls = {
-  status: audioRunStatus,
-  stages: audioStages,
-  progress: audioProgressBar,
-  cancel: cancelAudioBtn,
-};
-
-// "Something else…" reveals that option's free-text box. The value posted is
-// the sentinel plus "<key>_custom"; the server sanitizes and validates it.
-const CUSTOM_VALUE = {{ custom_value | tojson }};
-
-document.querySelectorAll('.podcast-option').forEach(select => {
-  const custom = document.getElementById(`option-${select.dataset.optionKey}-custom`);
-  if (!custom) return;
-  const sync = () => {
-    custom.hidden = select.value !== CUSTOM_VALUE;
-    custom.required = !custom.hidden;
-  };
-  select.addEventListener('change', sync);
-  sync();
-});
-
-// Collect the flat {key: value, key_custom: text} shape the API expects.
-function collectOptions() {
-  const options = {};
-  document.querySelectorAll('.podcast-option').forEach(select => {
-    options[select.dataset.optionKey] = select.value;
-    if (select.value === CUSTOM_VALUE) {
-      const custom = document.getElementById(`option-${select.dataset.optionKey}-custom`);
-      options[`${select.dataset.optionKey}_custom`] = custom ? custom.value : '';
-    }
-  });
-  return options;
-}
-
-// Render the settings a script was generated with. textContent throughout: one
-// of these labels is free text the user typed.
-function showSettings(options) {
-  const choices = (options && options.choices) || {};
-  const parts = Object.values(choices).map(c => c && c.label).filter(Boolean);
-  settingsTextEl.textContent = parts.join(' · ');
-  settingsEl.hidden = parts.length === 0;
-}
-
-// Holds a script the server generated but could NOT store. There is no other
-// copy of it anywhere, so the download button falls back to this.
-let unsavedScript = null;
-
-// Render caveats about what a script was written from, plus the "not saved"
-// alarm. createElement + textContent throughout: these strings carry a database
-// error message and a paper title.
-function showWarnings(warnings, opts) {
-  warningsEl.replaceChildren();
-  if (!warnings || warnings.length === 0) {
-    warningsEl.hidden = true;
-    return;
-  }
-  const heading = document.createElement('strong');
-  heading.textContent = (opts && opts.unsaved)
-    ? 'Generated, but NOT saved'
-    : 'About this script';
-  warningsEl.appendChild(heading);
-  const ul = document.createElement('ul');
-  warnings.forEach(w => {
-    const li = document.createElement('li');
-    li.textContent = w;
-    ul.appendChild(li);
-  });
-  warningsEl.appendChild(ul);
-  warningsEl.hidden = false;
-}
-
-// Filter papers by pillar
-pillarSelect.addEventListener('change', () => {
-  const selectedPillar = pillarSelect.value;
-  const options = paperSelect.querySelectorAll('option');
-
-  options.forEach(option => {
-    if (option.value === '') return; // Keep the placeholder
-
-    if (!selectedPillar || option.dataset.pillar === selectedPillar) {
-      option.style.display = '';
-    } else {
-      option.style.display = 'none';
-    }
-  });
-
-  // Reset paper selection if current is hidden
-  if (paperSelect.selectedOptions[0]?.style.display === 'none') {
-    paperSelect.value = '';
-  }
-});
-
-// Generate podcast script — background run with real per-call stages.
-generateForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  const paperId = paperSelect.value;
-  const pillarId = paperSelect.selectedOptions[0]?.dataset.pillar || pillarSelect.value;
-
-  if (!paperId) {
-    alert('Please select a paper');
-    return;
-  }
-
-  statusEl.textContent = 'Starting podcast script generation…';
-  RunProgress.applyStatusClass(statusEl, '');
-  showWarnings([]);
-  unsavedScript = null;
-  currentScriptId = null;
-  scriptArea.style.display = 'none';
-  scriptStages.replaceChildren();
-  progressBar.hidden = false;
-  progressBar.value = 0;
-  generateForm.querySelector('button').disabled = true;
-
-  try {
-    const res = await fetch('/api/podcast/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        paper_id: paperId,
-        pillar_id: pillarId || 'models-architectures',
-        options: collectOptions()
-      })
-    });
-
-    const data = await res.json();
-
-    if (res.status === 409) {
-      const active = await RunProgress.findActive();
-      if (active && active.kind === 'podcast_script') {
-        scriptRunId = active.id;
-        RunProgress.attach(active.id, scriptEls, onScriptFinished, onScriptUpdate);
-        return;
-      }
-    }
-    if (!res.ok) {
-      throw new Error(data.detail || 'Generation failed');
-    }
-
-    scriptRunId = data.run_id;
-    RunProgress.attach(data.run_id, scriptEls, onScriptFinished, onScriptUpdate);
-  } catch (err) {
-    statusEl.textContent = `Error: ${err.message}`;
-    RunProgress.applyStatusClass(statusEl, 'run-danger');
-    progressBar.hidden = true;
-    generateForm.querySelector('button').disabled = false;
-  }
-});
-
-function onScriptUpdate(run) {
-  if (!run || run.kind !== 'podcast_script') return;
-  RunProgress.applyStatusClass(statusEl, run);
-}
-
-function onScriptFinished(run) {
-  scriptRunId = null;
-  generateForm.querySelector('button').disabled = false;
-
-  if (!run) {
-    statusEl.textContent = 'Run no longer available.';
-    progressBar.hidden = true;
-    return;
-  }
-
-  RunProgress.applyStatusClass(statusEl, run);
-
-  if (run.status === 'failed' || run.status === 'cancelled' || run.status === 'interrupted') {
-    return;
-  }
-
-  const result = run.result || {};
-  if (result.saved === false) {
-    currentScriptId = null;
-    unsavedScript = result;
-    showWarnings(result.warnings || [], { unsaved: true });
-    showSettings(result.options);
-    renderScript({
-      title: result.title,
-      script: result.script,
-      word_count: result.word_count,
-      key_points: result.key_points
-    });
-    return;
-  }
-
-  if (result.script_id) {
-    currentScriptId = result.script_id;
-    unsavedScript = null;
-    const warnings = result.warnings || [];
-    const partial = warnings.length > 0;
-    showWarnings(warnings, { unsaved: false });
-    showSettings(result.options);
-    loadScript(result.script_id).then(() => {
-      if (partial) {
-        RunProgress.applyStatusClass(statusEl, 'run-warn');
-      }
-    });
-  }
-}
-
-cancelScriptBtn.addEventListener('click', async () => {
-  if (!scriptRunId) return;
-  await RunProgress.cancel(scriptRunId);
-});
-
-// Paint a script into the page. One renderer for both the stored path and the
-// unsaved-in-the-response path, so there is exactly one place that formats a
-// script — not two that can drift.
-function renderScript(script) {
-  scriptTitle.textContent = script.title;
-  wordCount.textContent = script.word_count;
-
-  // Format key points
-  keyPointsList.innerHTML = '';
-  (script.key_points || []).forEach(point => {
-    const li = document.createElement('li');
-    li.textContent = point;
-    keyPointsList.appendChild(li);
-  });
-
-  // Format script content with [HOST]: highlighting
-  let formattedContent = script.script;
-  formattedContent = formattedContent.replace(/\[HOST\]:/g, '<strong style="color: #0066cc;">[HOST]:</strong>');
-  formattedContent = formattedContent.replace(/\[(MUSIC|SFX|PAUSE|TRANSITION)\]/g, '<em style="color: #666;">[$1]</em>');
-  scriptContent.innerHTML = formattedContent;
-
-  scriptArea.style.display = 'block';
-  progressBar.hidden = true;
-  if (currentScriptId) {
-    audioSection.style.display = 'block';
-  }
-}
-
-async function refreshTtsStatus() {
-  try {
-    const res = await fetch('/api/podcast/tts/status');
-    const data = await res.json();
-    ttsReady = !!data.ready;
-    ttsStatusMessage.textContent = data.message || '';
-    if (data.start_command) {
-      ttsStartCommand.textContent = data.start_command;
-      ttsStartCommand.style.display = ttsReady ? 'none' : 'block';
-    }
-    ttsStatusPanel.style.borderColor = ttsReady ? '#080' : '#b00';
-    syncAudioControls();
-  } catch (err) {
-    ttsStatusMessage.textContent = 'Could not reach the speech engine status endpoint.';
-    ttsReady = false;
-    syncAudioControls();
-  }
-}
-
-async function loadVoices() {
-  try {
-    const res = await fetch('/api/podcast/tts/voices');
-    const data = await res.json();
-    voicesCatalog = data.voices || [];
-    voiceSelect.replaceChildren();
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Select a voice…';
-    voiceSelect.appendChild(placeholder);
-    voicesCatalog.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.relative_path;
-      const mark = v.usability === 'usable' ? '' : v.usability === 'warning' ? ' ⚠' : ' ✗';
-      opt.textContent = v.label + mark;
-      opt.disabled = v.usability === 'unusable';
-      voiceSelect.appendChild(opt);
-    });
-    voiceSelect.disabled = voicesCatalog.length === 0;
-    syncAudioControls();
-  } catch (err) {
-    voiceSelect.replaceChildren();
-    const opt = document.createElement('option');
-    opt.textContent = 'Could not load voices';
-    voiceSelect.appendChild(opt);
-    voiceSelect.disabled = true;
-  }
-}
-
-function selectedVoiceMeta() {
-  const path = voiceSelect.value;
-  return voicesCatalog.find(v => v.relative_path === path) || null;
-}
-
-function syncAudioControls() {
-  const voice = selectedVoiceMeta();
-  if (voice) {
-    voiceReason.textContent = voice.reason || '';
-  } else {
-    voiceReason.textContent = '';
-  }
-  const voiceOk = voice && voice.usability !== 'unusable';
-  previewVoiceBtn.disabled = !voiceOk;
-  generateAudioBtn.disabled = !(ttsReady && currentScriptId && voiceOk && !audioRunId);
-}
-
-voiceSelect.addEventListener('change', () => {
-  voicePreview.hidden = true;
-  syncAudioControls();
-});
-
-previewVoiceBtn.addEventListener('click', () => {
-  const path = voiceSelect.value;
-  if (!path) return;
-  voicePreview.src = `/api/podcast/tts/voices/preview?path=${encodeURIComponent(path)}&t=${Date.now()}`;
-  voicePreview.hidden = false;
-  voicePreview.load();
-});
-
-function onAudioFinished(run) {
-  audioRunId = null;
-  generateAudioBtn.disabled = false;
-  syncAudioControls();
-  if (run && run.result && run.result.audio_url) {
-    episodePlayer.src = run.result.audio_url;
-    episodePlayer.hidden = false;
-    audioFilePath.textContent = run.result.file_name || run.result.audio_url;
-    audioFileHint.hidden = false;
-    audioRunStatus.textContent = 'Audio ready — press play above.';
-  } else if (run && run.status === 'failed') {
-    audioRunStatus.textContent = run.error || 'Audio generation failed.';
-  }
-}
-
-function onAudioUpdate(run) {
-  if (run && run.result && run.result.audio_url && RunProgress.isTerminal(run.status)) {
-    onAudioFinished(run);
-  }
-}
-
-generateAudioBtn.addEventListener('click', async () => {
-  if (!currentScriptId || !voiceSelect.value) return;
-  generateAudioBtn.disabled = true;
-  episodePlayer.hidden = true;
-  audioFileHint.hidden = true;
-  audioProgressBar.hidden = false;
-  audioRunStatus.textContent = 'Starting audio generation…';
-  try {
-    const res = await fetch('/api/podcast/tts/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ script_id: currentScriptId, voice_path: voiceSelect.value }),
-    });
-    const data = await res.json();
-    if (res.status === 409) {
-      const active = await RunProgress.findActive();
-      if (active && active.kind === 'podcast_audio') {
-        audioRunId = active.id;
-        RunProgress.attach(active.id, audioEls, onAudioFinished, onAudioUpdate);
-        return;
-      }
-    }
-    if (!res.ok) throw new Error(data.detail || 'Could not start audio generation');
-    audioRunId = data.run_id;
-    RunProgress.attach(data.run_id, audioEls, onAudioFinished, onAudioUpdate);
-  } catch (err) {
-    audioRunStatus.textContent = `Error: ${err.message}`;
-    generateAudioBtn.disabled = false;
-    audioProgressBar.hidden = true;
-  }
-});
-
-cancelAudioBtn.addEventListener('click', async () => {
-  if (!audioRunId) return;
-  await RunProgress.cancel(audioRunId);
-});
-
-function showStoredAudio(meta) {
-  if (!meta || !meta.file_name) {
-    episodePlayer.hidden = true;
-    audioFileHint.hidden = true;
-    return;
-  }
-  episodePlayer.src = `/api/podcast/audio/${encodeURIComponent(meta.file_name)}`;
-  episodePlayer.hidden = false;
-  audioFilePath.textContent = meta.file_name;
-  audioFileHint.hidden = false;
-}
-
-refreshTtsStatus();
-loadVoices();
-setInterval(refreshTtsStatus, 30000);
-
-const urlScriptId = new URLSearchParams(window.location.search).get('script');
-if (urlScriptId) {
-  loadScript(urlScriptId);
-}
-
-// Paper page "Make episode" lands on /podcast/?paper=<id>. Select that paper
-// when it is one of the options; generating still takes an explicit click.
-const urlPaperId = new URLSearchParams(window.location.search).get('paper');
-if (urlPaperId && paperSelect) {
-  for (const option of paperSelect.options) {
-    if (option.value === urlPaperId) {
-      paperSelect.value = urlPaperId;
-      break;
-    }
-  }
-}
-
-// Reattach an in-flight script or audio run after reload. Filter by kind: the
-// shared nlp:activeRun key is one id for the whole app, and painting TTS stages
-// under the generate form (or vice versa) is worse than showing nothing.
-(async () => {
-  let run = null;
-  const params = new URLSearchParams(window.location.search);
-  const fromUrl = params.get('run');
-  let stored = null;
-  try { stored = localStorage.getItem('nlp:activeRun'); } catch (e) { /* private */ }
-  const candidate = fromUrl || stored;
-  if (candidate) {
-    try {
-      const res = await fetch('/api/pipeline-runs/' + encodeURIComponent(candidate));
-      if (res.ok) run = await res.json();
-    } catch (e) { /* fall through */ }
-  }
-  if (!run || RunProgress.isTerminal(run.status)) {
-    run = await RunProgress.findActive();
-  }
-  if (!run || RunProgress.isTerminal(run.status)) return;
-  if (run.kind === 'podcast_script') {
-    scriptRunId = run.id;
-    generateForm.querySelector('button').disabled = true;
-    progressBar.hidden = false;
-    RunProgress.attach(run.id, scriptEls, onScriptFinished, onScriptUpdate);
-  } else if (run.kind === 'podcast_audio') {
-    audioRunId = run.id;
-    if (run.result && run.result.script_id) {
-      await loadScript(run.result.script_id);
-    }
-    audioSection.style.display = 'block';
-    generateAudioBtn.disabled = true;
-    audioProgressBar.hidden = false;
-    RunProgress.attach(run.id, audioEls, onAudioFinished, onAudioUpdate);
-  }
-})();
-
-// Load and display script
-async function loadScript(scriptId) {
-  try {
-    const res = await fetch(`/api/podcast/${scriptId}`);
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.detail || 'Failed to load script');
-    }
-
-    const script = data.script;
-    currentScriptId = scriptId;
-    unsavedScript = null;
-
-    // A stored script written from partial material still says so when it is
-    // re-opened, not only on the run that produced it.
-    const stored = script.source_material || {};
-    showWarnings(stored.warnings, { unsaved: false });
-    showSettings(script.options);
-
-    renderScript(script);
-    showStoredAudio(script.audio_metadata);
-    audioSection.style.display = 'block';
-    syncAudioControls();
-
-  } catch (err) {
-    console.error('Error loading script:', err);
-    statusEl.textContent = `Error loading script: ${err.message}`;
-    RunProgress.applyStatusClass(statusEl, 'run-danger');
-  }
-}
-
-// View existing script
-async function viewScript(paperId) {
-  statusEl.textContent = 'Loading script...';
-
-  try {
-    // Find script by paper_id from list endpoint
-    const res = await fetch(`/api/podcast/list?limit=100`);
-    const data = await res.json();
-
-    const script = data.scripts.find(s => s.paper_id === paperId);
-    if (script) {
-      // We need to get the script by ID, but we don't have it in the list
-      // For now, just show a message
-      statusEl.textContent = 'Script found. Use the paper selector and regenerate to view full details.';
-    } else {
-      statusEl.textContent = 'Script not found';
-      RunProgress.applyStatusClass(statusEl, 'run-danger');
-    }
-  } catch (err) {
-    statusEl.textContent = `Error: ${err.message}`;
-    RunProgress.applyStatusClass(statusEl, 'run-danger');
-  }
-}
-
-// Download script
-downloadBtn.addEventListener('click', () => {
-  if (currentScriptId) {
-    window.location.href = `/api/podcast/${currentScriptId}/download`;
-    return;
-  }
-  if (unsavedScript) {
-    // Nothing to download from the server — the row was never written. Build
-    // the file from the copy in the response so the work is not lost.
-    const header = `# ${unsavedScript.title}\n\nWord Count: ${unsavedScript.word_count}\n`
-      + `NOT SAVED TO THE DATABASE - this is the only copy.\n`
-      + '\n' + '='.repeat(60) + '\n\n';
-    const blob = new Blob([header + unsavedScript.script], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'unsaved_podcast.txt';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-});
-</script>
+<script src="/static/listen.js?v={{ asset_v | default('1', true) }}"></script>
 {% endblock %}

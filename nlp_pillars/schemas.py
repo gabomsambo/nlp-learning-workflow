@@ -105,6 +105,10 @@ class PaperRef(BaseIOSchema):
     id: str = Field(..., description="DOI or arXiv ID")
     title: str = Field(..., description="Paper title")
     authors: List[str] = Field(..., description="List of authors")
+    pillar_id: Optional[str] = Field(
+        None,
+        description="Pillar slug when this ref was read from a papers row",
+    )
     venue: Optional[str] = Field(None, description="Conference or journal")
     year: Optional[int] = Field(None, description="Publication year")
     url_pdf: Optional[str] = Field(None, description="URL to PDF")

@@ -225,6 +225,7 @@ def _dict_to_paper_ref(row: Dict[str, Any]) -> PaperRef:
         id=row['id'],
         title=row['title'],
         authors=row.get('authors', []),
+        pillar_id=row.get('pillar_id'),
         venue=row.get('venue'),
         year=row.get('year'),
         url_pdf=row.get('url_pdf'),

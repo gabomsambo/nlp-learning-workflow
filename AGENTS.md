@@ -897,8 +897,8 @@ never 404 — a malformed id used to produce PostgREST `400 invalid input syntax
 uuid` and reach the user as "Script not found". The `/podcast` page renders an explicit
 banner instead of an empty dropdown plus "No podcast scripts generated yet".
 
-Still deliberately unfixed on this path: the `innerHTML` sink that renders the
-script body. Script **generation progress** is real now (`kind=podcast_script`,
+The script body is built with `textContent` and cue elements (`listen.js`);
+the old `innerHTML` highlight sink is gone. Script **generation progress** is real now (`kind=podcast_script`,
 migration 016, seven stages through `run-progress.js`) — the fake 2%/sec bar and
 fixed-time claim are gone. Audio synthesis was already on the same machinery.
 
