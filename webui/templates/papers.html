@@ -1,66 +1,102 @@
 {% extends 'base.html' %}
+{% from "_components.html" import page_header, button, chip, empty_state, callout %}
 {% block title %}Library{% endblock %}
 {% block content %}
-<h2>Papers{% if pillar %} ({{ pillar }}){% endif %}</h2>
+<div class="library-page">
+{% call page_header('Library', 'Papers') %}
+  {{ button('Add papers', href='/discovery/' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
+  {{ button('View lessons', 'secondary', href='/lessons/' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
+  {{ button('Run pipeline', 'ghost', href='/pipeline/' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
+{% endcall %}
 
-<form method="get">
-  <label>
-    Pillar
-    <select name="pillar">
-      <option value="">All</option>
-      {% for p in pillars %}
-      <option value="{{ p.id }}" {% if pillar==p.id %}selected{% endif %}>{{ p.name }}</option>
+{% if load_error %}
+{% call callout('error', 'Library unavailable') %}
+{{ load_error }}
+{% endcall %}
+{% endif %}
+
+<div class="library-toolbar">
+  <div class="field library-search">
+    <label for="library-search">Search</label>
+    <input type="search" id="library-search" placeholder="Title, author, or id" autocomplete="off">
+  </div>
+  <div class="filter-row">
+    <div class="filter-chips" role="group" aria-label="Pillar">
+      {% for chip_item in view.chips %}
+      <a class="filter-chip{% if chip_item.pillar_class %} {{ chip_item.pillar_class }}{% endif %}"
+         href="{{ chip_item.href }}"
+         data-pillar="{{ chip_item.id }}"
+         {% if chip_item.current %}aria-current="true"{% endif %}>
+        {% if chip_item.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
+        {{ chip_item.name }}
+      </a>
       {% endfor %}
-    </select>
-  </label>
-  <button type="submit">Filter</button>
-  <a role="button" href="/papers/">Reset</a>
-  <a role="button" class="secondary" href="/pipeline/">Run Pipeline</a>
-  <a role="button" class="secondary" href="/lessons/">View Lessons</a>
-  
-</form>
+    </div>
+    <div class="filter-chips" role="group" aria-label="Status">
+      <button type="button" class="filter-chip" data-status="" aria-pressed="true">All</button>
+      <button type="button" class="filter-chip" data-status="lesson" aria-pressed="false">Has lesson</button>
+      <button type="button" class="filter-chip" data-status="cards" aria-pressed="false">Has cards</button>
+      <button type="button" class="filter-chip" data-status="episode" aria-pressed="false">Has episode</button>
+    </div>
+  </div>
+  <p class="library-hint">
+    <span id="library-count">{% if view.visible_count == 1 %}1 paper{% elif view.visible_count %}{{ view.visible_count }} papers{% endif %}</span>
+    <span class="library-keys">Press <kbd class="kbd">j</kbd> <kbd class="kbd">k</kbd> to move, <kbd class="kbd">Enter</kbd> to open</span>
+  </p>
+</div>
 
-<table>
-  <thead>
-    <tr><th>ID</th><th>Title</th><th>Authors</th><th>Year</th><th>Citations</th><th>Pillar</th></tr>
-  </thead>
-  <tbody>
-  {% for paper in papers %}
-    <tr>
-      <td><small>{{ paper.id }}</small></td>
-      <td>
-        <a href="#" class="paper-title-link" data-paper-id="{{ paper.id }}">
-          {{ paper.title }}
-        </a>
-      </td>
-      <td>{{ (paper.authors or [])[:2] | join(', ') }}</td>
-      <td>{{ paper.year or '-' }}</td>
-      <td>{{ paper.citation_count or '-' }}</td>
-      <td>{{ paper.pillar_id or '-' }}</td>
-    </tr>
+{% if view.rows %}
+<ul class="library-list" id="library-list">
+  {% for row in view.rows %}
+  <li class="library-row{% if row.concealed %} is-concealed{% endif %}"
+      data-paper-id="{{ row.id }}"
+      data-pillar="{{ row.pillar_id }}"
+      data-search="{{ row.search }}"
+      data-lesson="{{ 1 if row.has_lesson else 0 }}"
+      data-cards="{{ 1 if row.has_cards else 0 }}"
+      data-episode="{{ 1 if row.has_episode else 0 }}"
+      {% if row.concealed %}hidden{% endif %}>
+    <a class="library-row-open" href="{{ row.href }}">
+      <time class="list-row-date">{{ row.when }}</time>
+      <span class="library-row-main">
+        <span class="list-row-title">{{ row.title }}</span>
+        <span class="list-row-meta">
+          {% if row.meta %}{{ row.meta }}{% endif %}
+          {% if row.meta and row.pillar_name %} · {% endif %}
+          {% if row.pillar_name %}
+          <span class="pillar-inline {{ row.pillar_class }}"><span class="pillar-dot" aria-hidden="true"></span>{{ row.pillar_name }}</span>
+          {% endif %}
+        </span>
+      </span>
+    </a>
+    <div class="library-row-status">
+      {% if row.has_lesson %}{{ chip('Lesson', 'ok') }}{% endif %}
+      {% if row.has_cards %}{{ chip('Cards', 'accent') }}{% endif %}
+      {% if row.has_episode %}{{ chip('Episode') }}{% endif %}
+      <button type="button" class="btn btn-ghost btn-sm paper-peek" data-paper-id="{{ row.id }}" aria-label="Quick peek">Peek</button>
+    </div>
+  </li>
   {% endfor %}
-  </tbody>
-</table>
+</ul>
+<div id="library-no-match" class="empty" {% if not view.no_match %}hidden{% endif %}>
+  <p class="empty-title">No papers match</p>
+  <p class="empty-message">Filters stay put. Clear them to see the rest of the library.</p>
+  <a class="btn btn-primary btn-md" href="/papers/">Show all papers</a>
+</div>
+{% elif not load_error %}
+{{ empty_state('No papers yet', 'Papers you add or discover show up here, newest first.', '/discovery/', 'Add papers') }}
+{% endif %}
 
 {% include "_paper_modal.html" %}
-
-<style>
-.paper-title-link {
-  text-decoration: none;
-  color: var(--pico-primary, var(--primary));
-}
-
-.paper-title-link:hover {
-  text-decoration: underline;
-  cursor: pointer;
-}
-</style>
-
+</div>
+{% endblock %}
+{% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  var modal = PaperModal.init({ triggerSelector: '.paper-title-link' });
+  var modal = window.PaperModal && PaperModal.init({ triggerSelector: '.paper-peek' });
   var paperId = new URLSearchParams(window.location.search).get('paper');
   if (paperId && modal && modal.open) modal.open(paperId);
 });
 </script>
+<script src="/static/library.js?v={{ asset_v | default('1', true) }}"></script>
 {% endblock %}

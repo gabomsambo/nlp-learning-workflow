@@ -635,6 +635,18 @@ if (urlScriptId) {
   loadScript(urlScriptId);
 }
 
+// Paper page "Make episode" lands on /podcast/?paper=<id>. Select that paper
+// when it is one of the options; generating still takes an explicit click.
+const urlPaperId = new URLSearchParams(window.location.search).get('paper');
+if (urlPaperId && paperSelect) {
+  for (const option of paperSelect.options) {
+    if (option.value === urlPaperId) {
+      paperSelect.value = urlPaperId;
+      break;
+    }
+  }
+}
+
 // Reattach an in-flight script or audio run after reload. Filter by kind: the
 // shared nlp:activeRun key is one id for the whole app, and painting TTS stages
 // under the generate form (or vice versa) is worse than showing nothing.
