@@ -1,0 +1,254 @@
+"""Workstation status: classifiers, a mocked collection, and a route that stays up.
+
+Nothing here dials PostgREST, Qdrant, SearXNG or IndexTTS. The collection test
+drives httpx.MockTransport and asserts a secret placed on the settings object
+never appears in the payload.
+"""
+
+import json
+
+import httpx
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from webui.services import system_status as status
+
+
+class _Settings:
+    qdrant_url = "http://qdrant.test"
+    qdrant_api_key = "super-secret-qdrant"
+    searxng_url = "http://searxng.test"
+    schedule_enabled = False
+    openai_api_key = "sk-openai-secret"
+    anthropic_api_key = ""
+    deepseek_api_key = "sk-deepseek-secret"
+    podcast_audio_dir = "/tmp/nlp-status-audio-missing"
+
+
+def test_public_summary_matches_the_today_chip_contract():
+    assert status.public_summary([{"state": "ok", "label": "Web app"}]) == "All services up"
+    assert status.public_summary([
+        {"state": "down", "label": "IndexTTS"},
+    ]) == "IndexTTS needs attention"
+    assert status.public_summary([
+        {"state": "down", "label": "Qdrant Cloud"},
+        {"state": "ok", "label": "Database"},
+        {"state": "down", "label": "SearXNG"},
+    ]) == "2 services need attention"
+
+
+def test_qdrant_plain_text_404_is_a_suspended_cluster():
+    check = status.classify_qdrant(404, "404 page not found\n", None)
+    assert check["state"] == "down"
+    assert "Suspended free-tier cluster" in check["summary"]
+    assert "Qdrant Cloud console" in check["fix"]
+
+
+def test_qdrant_json_banner_is_up():
+    check = status.classify_qdrant(200, '{"title":"qdrant","version":"1.15"}', None)
+    assert check["state"] == "ok"
+    assert check["fix"] is None
+
+
+def test_searxng_names_a_suspended_arxiv_engine():
+    payload = {"results": [], "unresponsive_engines": [["arxiv", "Suspended: too many requests"]]}
+    check = status.classify_searxng(200, payload, None)
+    assert check["state"] == "down"
+    assert "suspended" in check["summary"].lower()
+
+
+def test_a_missing_column_is_pgrst204_and_a_present_one_is_applied():
+    missing = {"code": "PGRST204", "message": "Could not find the 'source_material' column"}
+    assert status.classify_column(400, missing) == "missing"
+    assert status.classify_column(200, []) == "applied"
+    assert status.classify_column(500, {"message": "boom"}) == "unknown"
+
+
+def test_kind_probe_reads_the_check_constraint():
+    assert status.classify_kind(201, "") == "applied"
+    assert status.classify_kind(400, {"code": "23514", "message": "pipeline_runs_kind_check"}) == "missing"
+
+
+def test_key_failure_is_a_short_phrase_and_the_raw_error_is_not_copied():
+    raw = "HTTP 429 insufficient_quota: you exceeded your current quota. Traceback follows."
+    found = status.mine_key_failure([{"error": raw, "created_at": "2026-10-01T00:00:00Z"}])
+    assert found["provider"] == "openai"
+    assert found["code"] == "insufficient_quota"
+    assert "Traceback" not in found["summary"]
+    assert "429" not in found["summary"]
+
+
+def test_key_check_reports_presence_without_the_secret():
+    check = status.classify_keys(
+        {"openai": True, "anthropic": False, "deepseek": True},
+        {"provider": "openai", "code": "insufficient_quota", "summary": "OpenAI is out of quota.", "fix": "Add credit."},
+        False,
+    )
+    assert check["state"] == "down"
+    assert "Anthropic key is missing" in check["summary"]
+    assert "out of quota" in check["summary"]
+    # A missing key is the thing to fix; the quota note stays in the summary.
+    assert check["fix"] == "Add the missing key to .env."
+    assert "sk-" not in json.dumps(check)
+
+
+def test_disabled_scheduler_is_ok():
+    check = status.classify_scheduler(False, None, False)
+    assert check["state"] == "ok"
+    assert "exited scheduler is normal" in check["summary"]
+
+
+def test_tts_down_includes_the_start_command_and_workstation():
+    check = status.classify_tts({
+        "ready": False,
+        "message": "IndexTTS is not running on port 7860.",
+        "start_command": "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860",
+    })
+    assert check["state"] == "down"
+    assert "./workstation up --tts" in check["fix"]
+    assert "uv run webui.py" in check["fix"]
+
+
+def test_voices_count_only_usable_files():
+    check = status.classify_voices({
+        "voices": [
+            {"usability": "usable"},
+            {"usability": "usable"},
+            {"usability": "unusable"},
+        ]
+    })
+    assert check == status.make_check("voices", "Voices", "ok", "2 usable voices.", None)
+
+
+def test_redact_strips_secrets_before_a_summary_is_shown():
+    text = status.redact("failed with key super-secret-qdrant", ["super-secret-qdrant"])
+    assert "super-secret-qdrant" not in text
+    assert "••••" in text
+
+
+def _handler(seen):
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host == "qdrant.test":
+            seen["qdrant_key"] = request.headers.get("api-key")
+            return httpx.Response(404, text="404 page not found")
+        if host == "searxng.test":
+            return httpx.Response(
+                200,
+                json={"results": [], "unresponsive_engines": []},
+            )
+        if request.method == "DELETE":
+            seen["deleted"] = True
+            return httpx.Response(204)
+        if request.method == "POST":
+            body = json.loads(request.content)
+            seen.setdefault("kinds", []).append(body["kind"])
+            assert "tx=rollback" in request.headers.get("prefer", "")
+            if body["kind"] == "podcast_script":
+                return httpx.Response(
+                    400,
+                    json={"code": "23514", "message": "pipeline_runs_kind_check"},
+                )
+            return httpx.Response(201, headers={"Preference-Applied": "tx=rollback"})
+        select = request.url.params.get("select", "")
+        if request.url.path.endswith("/pillars"):
+            return httpx.Response(200, json=[{"id": "formal-linguistics-nlp"}])
+        if select == "source_material":
+            return httpx.Response(
+                400,
+                json={"code": "PGRST204", "message": "Could not find the 'source_material' column"},
+            )
+        if select in ("options", "audio_metadata"):
+            return httpx.Response(200, json=[])
+        if request.url.params.get("error") == "not.is.null":
+            return httpx.Response(
+                200,
+                json=[{
+                    "error": "insufficient_quota from sk-openai-secret",
+                    "created_at": "2026-10-01T00:00:00Z",
+                    "kind": "upload",
+                }],
+            )
+        if request.url.params.get("trigger_source") == "eq.scheduler":
+            return httpx.Response(200, json=[])
+        return httpx.Response(500, text="unexpected " + str(request.url))
+
+    return handler
+
+
+async def test_collection_survives_a_failing_check_and_hides_secrets():
+    seen = {}
+
+    def tts():
+        raise RuntimeError("IndexTTS socket closed, key super-secret-qdrant")
+
+    def voices():
+        return {"voices": [{"usability": "usable"}]}
+
+    def storage():
+        return status.make_check("storage", "Storage", "ok", "Uploads 0 B. Audio 0 B.", None)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler(seen))) as client:
+        payload = await status.collect_status(
+            client=client,
+            settings=_Settings(),
+            postgrest_url="http://postgrest.test",
+            auth_token="jwt-secret-token",
+            tts_status=tts,
+            list_voices=voices,
+            storage=storage,
+        )
+
+    encoded = json.dumps(payload)
+    for secret in ("super-secret-qdrant", "sk-openai-secret", "sk-deepseek-secret", "jwt-secret-token"):
+        assert secret not in encoded
+    by_id = {check["id"]: check for check in payload["checks"]}
+    assert by_id["web"]["state"] == "ok"
+    assert by_id["postgrest"]["state"] == "ok"
+    assert by_id["migration-011"]["state"] == "down"
+    assert "011_podcast_source_material.sql" in by_id["migration-011"]["fix"]
+    assert by_id["migration-012"]["state"] == "ok"
+    assert by_id["migration-014"]["state"] == "ok"
+    assert by_id["migration-015"]["state"] == "ok"
+    assert by_id["migration-016"]["state"] == "down"
+    assert by_id["qdrant"]["state"] == "down"
+    assert "Suspended" in by_id["qdrant"]["summary"]
+    assert by_id["searxng"]["state"] == "ok"
+    assert by_id["indextts"]["state"] == "down"
+    assert "super-secret" not in by_id["indextts"]["summary"]
+    assert by_id["voices"]["state"] == "ok"
+    assert by_id["keys"]["state"] == "down"
+    assert "out of quota" in by_id["keys"]["summary"]
+    assert by_id["scheduler"]["state"] == "ok"
+    assert by_id["storage"]["state"] == "ok"
+    assert payload["ok"] is False
+    assert payload["summary"] == status.public_summary(payload["checks"])
+    assert payload["summary"].endswith("services need attention")
+    assert seen["qdrant_key"] == "super-secret-qdrant"
+    assert seen["deleted"] is True
+    assert seen["kinds"] == ["upload", "podcast_script"]
+
+
+def test_route_answers_200_when_collection_raises():
+    from webui.routers.api import system_status as route
+
+    def boom(**kwargs):
+        raise RuntimeError("super-secret-qdrant exploded")
+
+    app = FastAPI()
+    app.include_router(route.router)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    original = status.collect_status
+    status.collect_status = boom
+    try:
+        response = client.get("/api/system/status")
+    finally:
+        status.collect_status = original
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["summary"] == "Status needs attention"
+    assert body["checks"][0]["state"] == "down"
+    assert "super-secret-qdrant" not in response.text

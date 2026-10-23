@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% from "_components.html" import page_header %}
+{% block title %}Activity{% endblock %}
+{% block content %}
+{% call page_header('Activity', 'Workspace') %}
+<a class="btn btn-secondary" href="/pipeline/">Run pipeline</a>
+{% endcall %}
+
+<p class="page-lede">What finished, what is still running, and what failed. The technical detail stays closed until you open it.</p>
+
+<section class="activity-runs" aria-labelledby="runs-heading">
+  <div class="section-head">
+    <h2 class="section-title" id="runs-heading">Runs</h2>
+    <button type="button" class="btn btn-ghost btn-sm" id="activity-reload">Reload</button>
+  </div>
+
+  <div class="activity-filters">
+    <div class="chip-row" id="kind-filters" role="group" aria-label="Run kind">
+      <button type="button" class="filter-chip" data-kind="all" aria-pressed="true">All</button>
+      <button type="button" class="filter-chip" data-kind="run_daily" aria-pressed="false">Daily run</button>
+      <button type="button" class="filter-chip" data-kind="discover" aria-pressed="false">Discovery</button>
+      <button type="button" class="filter-chip" data-kind="process_selected" aria-pressed="false">Selected papers</button>
+      <button type="button" class="filter-chip" data-kind="upload" aria-pressed="false">Upload</button>
+      <button type="button" class="filter-chip" data-kind="podcast_script" aria-pressed="false">Script</button>
+      <button type="button" class="filter-chip" data-kind="podcast_audio" aria-pressed="false">Audio</button>
+    </div>
+    <div class="field">
+      <label for="activity-pillar">Pillar</label>
+      <select id="activity-pillar">
+        <option value="">All pillars</option>
+        {% for pillar in pillars %}
+        <option value="{{ pillar.id }}">{{ pillar.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <p id="activity-error" class="field-error" role="alert" hidden></p>
+  <div id="activity-list" class="activity-list">
+    <p class="activity-meta">Loading runs…</p>
+  </div>
+</section>
+
+<section class="activity-status" id="status" aria-labelledby="status-heading">
+  <div class="section-head">
+    <h2 class="section-title" id="status-heading">Status</h2>
+    <button type="button" class="btn btn-ghost btn-sm" id="status-refresh">Refresh</button>
+  </div>
+  <p class="section-lede">Whether the workstation can learn: each service, and the one command that starts it when it cannot.</p>
+  <div id="status-board" class="status-board">
+    <p class="activity-meta">Checking services…</p>
+  </div>
+</section>
+
+<script type="application/json" id="activity-pillars">{{ pillars | tojson }}</script>
+<noscript>
+  <p>Run history and service status need JavaScript. Pipeline runs can still be started from the Run pipeline button.</p>
+</noscript>
+{% endblock %}
+{% block scripts %}
+<script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/activity.js?v={{ asset_v | default('1', true) }}"></script>
+{% endblock %}

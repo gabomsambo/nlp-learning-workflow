@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% from "_run_panel.html" import run_panel %}
-{% block title %}Activity{% endblock %}
+{% block title %}Pipeline{% endblock %}
 {% block content %}
 <h2>Pipeline Control</h2>
 
@@ -40,10 +40,7 @@
     quiet=True
 ) }}
 
-<details id="history" style="margin-top:2rem">
-  <summary>Recent runs</summary>
-  <div id="history-body"><small>Loading…</small></div>
-</details>
+<p class="page-lede">Past runs, including what failed and why, are on <a href="/activity/">Activity</a>.</p>
 
 <script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
 <script>
@@ -65,7 +62,6 @@ function setBusy(busy) {
 // page stuck on "Running…" with no way forward but a reload.
 function onFinished(run) {
   setBusy(false);
-  if (run) loadHistory();
 }
 
 // Called on every poll, so the dropdown can follow the run we are actually showing.
@@ -135,57 +131,6 @@ form.addEventListener('submit', async (e) => {
     statusEl.textContent = 'Error: ' + err.message;
     RunProgress.applyStatusClass(statusEl, 'run-danger');
   }
-});
-
-/* ------------------------------------------------------------------- history */
-
-function runLine(run) {
-  const li = document.createElement('li');
-  const when = run.created_at ? new Date(run.created_at).toLocaleString() : '';
-  const dot = document.createElement('strong');
-  dot.textContent = run.status;
-  RunProgress.applyStatusClass(dot, run);
-  li.append(dot, ` · ${run.pillar_id} · ${run.kind} · ${when}`);
-  if (run.papers_processed || run.papers_failed) {
-    const counts = document.createElement('small');
-    counts.style.opacity = '.7';
-    counts.textContent = ` — ${run.papers_processed} processed, ${run.papers_failed} failed`;
-    li.appendChild(counts);
-  }
-  if (run.error) {
-    const err = document.createElement('div');
-    err.style.opacity = '.7';
-    // textContent, not innerHTML: run.error contains raw exception text.
-    err.textContent = run.error;
-    const small = document.createElement('small');
-    small.appendChild(err);
-    li.appendChild(small);
-  }
-  return li;
-}
-
-async function loadHistory() {
-  const body = document.getElementById('history-body');
-  try {
-    const res = await fetch('/api/pipeline-runs?limit=15');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const runs = await res.json();
-    if (!runs.length) {
-      body.replaceChildren(Object.assign(document.createElement('small'),
-        { textContent: 'No runs recorded yet.' }));
-      return;
-    }
-    const ul = document.createElement('ul');
-    runs.forEach(r => ul.appendChild(runLine(r)));
-    body.replaceChildren(ul);
-  } catch (err) {
-    body.replaceChildren(Object.assign(document.createElement('small'),
-      { textContent: 'Could not load run history: ' + err.message }));
-  }
-}
-
-document.getElementById('history').addEventListener('toggle', function () {
-  if (this.open) loadHistory();
 });
 
 // A reload mid-run must not lose the run: pick it up from ?run=, then localStorage,

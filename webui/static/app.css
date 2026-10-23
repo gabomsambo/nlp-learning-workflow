@@ -2944,3 +2944,177 @@ html[data-theme="cockpit"] .player-title {
   .player-card { grid-template-columns: minmax(0, 1fr); }
   .player-cover { width: 72px; height: 72px; }
 }
+
+/* Activity history and the shell status chip.
+   Today's date-row pill keeps .status-chip. The shell link is .status-chip-shell
+   so the two do not share a background. */
+
+a.status-chip-shell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  margin: 0 0 var(--space-2);
+  padding: 6px 10px;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+a.status-chip-shell:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-dot[data-state="ok"] { background: var(--ok); }
+.status-dot[data-state="down"] { background: var(--danger); }
+
+.phone-bar a.status-chip-shell { margin: 0; padding: 6px 8px; }
+
+.phone-bar .status-chip-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+a.status-chip { text-decoration: none; }
+a.status-chip:hover { text-decoration: underline; }
+
+.activity-runs,
+.activity-status { margin-bottom: var(--space-8); }
+
+.activity-filters {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.activity-filters .field {
+  max-width: 280px;
+  margin-bottom: 0;
+}
+
+.filter-chip {
+  min-height: 40px;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 var(--fs-caption) / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.filter-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.run-entry {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+html[data-theme="cockpit"] .run-entry { padding: var(--space-2) 0; }
+
+.run-summary {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-read);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+html[data-theme="cockpit"] .run-summary {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+
+.run-meta,
+.activity-meta {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.run-paper {
+  display: inline-block;
+  margin-top: var(--space-2);
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.run-error { margin-top: var(--space-2); }
+
+.run-error summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.run-error pre {
+  margin: var(--space-2) 0 0;
+  max-height: 16rem;
+  padding: var(--space-3);
+  overflow: auto;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  white-space: pre-wrap;
+}
+
+.run-entry .btn { margin-top: var(--space-2); }
+
+.activity-status { scroll-margin-top: var(--space-5); }
+
+.status-board { display: grid; }
+
+.status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: start;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.status-name { margin: 0; font-weight: 600; }
+
+.status-summary {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+}
+
+.status-fix {
+  margin: var(--space-2) 0 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  white-space: pre-wrap;
+}
+
+html[data-theme="journal"] .run-entry,
+html[data-theme="journal"] .status-row {
+  margin-bottom: var(--space-3);
+  padding: var(--space-4);
+  border: 0;
+  border-radius: var(--r-card);
+  background: var(--surface);
+}

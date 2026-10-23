@@ -497,18 +497,20 @@ class PostgrestClient:
         them on a history page is a lot of JSON for a view that shows a status and a
         timestamp. Anything wanting the payload reads the single run.
 
-        Two scalars ARE projected out of it with PostgREST's ``->>`` operator, for the
-        pillar page's "Recent Uploads" list: an upload row that cannot name its paper
-        or say whether the paper was added has nothing useful to show, and it used to
-        print the run's UUID and "Done — added "the paper"". Two text fields cost
-        nothing next to the whole payload.
+        Three scalars ARE projected out of it with PostgREST's ``->>`` operator.
+        Title and added are what the pillar page's "Recent Uploads" list needs: an
+        upload row that cannot name its paper or say whether the paper was added has
+        nothing useful to show, and it used to print the run's UUID and
+        "Done — added "the paper"". paper_id is what Activity links to
+        ``/papers/{id}`` with. Three text fields cost nothing next to the payload.
         """
         params: Dict[str, Any] = {
             "select": (
                 "id,pillar_id,trigger_source,kind,status,current_stage,"
                 "papers_processed,papers_failed,error,created_at,started_at,"
                 "finished_at,heartbeat_at,"
-                "result_title:result->>title,result_added:result->>added"
+                "result_title:result->>title,result_added:result->>added,"
+                "result_paper_id:result->>paper_id"
             ),
             "order": "created_at.desc",
             "limit": limit,
