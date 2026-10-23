@@ -210,7 +210,7 @@ function reportUploadDispatchFailure(error) {
     const statusEl = document.getElementById('upload-run-status');
     if (statusEl) {
         statusEl.textContent = 'Could not start the upload — ' + error.message;
-        statusEl.classList.add('is-danger');
+        RunProgress.applyStatusClass(statusEl, 'run-danger');
     }
     const stages = document.getElementById('upload-run-stages');
     if (stages) stages.replaceChildren();
@@ -466,8 +466,7 @@ async function loadRecentUploads() {
             message.textContent = RunProgress.isTerminal(run.status)
                 ? RunProgress.summarise(listed)
                 : 'In progress — ' + RunProgress.stageLabel(run.current_stage || '');
-            const tone = { green: 'is-ok', darkorange: 'is-warn', crimson: 'is-danger' }[RunProgress.statusColor(listed)];
-            if (tone) message.classList.add(tone);
+            RunProgress.applyStatusClass(message, listed);
 
             content.append(name, message);
 

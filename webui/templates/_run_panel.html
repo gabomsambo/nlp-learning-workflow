@@ -1,0 +1,55 @@
+{# Shared run card. Import with {% from "_run_panel.html" import run_panel %}.
+
+   The DOM contract every page already passes to RunProgress.attach is
+   {status, stages, progress, cancel}. Ids are arguments so each page keeps the
+   element names its script looks up.
+
+   variant: omit floating for the in-flow card. floating=True pins it bottom-right
+   (full width above the phone tab bar). quiet=True collapses the chrome until the
+   summary has text, so an idle page does not show an empty card.
+
+   The summary is an empty live region on purpose: assistive tech announces
+   changes, not text that was already there at load. The stage list is
+   aria-live="off" and closed until "Show steps" — one sentence is what gets
+   announced, and the full list is one click away.
+#}
+{% macro run_panel(
+    status_id,
+    stages_id,
+    progress_id,
+    cancel_id,
+    panel_id='',
+    title='',
+    title_id='',
+    cancel_label='Cancel',
+    progress_label='Run progress',
+    floating=False,
+    hidden=False,
+    quiet=False
+) %}
+<article class="run-card{% if floating %} is-floating{% endif %}{% if quiet %} is-quiet{% endif %}"
+         {% if panel_id %}id="{{ panel_id }}"{% endif %}
+         {% if hidden %}hidden{% endif %}>
+  <header class="run-card-head">
+    {% if title or title_id %}
+    <h3 class="run-card-title"{% if title_id %} id="{{ title_id }}"{% endif %}>{{ title or 'Run' }}</h3>
+    {% endif %}
+    <div class="run-card-actions">
+      <span class="run-card-count" data-run-count></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="{{ cancel_id }}" hidden disabled>{{ cancel_label }}</button>
+    </div>
+  </header>
+  <p class="run-card-summary" id="{{ status_id }}" role="status" aria-live="polite" aria-atomic="true"></p>
+  <div class="run-segs" id="{{ progress_id }}" role="progressbar"
+       aria-label="{{ progress_label }}" aria-valuemin="0" hidden></div>
+  <p class="run-card-note">You can keep working; this card stays while you browse.</p>
+  {% if caller is defined %}{{ caller() }}{% endif %}
+  <details class="run-steps">
+    <summary>
+      <span class="label-closed">Show steps</span>
+      <span class="label-open">Hide steps</span>
+    </summary>
+    <div class="run-stage-list" id="{{ stages_id }}" aria-live="off"></div>
+  </details>
+</article>
+{% endmacro %}
