@@ -1,24 +1,32 @@
 /*
- * Upload panel for the pillar page. Same behaviour as the inline script it
- * replaced: explicit summarizer/quiz booleans, linked checkboxes, run progress
- * for kind=upload only, outcome box, recent uploads from pipeline_runs.
+ * Upload panel shared by the pillar page and Add papers.
+ * Explicit summarizer/quiz booleans, linked checkboxes, run progress for
+ * kind=upload only, outcome box, recent uploads from pipeline_runs.
  *
- * pillar id comes from #pillar-page[data-pillar-id], with the old pathname
- * split as a fallback so a route that still looks like /pillars/{id} works.
+ * The pillar id is passed to init() (a string, or a function read at submit
+ * time so a page-level picker stays current). A data-pillar-id on #upload-panel
+ * or #pillar-page is the markup fallback. The pathname is not a source: Add
+ * papers is not /pillars/{id}, and guessing from the URL attached uploads to
+ * the wrong pillar.
  */
 (function (global) {
   'use strict';
 
+  var options = { followRuns: true, els: null, pillarId: null };
+
   function currentPillarId() {
-    var root = document.getElementById('pillar-page');
-    if (root && root.dataset.pillarId) return root.dataset.pillarId;
-    return global.location.pathname.split('/')[2];
+    var given = options.pillarId;
+    if (typeof given === 'function') return given() || '';
+    if (typeof given === 'string' && given) return given;
+    var panel = document.getElementById('upload-panel');
+    if (panel && panel.dataset.pillarId) return panel.dataset.pillarId;
+    var page = document.getElementById('pillar-page');
+    if (page && page.dataset.pillarId) return page.dataset.pillarId;
+    return '';
   }
 
 // Upload Interface Functions
 function setupUploadInterface() {
-    const pillarId = currentPillarId();
-    
     // File drop zone
     const dropZone = document.getElementById('file-drop-zone');
     const fileInput = document.getElementById('file-input');
@@ -66,20 +74,20 @@ function setupUploadInterface() {
     // Form handlers
     document.getElementById('pdf-upload-form').addEventListener('submit', (e) => {
         e.preventDefault();
-        submitFileUpload(pillarId);
+        submitFileUpload(currentPillarId());
     });
     
     document.getElementById('url-upload-form').addEventListener('submit', (e) => {
         e.preventDefault();
-        submitUrlUpload(pillarId);
+        submitUrlUpload(currentPillarId());
     });
     
     linkSummarizerAndQuiz('file-run-summarizer', 'file-generate-quiz');
     linkSummarizerAndQuiz('url-run-summarizer', 'url-generate-quiz');
 
     document.getElementById('cancel-file-upload').addEventListener('click', () => {
-        fileUploadForm.style.display = 'none';
-        dropZone.style.display = 'block';
+        fileUploadForm.hidden = true;
+        dropZone.hidden = false;
         document.getElementById('pdf-upload-form').reset();
     });
 }
@@ -88,9 +96,8 @@ function handleFileSelection(file) {
     const dropZone = document.getElementById('file-drop-zone');
     const fileUploadForm = document.getElementById('file-upload-form');
     
-    // Hide drop zone, show form
-    dropZone.style.display = 'none';
-    fileUploadForm.style.display = 'block';
+    dropZone.hidden = true;
+    fileUploadForm.hidden = false;
     
     // Pre-populate title from filename
     const filename = file.name.replace('.pdf', '');
@@ -108,17 +115,30 @@ function handleFileSelection(file) {
  * re-render would be updated invisibly.
  */
 function uploadProgressEls() {
+    var ids = options.els || {
+        status: 'upload-run-status',
+        stages: 'upload-run-stages',
+        progress: 'upload-run-bar',
+        cancel: 'upload-cancel-btn',
+    };
     return {
-        status: document.getElementById('upload-run-status'),
-        stages: document.getElementById('upload-run-stages'),
-        progress: document.getElementById('upload-run-bar'),
-        cancel: document.getElementById('upload-cancel-btn'),
+        status: document.getElementById(ids.status),
+        stages: document.getElementById(ids.stages),
+        progress: document.getElementById(ids.progress),
+        cancel: document.getElementById(ids.cancel),
     };
 }
 
 function showUploadPanel(show) {
     const panel = document.getElementById('upload-progress-section');
-    if (panel) panel.hidden = !show;
+    if (panel) {
+        panel.hidden = !show;
+        return;
+    }
+    // Add papers follows the upload in the shared run card. Showing it is
+    // enough; hiding it would also hide a discovery or pipeline run.
+    const shared = document.getElementById('run-panel');
+    if (shared && show) shared.hidden = false;
 }
 
 /**
@@ -153,6 +173,8 @@ function onUploadRun(run) {
         setUploadBusy(false);
         return;
     }
+    const title = document.getElementById('run-title');
+    if (title && options.els) title.textContent = 'Upload';
     if (!uploadRunConfirmed) {
         uploadRunConfirmed = true;
         showUploadPanel(true);
@@ -182,6 +204,8 @@ function startUploadRun(runId) {
     }
     showUploadPanel(true);
     setUploadBusy(true);
+    const title = document.getElementById('run-title');
+    if (title && options.els) title.textContent = 'Upload';
     RunProgress.attach(runId, uploadProgressEls(), onUploadFinished, onUploadRun);
 }
 
@@ -207,13 +231,14 @@ function reportUploadDispatchFailure(error) {
     // before they can read the form again.
     showUploadPanel(true);
     setUploadBusy(false);
-    const statusEl = document.getElementById('upload-run-status');
-    if (statusEl) {
-        statusEl.textContent = 'Could not start the upload — ' + error.message;
-        RunProgress.applyStatusClass(statusEl, 'run-danger');
+    const els = uploadProgressEls();
+    if (els.status) {
+        els.status.textContent = 'Could not start the upload — ' + error.message;
+        RunProgress.applyStatusClass(els.status, 'run-danger');
     }
-    const stages = document.getElementById('upload-run-stages');
-    if (stages) stages.replaceChildren();
+    if (els.stages) els.stages.replaceChildren();
+    const title = document.getElementById('run-title');
+    if (title && options.els) title.textContent = 'Upload';
 }
 
 async function submitFileUpload(pillarId) {
@@ -221,6 +246,11 @@ async function submitFileUpload(pillarId) {
     const form = document.getElementById('pdf-upload-form');
 
     // Validate that we have a file
+    if (!pillarId) {
+        reportUploadDispatchFailure(new Error('Choose a pillar first.'));
+        return;
+    }
+
     if (!window.selectedFile) {
         alert('Please select a file first');
         return;
@@ -262,8 +292,8 @@ async function submitFileUpload(pillarId) {
         // can be cleared: re-submitting it would start a second upload of the same
         // paper, not retry this one.
         form.reset();
-        document.getElementById('file-upload-form').style.display = 'none';
-        document.getElementById('file-drop-zone').style.display = 'block';
+        document.getElementById('file-upload-form').hidden = true;
+        document.getElementById('file-drop-zone').hidden = false;
         window.selectedFile = null;
     } catch (error) {
         console.error('Upload error:', error);
@@ -272,6 +302,11 @@ async function submitFileUpload(pillarId) {
 }
 
 async function submitUrlUpload(pillarId) {
+    if (!pillarId) {
+        reportUploadDispatchFailure(new Error('Choose a pillar first.'));
+        return;
+    }
+
     const form = document.getElementById('url-upload-form');
     const formData = new FormData(form);
 
@@ -402,6 +437,16 @@ async function loadRecentUploads() {
     const container = document.getElementById('upload-status-container');
     if (!container) return;
 
+    if (!pillarId) {
+        const wrap = document.createElement('div');
+        wrap.className = 'empty-state';
+        const line = document.createElement('p');
+        line.textContent = 'Choose a pillar to see recent uploads.';
+        wrap.appendChild(line);
+        container.replaceChildren(wrap);
+        return;
+    }
+
     const empty = (text) => {
         const wrap = document.createElement('div');
         wrap.className = 'empty-state';
@@ -504,11 +549,21 @@ function getStatusIcon(status) {
 }
 
 
-  function init() {
+  function init(opts) {
+    options = Object.assign({ followRuns: true, els: null, pillarId: null }, opts || {});
     setupUploadInterface();
     loadRecentUploads();
-    RunProgress.reattach(uploadProgressEls(), onUploadFinished, onUploadRun);
+    var select = document.getElementById('pillar-select');
+    if (select) select.addEventListener('change', loadRecentUploads);
+    if (options.followRuns !== false && typeof RunProgress !== 'undefined') {
+      RunProgress.reattach(uploadProgressEls(), onUploadFinished, onUploadRun);
+    }
   }
 
-  global.PillarUpload = { init: init, currentPillarId: currentPillarId };
+  global.PillarUpload = {
+    init: init,
+    currentPillarId: currentPillarId,
+    onRun: onUploadRun,
+    onFinished: onUploadFinished,
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

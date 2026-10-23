@@ -32,13 +32,15 @@ def test_activity_page_keeps_filters_status_and_leaves_errors_closed():
 
 
 def test_pipeline_keeps_the_run_form_and_points_history_at_activity():
-    page = _text("pipeline.html")
-    assert "Run Pipeline" in page
+    """/pipeline/ renders Add papers Auto-run. History stays on Activity."""
+    page = _text("discovery.html")
+    assert 'id="run-form"' in page
+    assert 'id="run-btn"' in page
     assert 'href="/activity/"' in page
     assert "history-body" not in page
     assert "Recent runs" not in page
-    assert "run_panel" in page
-    assert "floating=True" in page
+    router = (ROOT / "webui" / "routers" / "pipeline.py").read_text()
+    assert '"discovery.html"' in router
 
 
 def test_shell_activity_link_and_chip_do_not_follow_a_run():

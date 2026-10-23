@@ -1,7 +1,7 @@
 /*
  * Poll a pipeline run and render its stages.
  *
- * Shared by pipeline.html, discovery.html, podcast.html and the upload panel in
+ * Shared by Add papers (discovery.html), podcast.html and the upload panel in
  * pillar_detail.html — all of them start long runs and all need the same reattach,
  * backoff and cleanup behaviour, and this is far too much logic to keep in four inline
  * <script> blocks in sync.

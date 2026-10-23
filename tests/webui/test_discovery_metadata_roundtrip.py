@@ -156,11 +156,11 @@ def test_no_length_cap_survives_in_the_serialiser():
 def test_the_browser_posts_back_every_field_it_was_given():
     """The JS link, which no other test can reach.
 
-    `discovery.html` rebuilds each selected candidate by hand before POSTing it, so a
+    `add-papers.js` rebuilds each selected candidate by hand before POSTing it, so a
     field added to the serialiser and to PaperData is still dropped unless it is added
     here too — and the loss is invisible: the paper saves, just thinner.
     """
-    template = (ROOT / "webui" / "templates" / "discovery.html").read_text()
+    template = (ROOT / "webui" / "static" / "add-papers.js").read_text()
 
     mapping = re.search(
         r"const selectedPapers = candidates.*?\.map\(c => \((\{.*?\})\)\);",
@@ -181,7 +181,7 @@ def test_the_browser_posts_back_every_field_it_was_given():
     )
 
     assert serialised_keys <= posted_keys, (
-        "discovery.html drops "
+        "add-papers.js drops "
         f"{sorted(serialised_keys - posted_keys)} on the way back to /select"
     )
     # And nothing on that path may shorten a value.

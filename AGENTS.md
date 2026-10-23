@@ -351,7 +351,8 @@ the text of a hit means re-chunking the source with the same parameters.
 ## The discovery candidate payload is the paper's permanent record
 
 `webui/services/discovery_results.py` looks like a view-model and is not one. The dicts
-it builds are stored in `pipeline_runs.result`, rendered by `discovery.html`, and then
+it builds are stored in `pipeline_runs.result`, rendered by Add papers
+(`webui/static/add-papers.js`, page `discovery.html`), and then
 **posted back to `/select` unchanged**, which persists them via `run_service._to_paper_refs`
 -> `orchestrator` -> `db.upsert_paper`. Anything shortened there is shortened in `papers`
 forever. It used to cap abstracts at 300 characters and author lists at 3, commented as
@@ -360,12 +361,13 @@ captain's library: `2403.05525` carries 3 authors and a 303-character abstract c
 mid-sentence; a URL-uploaded paper in the same pillar carries all 319 authors and 1538
 characters, because that path never went through this serialiser.
 
-**Truncate at render time in the template, never in the serialiser.** Adding a field means
+**Truncate at render time, never in the serialiser.** Adding a field means
 touching three places or it is silently dropped: the serialiser, `PaperData` in
 `webui/routers/api/discovery.py` (FastAPI discards undeclared keys — that is why `venue`
-was NULL on every discovered paper), and the `selectedPapers` map in `discovery.html`.
-`tests/webui/test_discovery_metadata_roundtrip.py` walks all three and greps the template
-for the JS link no Python test can otherwise reach.
+was NULL on every discovered paper), and the `selectedPapers` map in
+`webui/static/add-papers.js`.
+`tests/webui/test_discovery_metadata_roundtrip.py` walks all three and greps that
+script for the JS link no Python test can otherwise reach.
 
 Fixed forward only. Rows written before this still carry the truncation; re-resolving them
 is a separate captain decision.
