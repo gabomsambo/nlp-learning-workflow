@@ -15,6 +15,23 @@ from nlp_pillars.schemas import (
 from nlp_pillars.orchestrator import Orchestrator
 
 
+@pytest.fixture(autouse=True)
+def _no_live_semantic_scholar(monkeypatch):
+    """run_daily stores citations. The real client sleeps and dials out."""
+
+    def _empty(self, paper_id, limit=50):
+        return []
+
+    monkeypatch.setattr(
+        "nlp_pillars.tools.semantic_scholar_tool.SemanticScholarTool.get_references",
+        _empty,
+    )
+    monkeypatch.setattr(
+        "nlp_pillars.tools.semantic_scholar_tool.SemanticScholarTool.get_citations",
+        _empty,
+    )
+
+
 # Test fixtures
 @pytest.fixture
 def sample_paper_refs():

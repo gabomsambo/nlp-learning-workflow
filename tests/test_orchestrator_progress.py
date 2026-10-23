@@ -30,6 +30,23 @@ from nlp_pillars.schemas import (
 PILLAR = "neural-architectures-language"
 
 
+@pytest.fixture(autouse=True)
+def _no_live_semantic_scholar(monkeypatch):
+    """run_daily now stores citations. The real client sleeps and dials out."""
+
+    def _empty(self, paper_id, limit=50):
+        return []
+
+    monkeypatch.setattr(
+        "nlp_pillars.tools.semantic_scholar_tool.SemanticScholarTool.get_references",
+        _empty,
+    )
+    monkeypatch.setattr(
+        "nlp_pillars.tools.semantic_scholar_tool.SemanticScholarTool.get_citations",
+        _empty,
+    )
+
+
 @pytest.fixture
 def paper():
     return PaperRef(

@@ -248,7 +248,7 @@ def _describe_file(path: str) -> str:
 class UploadService:
     """Service for handling paper uploads and processing."""
 
-    def __init__(self, upload_dir: Optional[str] = None):
+    def __init__(self, upload_dir: Optional[str] = None, citation_tool=None):
         """Initialize the upload service with a directory for uploads.
 
         Uploaded PDFs are *retained*: ``_create_paper_ref_from_file`` stores
@@ -263,6 +263,10 @@ class UploadService:
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.ingest_agent = IngestAgent()
+        # None in tests and in any caller that did not opt in. The production
+        # singleton passes a SemanticScholarTool. Building an Orchestrator here
+        # would dial Qdrant, which an upload must not require.
+        self.citation_tool = citation_tool
 
     # ------------------------------------------------------------------ jobs
     #
@@ -698,6 +702,7 @@ class UploadService:
             errors.append(f"text_extraction: {e}")
             stages.failed(StageName.INGEST, _reason(e))
             stages.stop_after_current("no text was extracted from the PDF")
+            self._store_citations(paper.id)
             return PipelineOutcome(actions_triggered=actions_triggered, errors=errors)
 
         actions_triggered.append("text_extraction")
@@ -890,7 +895,23 @@ class UploadService:
             errors.append(f"vector_storage: {e}")
             stages.failed(StageName.VECTORS, _reason(e))
 
+        # The paper row already exists. A Semantic Scholar outage must not
+        # turn a saved upload into a failed one, and it is not a pipeline stage.
+        self._store_citations(paper.id)
+
         return PipelineOutcome(actions_triggered=actions_triggered, errors=errors)
+
+    def _store_citations(self, paper_id: str) -> None:
+        if self.citation_tool is None:
+            return
+        try:
+            from ..citations import fetch_and_store_citations
+
+            stored = fetch_and_store_citations(paper_id, self.citation_tool)
+            if stored:
+                logger.info("Stored %s citation(s) for %s", stored, paper_id)
+        except Exception as e:
+            logger.warning("Citation fetch failed for %s: %s", paper_id, e)
 
     @staticmethod
     def _extract_arxiv_id(url_or_filename: str) -> Optional[str]:
@@ -927,5 +948,12 @@ def get_upload_service() -> UploadService:
     """Get or create the upload service singleton."""
     global _upload_service
     if _upload_service is None:
-        _upload_service = UploadService()
+        tool = None
+        try:
+            from ..tools.semantic_scholar_tool import SemanticScholarTool
+
+            tool = SemanticScholarTool()
+        except Exception as e:
+            logger.warning("Citation fetch disabled for uploads: %s", e)
+        _upload_service = UploadService(citation_tool=tool)
     return _upload_service
