@@ -45,6 +45,22 @@ jobs:
       - name: Check for unquoted pillar slugs
         run: python scripts/check_bare_slugs.py
 
+  shellcheck:
+    name: workstation shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # scripts/workstation.sh is the local launcher. The guard job stays
+      # stdlib-only; this one exists so a quote or pipefail mistake in that
+      # script fails CI the same way `shellcheck scripts/workstation.sh` does
+      # locally. ubuntu-latest does not ship shellcheck.
+      - name: shellcheck workstation.sh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck scripts/workstation.sh
+
   js:
     name: run-progress.js helpers
     runs-on: ubuntu-latest

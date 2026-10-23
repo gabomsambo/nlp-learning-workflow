@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NLP Workstation
+Comment=Start the NLP learning workstation
+@EXEC@
+@PATH@
+Terminal=true
+Categories=Education;
+StartupNotify=false

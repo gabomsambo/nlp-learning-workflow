@@ -1082,7 +1082,7 @@ leaving `LEGACY_TO_SLUG` alone. Retiring those ids from the tests is a separate 
 ## Podcast episode audio (IndexTTS v1)
 
 IndexTTS runs on the **host GPU**, never in Docker. The webui calls it via
-`gradio_client` at `INDEXTTS_URL` (default `http://host.docker.internal:7861`).
+`gradio_client` at `INDEXTTS_URL` (default `http://host.docker.internal:7860`).
 Liveness is **not** a port check — probe `/gradio_api/info` for `/gen_single` with
 the exact 24-parameter contract in `nlp_pillars/tts/indextts_client.py`.
 
