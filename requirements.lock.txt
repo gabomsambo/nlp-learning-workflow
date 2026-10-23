@@ -44,6 +44,7 @@ docstring_parser==0.18.0
 executing==2.2.1
 Faker==40.36.0
 fastapi==0.141.1
+fastembed==0.9.0
 fastuuid==0.14.0
 filelock==3.32.2
 flatbuffers==25.12.19
@@ -96,6 +97,7 @@ layoutparser==0.3.4
 librt==0.13.0
 linkify-it-py==2.1.0
 litellm==1.95.0
+loguru==0.7.3
 lxml==6.1.1
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
@@ -105,6 +107,7 @@ mcp==2.0.0
 mcp-types==2.0.0
 mdit-py-plugins==0.6.1
 mdurl==0.1.2
+mmh3==5.3.1
 mpmath==1.3.0
 multidict==6.7.1
 mypy==2.3.0
@@ -155,6 +158,7 @@ psutil==7.2.2
 psycopg2-binary==2.9.12
 ptyprocess==0.7.0
 pure_eval==0.2.3
+py_rust_stemmers==0.1.8
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0

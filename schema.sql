@@ -433,11 +433,14 @@ CREATE TABLE pipeline_run_stages (
 );
 
 -- ==========================================
--- PAPER TEXT AND CHUNKS
--- Source of truth for paper text. Vector indexes are rebuilt from these rows.
--- Same objects as docs/migrations/017_paper_text.sql, which existing volumes
--- apply by hand. No embedding column: that waits on a model decision.
--- paper_chunks.id is a surrogate so a later embeddings table can reference it.
+-- PAPER TEXT, CHUNKS, AND EMBEDDINGS
+-- Source of truth for paper text and for the vectors computed from it.
+-- Same objects as docs/migrations/017_paper_text.sql and
+-- docs/migrations/018_chunk_embeddings.sql, which existing volumes apply by
+-- hand. chunk_embeddings.embedding is real[] (float4), not bytea and not
+-- pgvector: PostgREST returns a JSON array, and the search index is a later
+-- projection of these rows. paper_chunks.id is the surrogate that table
+-- references.
 -- ==========================================
 CREATE TABLE paper_texts (
     paper_id TEXT PRIMARY KEY,
@@ -463,6 +466,20 @@ CREATE TABLE paper_chunks (
 
 CREATE UNIQUE INDEX paper_chunks_paper_idx_version
     ON paper_chunks (paper_id, chunk_index, chunker_version);
+
+-- One vector per chunk per model. real[] is float4. The CHECK keeps dims
+-- honest. Unique (chunk_id, model_id) is what makes the backfill idempotent.
+CREATE TABLE chunk_embeddings (
+    chunk_id UUID NOT NULL,
+    model_id TEXT NOT NULL CHECK (btrim(model_id) <> ''),
+    dims INTEGER NOT NULL CHECK (dims > 0),
+    embedding REAL[] NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    CONSTRAINT chunk_embeddings_dims_match CHECK (cardinality(embedding) = dims)
+);
+
+CREATE UNIQUE INDEX chunk_embeddings_chunk_model
+    ON chunk_embeddings (chunk_id, model_id);
 
 -- One transaction: a failed insert rolls back the delete.
 CREATE OR REPLACE FUNCTION replace_paper_text_and_chunks(
@@ -527,8 +544,49 @@ BEGIN
 END;
 $$;
 
+-- Chunks that have no row yet for this model. p_paper_id NULL is every paper.
+CREATE OR REPLACE FUNCTION chunks_missing_embeddings(
+    p_model_id TEXT,
+    p_paper_id TEXT DEFAULT NULL,
+    p_limit INTEGER DEFAULT 200,
+    p_offset INTEGER DEFAULT 0
+) RETURNS TABLE (
+    chunk_id UUID,
+    paper_id TEXT,
+    chunk_index INTEGER,
+    chunk_text TEXT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_model_id IS NULL OR btrim(p_model_id) = '' THEN
+        RAISE EXCEPTION 'chunks_missing_embeddings missing model_id';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 THEN
+        RAISE EXCEPTION 'chunks_missing_embeddings limit must be positive';
+    END IF;
+    IF p_offset IS NULL OR p_offset < 0 THEN
+        RAISE EXCEPTION 'chunks_missing_embeddings offset must be >= 0';
+    END IF;
+
+    RETURN QUERY
+    SELECT c.id, c.paper_id, c.chunk_index, c.text
+    FROM paper_chunks c
+    WHERE (p_paper_id IS NULL OR c.paper_id = p_paper_id)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM chunk_embeddings e
+          WHERE e.chunk_id = c.id
+            AND e.model_id = p_model_id
+      )
+    ORDER BY c.paper_id, c.chunk_index, c.id
+    LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
 -- 03-grants.sql covers tables created above. It does not grant functions.
 GRANT EXECUTE ON FUNCTION replace_paper_text_and_chunks(TEXT, TEXT, TEXT, JSONB) TO web_anon;
+GRANT EXECUTE ON FUNCTION chunks_missing_embeddings(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
 
 -- ==========================================
 -- TRIGGERS
@@ -594,6 +652,12 @@ FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE;
 ALTER TABLE paper_chunks
 ADD CONSTRAINT fk_paper_chunks_paper_id
 FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE;
+
+-- Embeddings follow their chunk. Re-ingest deletes the chunk rows, and the
+-- vectors go with them.
+ALTER TABLE chunk_embeddings
+ADD CONSTRAINT fk_chunk_embeddings_chunk_id
+FOREIGN KEY (chunk_id) REFERENCES paper_chunks(id) ON DELETE CASCADE;
 
 -- ==========================================
 -- PERFORMANCE INDEXES
@@ -705,7 +769,10 @@ COMMENT ON TABLE user_fsrs_parameters IS 'Personalised FSRS weights w0-w17; reco
 COMMENT ON TABLE paper_citations IS 'Citation edges for discovery; reconstructed from code';
 COMMENT ON TABLE scripts IS 'STUB: no live call site, shape taken from a docstring example only';
 COMMENT ON TABLE paper_texts IS 'Full text of a paper. Source of truth; vector indexes are rebuilt from here.';
-COMMENT ON TABLE paper_chunks IS 'Chunk text for one chunker config. No embedding column; id is for a later FK.';
+COMMENT ON TABLE paper_chunks IS 'Chunk text for one chunker config. Vectors live in chunk_embeddings, keyed by id.';
+COMMENT ON TABLE chunk_embeddings IS 'One float32 vector per chunk per model. real[] so PostgREST returns JSON. Not the search index.';
+COMMENT ON COLUMN chunk_embeddings.embedding IS 'float4[] (PostgreSQL real[]). Chosen over bytea so the array is readable without a codec, and over pgvector so the Postgres image stays unchanged.';
+COMMENT ON COLUMN chunk_embeddings.model_id IS 'Provider model id including the pinned revision, e.g. BAAI/bge-base-en-v1.5@<onnx sha>.';
 COMMENT ON COLUMN paper_chunks.chunker_version IS 'Chunker identity including its config, e.g. semchunk==4.1.1|250/25|cl100k_base';
 
 COMMENT ON COLUMN papers.pillar_id IS 'Learning pillar (slug) for content isolation';
