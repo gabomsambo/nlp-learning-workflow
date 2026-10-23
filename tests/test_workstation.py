@@ -143,6 +143,28 @@ printf 'xdg-open %s\\n' "$1" >> "$WORKSTATION_STUB_LOG"
 exit 0
 """
 
+# Shadows the real ss. A closed port prints nothing; WORKSTATION_SS_LISTEN_PORT
+# is the only port reported as listening, so the suite never inspects the host.
+SS_STUB = r"""#!/usr/bin/env bash
+printf 'ss' >> "$WORKSTATION_STUB_LOG"
+for arg in "$@"; do
+  printf ' %q' "$arg" >> "$WORKSTATION_STUB_LOG"
+done
+printf '\n' >> "$WORKSTATION_STUB_LOG"
+
+want="${WORKSTATION_SS_LISTEN_PORT:-}"
+[[ -n "$want" ]] || exit 0
+for arg in "$@"; do
+  case "$arg" in
+    *"sport = :${want}"*)
+      printf 'LISTEN 0 1 127.0.0.1:%s 0.0.0.0:*\n' "$want"
+      exit 0
+      ;;
+  esac
+done
+exit 0
+"""
+
 
 def _free_port() -> int:
     sock = socket.socket()
@@ -167,6 +189,7 @@ def launcher(tmp_path: Path):
         ("docker", DOCKER_STUB),
         ("curl", CURL_STUB),
         ("xdg-open", XDG_STUB),
+        ("ss", SS_STUB),
     ):
         path = bin_dir / name
         path.write_text(body)
@@ -191,9 +214,16 @@ def launcher(tmp_path: Path):
             "TTS_WAIT_SECONDS": "5",
         }
     )
-    for key in ("WORKSTATION_DOCKER_DOWN", "WORKSTATION_CURL_FAIL", "WORKSTATION_TTS_FAIL",
-                "WORKSTATION_QDRANT", "WORKSTATION_IMAGE_ID", "WORKSTATION_IMAGE_CREATED",
-                "WORKSTATION_SCHEDULER"):
+    for key in (
+        "WORKSTATION_DOCKER_DOWN",
+        "WORKSTATION_CURL_FAIL",
+        "WORKSTATION_TTS_FAIL",
+        "WORKSTATION_QDRANT",
+        "WORKSTATION_IMAGE_ID",
+        "WORKSTATION_IMAGE_CREATED",
+        "WORKSTATION_SCHEDULER",
+        "WORKSTATION_SS_LISTEN_PORT",
+    ):
         env.pop(key, None)
 
     real_desktop = Path.home() / ".local/share/applications/nlp-workstation.desktop"
@@ -231,6 +261,16 @@ def launcher(tmp_path: Path):
 
 def _log(launcher) -> str:
     return launcher["log"].read_text()
+
+
+def _wait_for(path: Path, timeout: float = 3.0) -> bool:
+    """Background IndexTTS start writes the marker after up has returned."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.exists():
+            return True
+        time.sleep(0.05)
+    return path.exists()
 
 
 def test_script_and_symlink_exist():
@@ -296,7 +336,7 @@ def test_up_build_and_tts_flag_order(launcher):
     assert proc.returncode == 0, proc.stderr
     log = _log(launcher)
     assert " up -d --build" in log
-    assert launcher["marker"].exists()
+    assert _wait_for(launcher["marker"]), proc.stdout + proc.stderr
     pid_file = launcher["state"] / "nlp-workstation" / "indextts.pid"
     assert pid_file.is_file()
     pid = int(pid_file.read_text().strip())
@@ -314,6 +354,7 @@ def test_up_tts_skips_start_when_port_is_taken(launcher):
             extra={
                 "INDEXTTS_URL": f"http://127.0.0.1:{port}",
                 "WORKSTATION_TTS_OK": "1",
+                "WORKSTATION_SS_LISTEN_PORT": str(port),
             },
         )
         assert proc.returncode == 0, proc.stderr
@@ -354,6 +395,7 @@ def test_down_leaves_a_listener_it_did_not_start(launcher):
             extra={
                 "INDEXTTS_URL": f"http://127.0.0.1:{port}",
                 "WORKSTATION_TTS_OK": "1",
+                "WORKSTATION_SS_LISTEN_PORT": str(port),
             },
         )
         assert proc.returncode == 0, proc.stderr
@@ -417,7 +459,7 @@ def test_tts_probe_timeout(launcher):
     )
     assert proc.returncode == 1
     assert "IndexTTS did not become ready" in proc.stdout
-    assert launcher["marker"].exists()
+    assert _wait_for(launcher["marker"]), proc.stdout + proc.stderr
 
 
 def test_status_ok_and_scheduler_exited_zero_is_normal(launcher):
