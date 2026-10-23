@@ -80,6 +80,7 @@ def test_pico_is_gone_and_fonts_are_local():
     assert ".palette .palette-input:focus-visible" in app
     assert "[hidden] { display: none !important; }" in app
     assert "justify-content: center" in app
+    assert ".dialog:not([open])" in app
     for name in (
         "inter-latin.woff2",
         "source-serif-4-latin.woff2",

@@ -1069,6 +1069,10 @@ html[data-theme="cockpit"] .pillar-band {
   box-shadow: none;
 }
 
+.dialog:not([open]) {
+  display: none;
+}
+
 .dialog > article {
   width: min(560px, calc(100vw - 32px));
   margin: var(--space-4);
