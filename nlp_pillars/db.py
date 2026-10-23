@@ -2191,8 +2191,18 @@ def get_review_logs(user_id: str = "default_user", pillar_id: Optional[str] = No
         return []
 
 
+class QuizLookupError(Exception):
+    """The review queue could not be read.
+
+    An empty list from ``get_cards_for_review`` means nothing is due. This
+    exception is the other fact: the query failed. The default call still
+    returns ``[]`` so the API keeps its previous behaviour; the review page
+    passes ``raise_on_error=True`` and says so when it falls back.
+    """
+
+
 def get_cards_for_review(user_id: str = "default_user", pillar_id: Optional[str] = None,
-                        limit: int = 10) -> List[QuizCard]:
+                        limit: int = 10, *, raise_on_error: bool = False) -> List[QuizCard]:
     """
     Get quiz cards due for review using FSRS scheduling.
     
@@ -2200,6 +2210,8 @@ def get_cards_for_review(user_id: str = "default_user", pillar_id: Optional[str]
         user_id: User identifier
         pillar_id: Optional pillar filter
         limit: Maximum number of cards to return
+        raise_on_error: When True, a failed query raises QuizLookupError
+            instead of looking like an empty queue.
         
     Returns:
         List of QuizCard due for review
@@ -2224,6 +2236,8 @@ def get_cards_for_review(user_id: str = "default_user", pillar_id: Optional[str]
 
         if response['error']:
             logger.error(f"Failed to get cards for review: {response['error']}")
+            if raise_on_error:
+                raise QuizLookupError("Could not load the review queue")
             return []
 
         if not response['data']:
@@ -2245,9 +2259,41 @@ def get_cards_for_review(user_id: str = "default_user", pillar_id: Optional[str]
 
         return cards[:limit]
 
+    except QuizLookupError:
+        raise
     except Exception as e:
         logger.error(f"Failed to get cards for review: {e}")
+        if raise_on_error:
+            raise QuizLookupError("Could not load the review queue") from e
         return []
+
+
+def list_quiz_schedule_rows(user_id: str = "default_user", pillar_id: Optional[str] = None,
+                            limit: int = 500) -> List[Dict[str, Any]]:
+    """Scheduling fields for cards in the queue, due or not.
+
+    The review page uses this only when nothing is due, to name the next
+    card's time. Raises QuizLookupError. An empty list means there are no
+    rows.
+    """
+    try:
+        client = get_client()
+        query = (client.table('quiz_cards')
+                .select('next_review_date,difficulty,pillar_id')
+                .eq('user_id', user_id)
+                .limit(limit))
+        if pillar_id:
+            query = query.eq('pillar_id', pillar_id)
+        response = query.execute()
+        if response['error']:
+            logger.error(f"Failed to read quiz schedule: {response['error']}")
+            raise QuizLookupError("Could not read the next review time")
+        return list(response['data'] or [])
+    except QuizLookupError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to read quiz schedule: {e}")
+        raise QuizLookupError("Could not read the next review time") from e
 
 
 def add_review_log(log: ReviewLog) -> bool:
