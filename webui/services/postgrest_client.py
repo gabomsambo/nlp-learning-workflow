@@ -21,6 +21,20 @@ from nlp_pillars.pillar_utils import get_all_pillar_ids
 logger = logging.getLogger(__name__)
 
 
+def quote_in_filter(values: list[str]) -> str:
+    """Return a PostgREST ``in`` filter, quoting every value.
+
+    Commas, colons and parentheses are reserved in filters. Paper ids contain
+    colons (``arxiv:2402.08593``), so an unquoted list would split on them.
+    Double quotes and backslashes are escaped, which is the PostgREST rule.
+    """
+    parts: list[str] = []
+    for value in values:
+        escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        parts.append(f'"{escaped}"')
+    return "in.(" + ",".join(parts) + ")"
+
+
 class CountUnavailableError(Exception):
     """A requested count could not be obtained.
 
@@ -282,17 +296,65 @@ class PostgrestClient:
                 found.add(str(paper_id))
         return found
 
-    async def list_lessons(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        """List lessons with display fields."""
-        params: Dict[str, Any] = {"select": "id,paper_id,tl_dr,pillar_id,created_at,difficulty,estimated_time,takeaways", "order": "created_at.desc", "limit": limit}
+    async def list_lessons_checked(
+        self, pillar: Optional[str] = None, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """List lessons, raising if the database cannot be read.
+
+        ``list_lessons`` swallows that failure and returns ``[]``. The lessons
+        page has to tell an empty shelf from a database it could not ask.
+        """
+        params: Dict[str, Any] = {
+            "select": "id,paper_id,tl_dr,pillar_id,created_at,difficulty,estimated_time,takeaways",
+            "order": "created_at.desc",
+            "limit": limit,
+        }
         if pillar:
             params["pillar_id"] = f"eq.{pillar}"
+        data, _ = await self._get("lessons", params=params)
+        return data if isinstance(data, list) else []
+
+    async def list_lessons(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """List lessons with display fields."""
         # Degrade to an empty list when the database is unreachable.
         try:
-            data, _ = await self._get("lessons", params=params)
+            return await self.list_lessons_checked(pillar=pillar, limit=limit)
         except Exception:
             return []
-        return data
+
+    async def paper_titles(self, paper_ids: List[str]) -> Dict[str, str]:
+        """Return ``{paper id: title}`` for the ids a lesson list names.
+
+        A paper that is not in the library is absent, so the caller can tell
+        a missing title from a paper whose title is blank. Raises on failure;
+        the lessons page still renders the lessons and says the titles failed.
+        """
+        unique: List[str] = []
+        seen: set[str] = set()
+        for raw in paper_ids:
+            paper_id = str(raw or "").strip()
+            if not paper_id or paper_id in seen:
+                continue
+            seen.add(paper_id)
+            unique.append(paper_id)
+        if not unique:
+            return {}
+        data, _ = await self._get(
+            "papers",
+            params={
+                "select": "id,title",
+                "id": quote_in_filter(unique),
+                "limit": len(unique),
+            },
+        )
+        titles: Dict[str, str] = {}
+        for row in data or []:
+            if not isinstance(row, dict):
+                continue
+            paper_id = row.get("id")
+            if paper_id:
+                titles[str(paper_id)] = str(row.get("title") or "")
+        return titles
 
     async def list_podcast_scripts(self, pillar: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """List podcast scripts with display fields."""
