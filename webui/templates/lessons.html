@@ -59,8 +59,8 @@
         <p class="lesson-source">
           <span class="lesson-paper-title">{{ row.paper_title }}</span>
           {% if row.pillar_name %}
-          <span aria-hidden="true">·</span>
           <span class="pillar-inline {{ row.pillar_class }}">
+            <span aria-hidden="true">·</span>
             {% if row.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
             {{ row.pillar_name }}
           </span>

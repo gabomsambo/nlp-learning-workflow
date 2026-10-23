@@ -3206,6 +3206,14 @@ html[data-theme="journal"] .status-row {
 }
 
 /* Lessons reading list. The paper page Lesson tab is where a lesson is read. */
+.lessons-page .filter-chips {
+  flex: 1 1 16rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lessons-page .filter-row { align-items: center; }
+
 .lessons-column { max-width: var(--read-max); }
 
 .lesson-list {
@@ -3227,7 +3235,7 @@ html[data-theme="journal"] .status-row {
   gap: var(--space-4);
   align-items: start;
   padding: var(--space-5) var(--space-2);
-  color: inherit;
+  color: var(--text);
   text-decoration: none;
 }
 
@@ -3289,6 +3297,10 @@ html[data-theme="cockpit"] .lesson-preview {
   line-height: 1.5;
 }
 
+.lesson-preview li {
+  display: block;
+}
+
 .lesson-preview li + li { margin-top: var(--space-2); }
 
 .lesson-more {
@@ -3304,17 +3316,25 @@ html[data-theme="cockpit"] .lesson-preview {
   gap: var(--space-2);
   align-items: center;
   margin: var(--space-3) 0 0;
+  color: var(--muted);
 }
 
 .lesson-record {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
+  gap: var(--space-1) 0;
   margin: var(--space-2) 0 0;
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
-  overflow-wrap: anywhere;
+}
+
+.lesson-record > span { white-space: nowrap; }
+
+.lesson-record > span:not(:last-child)::after {
+  content: "·";
+  margin-left: var(--space-2);
+  margin-right: var(--space-2);
 }
 
 @media (max-width: 859px) {
