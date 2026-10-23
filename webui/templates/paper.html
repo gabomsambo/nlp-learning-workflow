@@ -47,15 +47,15 @@
       </header>
 
       <nav class="tabs" aria-label="Paper">
-        <a href="#summary">Summary</a>
-        <a href="#notes">Notes{% if page.notes %} · {{ page.notes|length }}{% endif %}</a>
-        <a href="#lesson">Lesson</a>
-        <a href="#cards">Cards{% if page.cards %} · {{ page.cards|length }}{% endif %}</a>
-        <a href="#episode">Episode{% if page.episodes %} · {{ page.episodes|length }}{% endif %}</a>
+        <a href="#summary" data-panel="summary">Summary</a>
+        <a href="#notes" data-panel="notes">Notes{% if page.notes %} · {{ page.notes|length }}{% endif %}</a>
+        <a href="#lesson" data-panel="lesson">Lesson</a>
+        <a href="#cards" data-panel="cards">Cards{% if page.cards %} · {{ page.cards|length }}{% endif %}</a>
+        <a href="#episode" data-panel="episode">Episode{% if page.episodes %} · {{ page.episodes|length }}{% endif %}</a>
       </nav>
 
       <div class="paper-panels">
-        <section id="summary" class="paper-panel paper-prose">
+        <section id="summary" class="paper-panel panel-summary is-default paper-prose">
           <h2 class="visually-hidden">Summary</h2>
           {% if page.tldr %}
           {% call callout('tldr', 'In one paragraph') %}
@@ -91,7 +91,7 @@
           {% endif %}
         </section>
 
-        <section id="notes" class="paper-panel paper-prose">
+        <section id="notes" class="paper-panel panel-notes paper-prose">
           <h2>Notes</h2>
           {% if page.notes %}
           {% for note in page.notes %}
@@ -126,11 +126,11 @@
           {% endif %}
         </section>
 
-        <section id="lesson" class="paper-panel paper-prose">
+        <section id="lesson" class="paper-panel panel-lesson paper-prose">
           <h2>Lesson</h2>
           <div class="read-progress" id="read-progress">
             <div class="read-track" aria-hidden="true"><span id="read-bar"></span></div>
-            <p id="read-label">On this browser · not started</p>
+            <p id="read-label" class="read-label">On this browser · not started</p>
             <p class="paper-muted">Reading progress stays in this browser. It is not saved to your library.</p>
           </div>
           {% if page.lessons %}
@@ -161,7 +161,7 @@
           {% endif %}
         </section>
 
-        <section id="cards" class="paper-panel">
+        <section id="cards" class="paper-panel panel-cards">
           <div class="section-head">
             <h2>Cards</h2>
             {% if page.cards %}
@@ -198,7 +198,7 @@
           {% endif %}
         </section>
 
-        <section id="episode" class="paper-panel">
+        <section id="episode" class="paper-panel panel-episode">
           <h2>Episode</h2>
           {% if page.episodes_unavailable %}
           <p class="paper-muted">Episodes for this paper could not be loaded. This does not mean there are none.</p>

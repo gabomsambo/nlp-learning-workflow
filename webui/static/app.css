@@ -2201,28 +2201,26 @@ html[data-theme="cockpit"] .paper-panel h2 { font-weight: 600; }
 
 .paper-panel { display: none; }
 
-/* #summary loses to an id-only rule, so the default and the :target
-   share one declaration. :not(:has(:target)) is the no-hash state. */
-.paper-page:not(:has(.paper-panel:target)) #summary,
+.paper-page:not(:has(.paper-panel:target)) .paper-panel.is-default,
 .paper-page .paper-panel:target {
   display: block;
 }
 
-.paper-page .tabs a[href="#summary"] {
+.paper-page .tabs a[data-panel="summary"] {
   border-bottom-color: var(--accent);
   color: var(--text);
 }
 
-.paper-page:has(.paper-panel:target) .tabs a[href="#summary"] {
+.paper-page:has(.paper-panel:target) .tabs a[data-panel="summary"] {
   border-bottom-color: transparent;
   color: var(--muted);
 }
 
-.paper-page:has(#summary:target) .tabs a[href="#summary"],
-.paper-page:has(#notes:target) .tabs a[href="#notes"],
-.paper-page:has(#lesson:target) .tabs a[href="#lesson"],
-.paper-page:has(#cards:target) .tabs a[href="#cards"],
-.paper-page:has(#episode:target) .tabs a[href="#episode"] {
+.paper-page:has(.panel-summary:target) .tabs a[data-panel="summary"],
+.paper-page:has(.panel-notes:target) .tabs a[data-panel="notes"],
+.paper-page:has(.panel-lesson:target) .tabs a[data-panel="lesson"],
+.paper-page:has(.panel-cards:target) .tabs a[data-panel="cards"],
+.paper-page:has(.panel-episode:target) .tabs a[data-panel="episode"] {
   border-bottom-color: var(--accent);
   color: var(--text);
 }
@@ -2269,7 +2267,7 @@ html[data-theme="cockpit"] .paper-panel h2 { font-weight: 600; }
   height: 100%;
   background: var(--accent);
 }
-#read-label { margin: 0 0 var(--space-1); font-size: var(--fs-ui); }
+.read-label { margin: 0 0 var(--space-1); font-size: var(--fs-ui); }
 
 .episode-list { list-style: none; margin: 0; padding: 0; }
 .episode-list li { margin-bottom: var(--space-4); }
