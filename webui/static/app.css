@@ -1437,9 +1437,29 @@ html[data-theme="cockpit"] .run-card-title { font-family: var(--font-ui); }
   bottom: var(--space-5);
   width: min(22rem, calc(100vw - 2 * var(--space-5)));
   max-width: none;
-  max-height: calc(100dvh - 32px);
+  /* Stay in the corner. A full-viewport cap grows up over the form. */
+  max-height: min(28rem, calc(100dvh - 12rem));
   margin: 0;
+  overflow: hidden;
+}
+
+.run-card.is-floating .run-steps {
+  min-height: 0;
+}
+
+.run-card.is-floating .run-stage-list {
+  max-height: 11rem;
   overflow: auto;
+}
+
+/* The mini player owns the bottom edge. Sit the card above it. */
+html[data-player="on"] .run-card.is-floating {
+  bottom: calc(64px + var(--space-4));
+  max-height: min(28rem, calc(100dvh - 64px - 10rem));
+}
+
+html[data-theme="journal"][data-player="on"] .run-card.is-floating {
+  bottom: calc(64px + var(--space-4) + var(--space-4));
 }
 
 .run-card.is-quiet:has(.run-card-summary:empty) {
@@ -1638,14 +1658,25 @@ html[data-theme="cockpit"] .run-card-title { font-family: var(--font-ui); }
 @media (max-width: 859px) {
   .run-card.is-floating {
     right: var(--space-3);
-    bottom: 84px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
     left: var(--space-3);
     width: auto;
-    max-height: calc(100dvh - 120px);
+    max-height: min(16rem, calc(100dvh - 76px - 8rem));
+  }
+  .run-card.is-floating .run-stage-list { max-height: 8rem; }
+  html[data-player="on"] .run-card.is-floating {
+    bottom: calc(59px + 11.5rem + env(safe-area-inset-bottom));
+    max-height: min(14rem, calc(100dvh - 59px - 11.5rem - 6rem));
+  }
+  html[data-theme="journal"][data-player="on"] .run-card.is-floating {
+    bottom: calc(71px + 11.5rem + env(safe-area-inset-bottom));
   }
   /* Room under the form so the primary button can scroll clear of a live card. */
   .app-main:has(.run-card.is-floating.is-live) {
-    padding-bottom: 280px;
+    padding-bottom: calc(76px + 16rem);
+  }
+  html[data-player="on"] .app-main:has(.run-card.is-floating.is-live) {
+    padding-bottom: calc(59px + 11.5rem + 14rem);
   }
   .run-card .btn-sm,
   .run-steps summary { min-height: 40px; }

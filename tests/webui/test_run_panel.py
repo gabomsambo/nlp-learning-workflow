@@ -110,6 +110,9 @@ def test_run_card_styles_use_tokens():
     assert ".run-card.is-floating" in block
     assert ".run-segs" in block
     assert ".run-stage-failed" in block
+    assert 'html[data-player="on"] .run-card.is-floating' in block
+    assert "overflow: auto" in block
+    assert "100dvh - 32px" not in block
     assert "#" not in block
 
 
