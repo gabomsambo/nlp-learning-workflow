@@ -1,265 +1,78 @@
 {% extends 'base.html' %}
+{% from "_components.html" import page_header, empty_state, callout, dialog %}
 {% block title %}Review{% endblock %}
 {% block content %}
-<h2>FSRS Spaced Repetition Quiz{% if pillar %} ({{ pillar }}){% endif %}{% if difficulty %} - {{ difficulty|title }}{% endif %}</h2>
-
-<form method="get">
-  <div class="grid">
-    <label>
-      Pillar
-      <select name="pillar">
-        <option value="">All</option>
+{{ page_header('Review', 'Spaced repetition') }}
+<section class="review" aria-label="Review session">
+  <form class="review-filters" method="get" action="/quiz/">
+    <div class="field">
+      <label for="review-pillar">Pillar</label>
+      <select id="review-pillar" name="pillar">
+        <option value="" {% if not pillar %}selected{% endif %}>All</option>
         {% for p in pillars %}
-        <option value="{{ p.id }}" {% if pillar==p.id %}selected{% endif %}>{{ p.name }}</option>
+        <option value="{{ p.id }}" {% if pillar == p.id %}selected{% endif %}>{{ p.name }}</option>
         {% endfor %}
       </select>
-    </label>
-    <label>
-      Difficulty
-      <select name="difficulty">
-        <option value="">Any</option>
-        {% for d in ['easy','medium','hard'] %}
-        <option value="{{d}}" {% if difficulty==d %}selected{% endif %}>{{d|title}}</option>
+    </div>
+    <div class="field">
+      <label for="review-difficulty">Difficulty</label>
+      <select id="review-difficulty" name="difficulty">
+        <option value="" {% if not difficulty %}selected{% endif %}>Any</option>
+        {% for d in ['easy', 'medium', 'hard'] %}
+        <option value="{{ d }}" {% if difficulty and difficulty|lower == d %}selected{% endif %}>{{ d|title }}</option>
         {% endfor %}
       </select>
-    </label>
-  </div>
-  <button type="submit">Filter</button>
-</form>
+    </div>
+    <button class="btn btn-secondary" type="submit">Filter</button>
+  </form>
 
-<details open>
-  <summary>Cards (click to reveal answers and rate your recall)</summary>
-  {% if cards %}
-    {% for c in cards %}
-    <article id="card-{{ c.id }}" class="quiz-card">
-      <header>
-        <strong>{{ c.pillar_id }}</strong> • 
-        <small>{{ c.paper_id }}</small> • 
-        <em>Difficulty {{ c.difficulty }}</em>
-        {% if c.next_review_date %}
-        • <small>Due: {{ c.next_review_date.strftime('%Y-%m-%d %H:%M') if c.next_review_date else 'Now' }}</small>
-        {% endif %}
-      </header>
-      
-      <div class="question-section">
-        <p><strong>Question:</strong> {{ c.question }}</p>
-        <button type="button" class="show-answer-btn" onclick="showAnswer('{{ c.id }}')">Show Answer</button>
-      </div>
-      
-      <div id="answer-{{ c.id }}" class="answer-section" style="display: none;">
-        <p><strong>Answer:</strong> {{ c.answer }}</p>
-        
-        <div class="rating-section">
-          <p><strong>How well did you remember this?</strong></p>
-          <div class="rating-buttons">
-            <button type="button" class="rating-btn again" onclick="rateCard('{{ c.id }}', 1)">
-              <span class="rating-label">Again</span>
-              <small>Completely forgot</small>
-            </button>
-            <button type="button" class="rating-btn hard" onclick="rateCard('{{ c.id }}', 2)">
-              <span class="rating-label">Hard</span>
-              <small>Struggled to remember</small>
-            </button>
-            <button type="button" class="rating-btn good" onclick="rateCard('{{ c.id }}', 3)">
-              <span class="rating-label">Good</span>
-              <small>Remembered with effort</small>
-            </button>
-            <button type="button" class="rating-btn easy" onclick="rateCard('{{ c.id }}', 4)">
-              <span class="rating-label">Easy</span>
-              <small>Remembered easily</small>
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <div id="feedback-{{ c.id }}" class="feedback-section" style="display: none;">
-        <p class="success">✓ Card reviewed! Next review: <span id="next-review-{{ c.id }}"></span></p>
-      </div>
-    </article>
-    {% endfor %}
-  {% else %}
-    <p>No quiz cards found for review. Try a different filter or create some quiz cards first!</p>
+  {% if fsrs_fallback %}
+  {% call callout('warn', 'Scheduling lookup failed') %}
+  <p>These are every matching card, not only the ones that are due. Ratings still save.</p>
+  {% if fallback_reason %}<p>{{ fallback_reason }}</p>{% endif %}
+  {% endcall %}
   {% endif %}
-</details>
 
-<style>
-.quiz-card {
-  margin-bottom: 2rem;
-  border: 1px solid var(--muted-border-color);
-  border-radius: 0.5rem;
-  padding: 1rem;
-}
+  {% if next_due_error %}
+  {% call callout('warn', 'Next review time unavailable') %}
+  <p>{{ next_due_error }}</p>
+  {% endcall %}
+  {% endif %}
 
-.question-section {
-  margin-bottom: 1rem;
-}
+  {% if cards %}
+  <div id="review-session">
+    <p class="review-progress" id="review-progress">1 of {{ cards|length }}</p>
+    <progress id="review-meter" class="review-meter" value="1" max="{{ cards|length }}" aria-label="Cards in this session"></progress>
+    <p id="review-status" class="review-status" role="status" aria-live="polite"></p>
+    <article class="review-card" id="review-card"></article>
+    <p id="review-error" class="review-error" role="alert" hidden></p>
+    <p class="review-help">
+      Space reveals the answer. Keys 1–4 rate it.
+      <button type="button" class="btn btn-ghost btn-sm" id="review-shortcuts-open">Shortcuts</button>
+    </p>
+  </div>
+  {% else %}
+  {{ empty_state(empty_title, empty_message, '/quiz/' if filtered else none, 'Clear filters' if filtered else none) }}
+  {% endif %}
 
-.answer-section {
-  margin-bottom: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--muted-border-color);
-}
+  {% call dialog('review-shortcuts', 'Review shortcuts') %}
+  <ul class="review-shortcut-list">
+    <li><kbd>Space</kbd> Reveal the answer</li>
+    <li><kbd>1</kbd> Rate Again</li>
+    <li><kbd>2</kbd> Rate Hard</li>
+    <li><kbd>3</kbd> Rate Good</li>
+    <li><kbd>4</kbd> Rate Easy</li>
+  </ul>
+  <p>These keys do nothing while a text field is focused. Show answer and the four rating buttons do the same things.</p>
+  {% endcall %}
 
-.rating-section {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--muted-border-color);
-}
-
-.rating-buttons {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.rating-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0.75rem 0.5rem;
-  border: 2px solid var(--muted-border-color);
-  border-radius: 0.5rem;
-  background: var(--card-background-color);
-  color: var(--color);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.rating-btn:hover {
-  border-color: var(--primary);
-  background: var(--primary-focus);
-}
-
-.rating-btn.again {
-  border-color: #e74c3c;
-}
-.rating-btn.again:hover {
-  background: #e74c3c;
-  color: white;
-}
-
-.rating-btn.hard {
-  border-color: #f39c12;
-}
-.rating-btn.hard:hover {
-  background: #f39c12;
-  color: white;
-}
-
-.rating-btn.good {
-  border-color: #27ae60;
-}
-.rating-btn.good:hover {
-  background: #27ae60;
-  color: white;
-}
-
-.rating-btn.easy {
-  border-color: #3498db;
-}
-.rating-btn.easy:hover {
-  background: #3498db;
-  color: white;
-}
-
-.rating-label {
-  font-weight: bold;
-  font-size: 1rem;
-}
-
-.rating-btn small {
-  font-size: 0.8rem;
-  margin-top: 0.25rem;
-  text-align: center;
-}
-
-.feedback-section {
-  padding-top: 1rem;
-  border-top: 1px solid var(--muted-border-color);
-}
-
-.feedback-section.success {
-  color: var(--primary);
-}
-
-.show-answer-btn {
-  background: var(--primary);
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 0.25rem;
-  cursor: pointer;
-  margin-top: 0.5rem;
-}
-
-.show-answer-btn:hover {
-  background: var(--primary-hover);
-}
-
-.card-reviewed {
-  opacity: 0.7;
-  pointer-events: none;
-}
-</style>
-
-<script>
-function showAnswer(cardId) {
-  document.getElementById('answer-' + cardId).style.display = 'block';
-  const btn = document.querySelector('#card-' + cardId + ' .show-answer-btn');
-  btn.style.display = 'none';
-}
-
-async function rateCard(cardId, rating) {
-  const startTime = Date.now();
-  
-  try {
-    const response = await fetch('/api/quiz/review', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        card_id: cardId,
-        rating: rating,
-        response_time_ms: Date.now() - startTime
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to submit review');
-    }
-    
-    const result = await response.json();
-    
-    if (result.success) {
-      // Show feedback
-      const feedbackEl = document.getElementById('feedback-' + cardId);
-      const nextReviewEl = document.getElementById('next-review-' + cardId);
-      
-      if (result.next_review_date) {
-        const nextReview = new Date(result.next_review_date);
-        nextReviewEl.textContent = nextReview.toLocaleString();
-      } else {
-        nextReviewEl.textContent = 'Soon';
-      }
-      
-      feedbackEl.style.display = 'block';
-      
-      // Hide rating buttons and mark as reviewed
-      document.querySelector('#card-' + cardId + ' .rating-section').style.display = 'none';
-      document.getElementById('card-' + cardId).classList.add('card-reviewed');
-      
-    } else {
-      alert('Failed to submit review: ' + (result.message || 'Unknown error'));
-    }
-    
-  } catch (error) {
-    console.error('Error submitting review:', error);
-    alert('Failed to submit review. Please try again.');
-  }
-}
-</script>
+  <script type="application/json" id="review-session-data">{{ session_json | safe }}</script>
+</section>
+<noscript>
+  <p class="review-noscript">This session shows one card at a time and needs JavaScript to reveal and rate. The filter above still works.</p>
+</noscript>
 {% endblock %}
-
-
+{% block scripts %}
+<script src="/static/paper-modal.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/review-session.js?v={{ asset_v | default('1', true) }}"></script>
+{% endblock %}

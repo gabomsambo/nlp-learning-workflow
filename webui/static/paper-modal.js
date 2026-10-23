@@ -36,7 +36,10 @@
 
   /* ---------------------------------------------------------------- helpers */
 
-  /** 1-3 -> a word. Anything else -> null, so the badge is simply omitted. */
+  /**
+   * 1-3 -> a word. Anything else -> null, so the badge is simply omitted.
+   * The review session calls this same function. Do not fork the mapping.
+   */
   function difficultyLabel(level) {
     var n = Number(level);
     if (!n || n < 1 || n > DIFFICULTY_LABELS.length) return null;
