@@ -62,7 +62,7 @@ def test_save_control_is_not_a_submit_and_edit_stays_on_the_page():
     detail = (ROOT / "webui" / "templates" / "pillar_detail.html").read_text()
     assert "activity-item-link" in detail
     assert "/pillars/${" not in detail
-    assert 'id="upload-run-status"' in detail
+    assert "status_id='upload-run-status'" in detail
     assert 'id="search-form"' in detail
     assert 'data-pillar-id="{{ pillar.id }}"' in detail
     assert "/discovery/?pillar=" in detail

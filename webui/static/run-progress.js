@@ -143,14 +143,19 @@
     skipped: '–',
     unknown: '⚠',
   };
-  var STAGE_COLOR = {
-    pending: 'var(--pico-muted-color, #888)',
-    running: 'var(--pico-primary, #0a84ff)',
-    completed: 'var(--pico-ins-color, #2a9d4a)',
-    failed: 'var(--pico-del-color, #d33)',
-    skipped: 'var(--pico-muted-color, #888)',
-    unknown: 'var(--pico-del-color, #d33)',
+  // Painted by app.css (.run-stage-*). Inline colours fight the theme switcher.
+  var STAGE_CLASS = {
+    pending: 'run-stage-pending',
+    running: 'run-stage-running',
+    completed: 'run-stage-completed',
+    failed: 'run-stage-failed',
+    skipped: 'run-stage-skipped',
+    unknown: 'run-stage-unknown',
   };
+  var TONE_OK = 'run-ok';
+  var TONE_WARN = 'run-warn';
+  var TONE_DANGER = 'run-danger';
+  var TONES = [TONE_OK, TONE_WARN, TONE_DANGER];
 
   //: Stage names are StageName enum values from nlp_pillars/schemas.py — machine
   //: slugs. They were rendered raw, so the user read "pop_queue" and
@@ -200,6 +205,10 @@
 
   function stageLabel(name) {
     return STAGE_LABEL[name] || name;
+  }
+
+  function stageClass(status) {
+    return STAGE_CLASS[status] || STAGE_CLASS.pending;
   }
 
   function duration(stage) {
@@ -254,35 +263,46 @@
     (run.stages || []).forEach(function (s) {
       var status = displayStatus(s, run);
       var li = document.createElement('li');
-      li.style.listStyle = 'none';
-      li.style.color = STAGE_COLOR[status] || 'inherit';
-      if (status === 'running') li.style.fontWeight = '600';
+      li.className = 'run-stage ' + stageClass(status);
 
-      // Icon and label. textContent everywhere — see the header note on escapeHtml.
-      li.appendChild(document.createTextNode((STAGE_ICON[status] || '○') + ' '));
+      var icon = document.createElement('span');
+      icon.className = 'run-stage-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = STAGE_ICON[status] || '○';
+      li.appendChild(icon);
+
+      var body = document.createElement('span');
+      body.className = 'run-stage-body';
+
+      // Status word is for assistive tech; the icon carries it visually.
+      var sr = document.createElement('span');
+      sr.className = 'u-hidden';
+      sr.textContent = status + ': ';
+      body.appendChild(sr);
 
       var name = document.createElement('span');
+      name.className = 'run-stage-name';
       name.textContent = stageLabel(s.name);
-      li.appendChild(name);
+      body.appendChild(name);
 
       if (s.detail) {
-        var detail = document.createElement('small');
-        detail.style.opacity = '.7';
-        detail.textContent = ' ' + s.detail;
-        li.appendChild(detail);
+        var detail = document.createElement('span');
+        detail.className = 'run-stage-detail';
+        detail.textContent = s.detail;
+        body.appendChild(detail);
       }
       if (status === 'unknown') {
-        var note = document.createElement('small');
-        note.style.opacity = '.7';
-        note.textContent = ' (never finished)';
-        li.appendChild(note);
+        var note = document.createElement('span');
+        note.className = 'run-stage-detail';
+        note.textContent = 'Never finished';
+        body.appendChild(note);
       }
+      li.appendChild(body);
 
       var dur = duration(s);
       if (dur) {
-        var d = document.createElement('small');
-        d.style.opacity = '.55';
-        d.style.float = 'right';
+        var d = document.createElement('span');
+        d.className = 'run-stage-duration';
         d.textContent = dur;
         li.appendChild(d);
       }
@@ -290,8 +310,6 @@
     });
 
     var ul = document.createElement('ul');
-    ul.style.paddingLeft = '0';
-    ul.style.margin = '.5rem 0';
     ul.appendChild(frag);
     container.replaceChildren(ul);
   }
@@ -304,27 +322,43 @@
    * value to null coerces to 0 and stays determinate.
    * https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/progress
    */
+  /**
+   * Segmented stage bar. One segment per stage, coloured by class.
+   *
+   * Indeterminate while pending, because "0 of 11" reads as stalled when the truth is
+   * "not started". The element is a container, not a native <progress>: a native bar
+   * cannot draw one segment per stage, and its fill colour was a Pico variable.
+   */
   function renderProgress(el, run) {
     if (!el) return;
-    var total = (run.stages || []).length;
+    var stages = run.stages || [];
+    var total = stages.length;
     var done = countCompleted(run);
+    var pending = !total || run.status === 'pending';
 
-    if (!total || run.status === 'pending') {
-      el.removeAttribute('value');
+    el.classList.add('run-segs');
+    el.style.setProperty('--run-seg-count', String(pending ? 1 : total));
+    el.setAttribute('aria-valuemin', '0');
+    el.setAttribute('aria-valuemax', String(pending ? 1 : total));
+    el.classList.toggle('is-indeterminate', pending);
+    el.replaceChildren();
+
+    if (pending) {
+      el.removeAttribute('aria-valuenow');
+      el.removeAttribute('aria-valuetext');
+      var pendingSeg = document.createElement('i');
+      pendingSeg.className = 'is-pending';
+      el.appendChild(pendingSeg);
     } else {
-      el.max = total;
-      el.value = Math.min(done, total);
+      var shown = Math.min(done, total);
+      el.setAttribute('aria-valuenow', String(shown));
+      el.setAttribute('aria-valuetext', shown + ' of ' + total + ' steps finished');
+      stages.forEach(function (s) {
+        var seg = document.createElement('i');
+        seg.className = 'is-' + (displayStatus(s, run) || 'pending');
+        el.appendChild(seg);
+      });
     }
-
-    // Pico funnels every vendor pseudo-element through one custom property, so one
-    // line recolours the bar in all engines. https://picocss.com/docs/progress
-    var color = 'var(--pico-primary-background)';
-    if (run.status === 'failed') color = 'var(--pico-del-color)';
-    else if (run.status === 'succeeded') color = 'var(--pico-ins-color)';
-    else if (run.status === 'cancelled' || run.status === 'interrupted') {
-      color = 'var(--pico-muted-color)';
-    }
-    el.style.setProperty('--pico-progress-color', color);
     el.hidden = false;
   }
 
@@ -425,27 +459,66 @@
     return 'Failed' + (run.error ? ' — ' + run.error : '');
   }
 
+  /**
+   * Tone class for a run. Callers add it to an element; app.css maps it to a token.
+   * A partial outcome (papers lost, script not saved, upload added but unfinished)
+   * is run-warn: the same signal the old dark-orange paint carried, without a raw
+   * colour that ignores the active theme.
+   */
   function statusColor(run) {
     var status = typeof run === 'string' ? run : run && run.status;
     var partial = typeof run === 'object' && run && run.papers_failed > 0;
-    // Generated but unsaved: not a clean green success, and not "start again".
     if (status === 'succeeded' && typeof run === 'object' && run
         && run.result && run.result.saved === false) {
-      return 'darkorange';
+      return TONE_WARN;
     }
-    // A succeeded run that still lost papers is not a clean success. Painting it the
-    // same green as a perfect run is how a partial failure went unnoticed.
-    if (status === 'succeeded') return partial ? 'darkorange' : 'green';
-    // ...and the mirror of that: a failed upload whose paper IS in the library is a
-    // partial failure, not a total one. Crimson there says "start again", which is
-    // the wrong instruction — the paper is already saved.
+    if (status === 'succeeded') return partial ? TONE_WARN : TONE_OK;
     if (status === 'failed' && typeof run === 'object' && run
         && run.result && run.result.added) {
-      return 'darkorange';
+      return TONE_WARN;
     }
-    if (status === 'failed') return 'crimson';
-    if (status === 'interrupted' || status === 'cancelled') return 'darkorange';
+    if (status === 'failed') return TONE_DANGER;
+    if (status === 'interrupted' || status === 'cancelled') return TONE_WARN;
     return '';
+  }
+
+  function applyStatusClass(el, runOrTone) {
+    if (!el || !el.classList) return;
+    var tone = (TONES.indexOf(runOrTone) !== -1) ? runOrTone : statusColor(runOrTone);
+    TONES.forEach(function (name) { el.classList.remove(name); });
+    if (tone) el.classList.add(tone);
+    // Drop a leftover inline colour so the class is what paints.
+    if (el.style && el.style.removeProperty) el.style.removeProperty('color');
+  }
+
+  function cardOf(anchor) {
+    if (!anchor || !anchor.closest) return null;
+    return anchor.closest('.run-card');
+  }
+
+  function markCard(anchor, run) {
+    var card = cardOf(anchor);
+    if (!card) return;
+    var tone = run ? statusColor(run) : '';
+    var name = tone === TONE_OK ? 'ok' : tone === TONE_WARN ? 'warn' : tone === TONE_DANGER ? 'danger' : '';
+    card.classList.toggle('is-live', !!(run && !isTerminal(run.status)));
+    if (name) card.setAttribute('data-tone', name);
+    else card.removeAttribute('data-tone');
+  }
+
+  function paintCount(anchor, run) {
+    var card = cardOf(anchor);
+    if (!card) return;
+    var count = card.querySelector('[data-run-count]');
+    if (!count) return;
+    var total = run && run.stages ? run.stages.length : 0;
+    if (!run || !total || (run.status === 'pending' && !run.current_stage)) {
+      count.textContent = '';
+      return;
+    }
+    var done = countCompleted(run);
+    var step = isTerminal(run.status) ? done : Math.min(done + 1, total);
+    count.textContent = step + ' of ' + total;
   }
 
   /* ------------------------------------------------------------ attach/track */
@@ -502,7 +575,9 @@
     activeStop = pollRun(runId, {
       onUpdate: function (run) {
         announce(els.status, summarise(run));
-        if (els.status) els.status.style.color = statusColor(run);
+        applyStatusClass(els.status, run);
+        markCard(els.status, run);
+        paintCount(els.status, run);
         renderProgress(els.progress, run);
         renderStages(els.stages, run);
         if (onRun) onRun(run);
@@ -518,7 +593,9 @@
         // Say so rather than blanking the panel: an empty panel is indistinguishable
         // from "nothing has happened yet".
         announce(els.status, 'This run no longer exists — it may have been cleared.');
-        if (els.status) els.status.style.color = 'darkorange';
+        applyStatusClass(els.status, TONE_WARN);
+        markCard(els.status, { status: 'interrupted' });
+        paintCount(els.status, null);
         if (els.progress) els.progress.hidden = true;
         if (els.stages) els.stages.replaceChildren();
         // MUST fire. onFinished is what re-enables the page's button; without it a
@@ -528,7 +605,9 @@
       onError: function () {
         announce(els.status, 'Lost contact with the server — retrying. The run is '
                              + 'still going.');
-        if (els.status) els.status.style.color = 'darkorange';
+        applyStatusClass(els.status, TONE_WARN);
+        var card = cardOf(els.status);
+        if (card) card.classList.add('is-live');
       },
     });
   }
@@ -654,6 +733,8 @@
     stageLabel: stageLabel,
     summarise: summarise,
     statusColor: statusColor,
+    applyStatusClass: applyStatusClass,
+    stageClass: stageClass,
     countCompleted: countCompleted,
     displayStatus: displayStatus,
     duration: duration,
@@ -669,6 +750,8 @@
       stageLabel: stageLabel,
       summarise: summarise,
       statusColor: statusColor,
+      applyStatusClass: applyStatusClass,
+      stageClass: stageClass,
       countCompleted: countCompleted,
       displayStatus: displayStatus,
       duration: duration,
