@@ -38,7 +38,7 @@
     { id: 'listen', label: 'Listen', href: '/podcast/', sequence: ['g', 'i'], keys: 'G then I' },
     { id: 'add', label: 'Add papers', href: '/discovery/', sequence: ['g', 'a'], keys: 'G then A' },
     { id: 'pillars', label: 'Pillars', href: '/pillars/', sequence: ['g', 'p'], keys: 'G then P' },
-    { id: 'activity', label: 'Activity', href: '/pipeline/', sequence: ['g', 'v'], keys: 'G then V' },
+    { id: 'activity', label: 'Activity', href: '/activity/', sequence: ['g', 'v'], keys: 'G then V' },
     { id: 'analytics', label: 'Analytics', href: '/analytics/', sequence: ['g', 'n'], keys: 'G then N' },
     { id: 'settings', label: 'Settings', action: 'settings', sequence: ['g', 's'], keys: 'G then S' },
   ];

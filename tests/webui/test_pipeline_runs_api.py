@@ -142,6 +142,7 @@ async def test_the_history_list_projects_the_two_scalars_an_upload_row_needs():
     await _client(handler).list_pipeline_runs(limit=5)
     assert "result_title:result->>title" in captured["select"]
     assert "result_added:result->>added" in captured["select"]
+    assert "result_paper_id:result->>paper_id" in captured["select"]
 
 
 # ----------------------------------------------------------------- route mapping

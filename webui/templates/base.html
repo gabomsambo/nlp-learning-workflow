@@ -40,7 +40,7 @@
   {% set on_listen = path.startswith('/podcast') %}
   {% set on_add = path.startswith('/discovery') %}
   {% set on_pillars = path.startswith('/pillars') %}
-  {% set on_activity = path.startswith('/pipeline') %}
+  {% set on_activity = path.startswith('/activity') %}
   {% set on_analytics = path.startswith('/analytics') %}
   {% set on_more = on_pillars or on_activity or on_lessons or on_analytics %}
 
@@ -61,9 +61,13 @@
         {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
         <p class="nav-section">Workspace</p>
         {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
-        {{ nav_link('/pipeline/', 'Activity', on_activity, 'activity') }}
+        {{ nav_link('/activity/', 'Activity', on_activity, 'activity') }}
       </nav>
       <div class="sidebar-foot">
+        <a class="status-chip status-chip-shell" href="/activity/#status">
+          <span class="status-dot" data-state="unknown" aria-hidden="true"></span>
+          <span class="status-chip-label">Status</span>
+        </a>
         <button type="button" class="nav-button" data-open-palette>
           {{ icon('search') }}<span>Search</span><kbd class="nav-kbd" data-search-kbd>Ctrl K</kbd>
         </button>
@@ -83,6 +87,10 @@
           <span class="brand-name">NLP <em>Learning</em></span>
         </a>
         <div class="phone-actions">
+          <a class="status-chip status-chip-shell status-chip-compact" href="/activity/#status" aria-label="System status">
+            <span class="status-dot" data-state="unknown" aria-hidden="true"></span>
+            <span class="status-chip-label">Status</span>
+          </a>
           <button type="button" class="menu-button btn btn-secondary btn-sm" data-open-palette>Search</button>
           <button type="button" class="menu-button btn btn-secondary btn-sm" id="menu-open" aria-haspopup="dialog" aria-controls="nav-drawer" aria-expanded="false" {% if on_more %}aria-current="page"{% endif %}>Menu</button>
         </div>
@@ -117,7 +125,7 @@
         {{ nav_link('/podcast/', 'Listen', on_listen, 'listen') }}
         {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
         {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
-        {{ nav_link('/pipeline/', 'Activity', on_activity, 'activity') }}
+        {{ nav_link('/activity/', 'Activity', on_activity, 'activity') }}
         <button type="button" class="nav-button" data-open-palette>{{ icon('search') }}<span>Search</span></button>
         <button type="button" class="nav-button" data-open-shortcuts>{{ icon('help') }}<span>Shortcuts</span></button>
         <button type="button" class="nav-button" data-open-settings>{{ icon('settings') }}<span>Settings</span></button>
@@ -219,6 +227,7 @@
   <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
   <script src="/static/theme.js?v={{ asset_v | default('1', true) }}"></script>
   <script src="/static/shell.js?v={{ asset_v | default('1', true) }}"></script>
+  <script src="/static/status-chip.js?v={{ asset_v | default('1', true) }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -36,6 +36,11 @@ function field(tag, type, editable) {
   return { tagName: tag, type: type, isContentEditable: !!editable };
 }
 
+test('Activity in the command palette opens the activity page', () => {
+  const activity = NAV_COMMANDS.find((command) => command.id === 'activity');
+  assert.equal(activity.href, '/activity/');
+});
+
 test('isTextField accepts text-like controls and ignores buttons', () => {
   assert.equal(isTextField(field('INPUT', 'text')), true);
   assert.equal(isTextField(field('INPUT', 'search')), true);

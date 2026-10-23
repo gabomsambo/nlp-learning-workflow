@@ -98,7 +98,9 @@ def test_shell_navigation_and_settings_persistence():
     assert 'href="/podcast/"' in home
     assert 'href="/discovery/"' in home
     assert 'href="/pillars/"' in home
-    assert 'href="/pipeline/"' in home
+    assert 'href="/activity/"' in home
+    assert 'status-chip-shell' in home
+    assert "/static/status-chip.js" in home
     assert 'href="/analytics/"' in home
     assert "nlp:theme" in home
     assert "nlp:mode" in home
@@ -113,6 +115,9 @@ def test_shell_navigation_and_settings_persistence():
     assert 'href="/quiz/" aria-current="page"' not in papers
     lessons = _render("/lessons/")
     assert 'href="/lessons/" aria-current="page"' in lessons
+    activity = _render("/activity/")
+    assert 'href="/activity/" aria-current="page"' in activity
+    assert 'href="/quiz/" aria-current="page"' not in activity
 
 
 def test_page_titles_are_distinct():
@@ -122,7 +127,8 @@ def test_page_titles_are_distinct():
         "papers.html": "Library",
         "lessons.html": "Lessons",
         "quiz.html": "Review",
-        "pipeline.html": "Activity",
+        "pipeline.html": "Pipeline",
+        "activity.html": "Activity",
         "analytics.html": "Analytics",
         "pillars.html": "Pillars",
     }

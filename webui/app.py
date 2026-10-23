@@ -17,8 +17,8 @@ from fastapi.templating import Jinja2Templates
 # db.get_client() reads os.environ directly rather than going through Settings.
 load_dotenv()
 
-from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast
-from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers
+from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast, activity
+from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers, system_status as api_system_status
 from .services import run_service
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(api_podcast.router)
     app.include_router(api_pipeline_runs.router)
     app.include_router(api_papers.router)
+    app.include_router(api_system_status.router)
 
     # Include page routers
     app.include_router(dashboard.router)
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(lessons.router)
     app.include_router(quiz.router)
     app.include_router(pipeline.router)
+    app.include_router(activity.router)
     app.include_router(analytics.router)
     app.include_router(pillars.router)
     app.include_router(discovery.router)

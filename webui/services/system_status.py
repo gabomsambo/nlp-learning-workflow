@@ -1,0 +1,865 @@
+"""Read-only workstation status. No model calls, no writes that stick.
+
+Each check has a short timeout. A check that raises becomes one DOWN row; it
+does not fail the collection. Kind probes insert a row only inside a PostgREST
+``tx=rollback`` transaction and then delete ``pillar_id=status-probe`` either
+way, so a server that ignores the rollback preference cannot leave a run behind.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import time
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+CHECK_TIMEOUT_SECONDS = 2.5
+OVERALL_TIMEOUT_SECONDS = 3.0
+PROBE_PILLAR = "status-probe"
+SUSPENDED_QDRANT = "404 page not found"
+MAX_STORAGE_FILES = 5000
+
+MIGRATION_COLUMNS = (
+    {
+        "id": "migration-011",
+        "label": "Podcast source material",
+        "table": "podcast_scripts",
+        "column": "source_material",
+        "file": "docs/migrations/011_podcast_source_material.sql",
+        "missing": "podcast_scripts.source_material is missing, so a script's provenance is not stored.",
+    },
+    {
+        "id": "migration-012",
+        "label": "Podcast options",
+        "table": "podcast_scripts",
+        "column": "options",
+        "file": "docs/migrations/012_podcast_options.sql",
+        "missing": "podcast_scripts.options is missing, so episode settings are not stored.",
+    },
+    {
+        "id": "migration-014",
+        "label": "Audio metadata",
+        "table": "podcast_scripts",
+        "column": "audio_metadata",
+        "file": "docs/migrations/014_podcast_audio.sql",
+        "missing": "podcast_scripts.audio_metadata is missing, so generated audio is not recorded.",
+    },
+)
+
+KIND_PROBES = (
+    {
+        "id": "migration-015",
+        "label": "Upload runs",
+        "kind": "upload",
+        "trigger": "ui_upload",
+        "file": "docs/migrations/015_upload_runs.sql",
+        "missing": "pipeline_runs does not accept an upload yet.",
+    },
+    {
+        "id": "migration-016",
+        "label": "Script runs",
+        "kind": "podcast_script",
+        "trigger": "ui_podcast_script",
+        "file": "docs/migrations/016_podcast_script_runs.sql",
+        "missing": "pipeline_runs does not accept a podcast script run yet.",
+    },
+)
+
+# Short, stable phrases mined from pipeline_runs.error. The raw exception stays
+# on the Activity row, one click away; this surface only names the failure.
+_KEY_FAILURES = (
+    (
+        "insufficient_quota",
+        "openai",
+        "OpenAI refused a request because the account is out of quota.",
+        "Add OpenAI credit, then retry the run from Activity.",
+    ),
+    (
+        "invalid_api_key",
+        "openai",
+        "OpenAI rejected the API key.",
+        "Check OPENAI_API_KEY in .env.",
+    ),
+    (
+        "credit balance is too low",
+        "anthropic",
+        "Anthropic refused a request because the credit balance is too low.",
+        "Add Anthropic credit, then retry the run from Activity.",
+    ),
+    (
+        "authentication fails",
+        "deepseek",
+        "DeepSeek rejected the API key.",
+        "Check DEEPSEEK_API_KEY in .env.",
+    ),
+)
+
+
+def resolve_postgrest_url() -> str:
+    url = os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL") or "http://localhost:3000"
+    url = url.rstrip("/")
+    if "supabase.co" in url and "/rest/v1" not in url:
+        url = f"{url}/rest/v1"
+    return url
+
+
+def make_check(
+    check_id: str,
+    label: str,
+    state: str,
+    summary: str,
+    fix: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": check_id,
+        "label": label,
+        "state": state,
+        "summary": summary,
+        "fix": fix,
+    }
+
+
+def public_line(text: str, limit: int = 180) -> str:
+    line = (text or "").strip().splitlines()[0] if text else ""
+    return line[:limit]
+
+
+def redact(text: str, secrets: Sequence[Optional[str]]) -> str:
+    cleaned = text or ""
+    for secret in secrets:
+        if secret and len(secret) >= 6:
+            cleaned = cleaned.replace(secret, "••••")
+    return cleaned
+
+
+def human_bytes(size: int) -> str:
+    value = float(max(size, 0))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(value)} B"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{int(size)} B"
+
+
+def classify_qdrant(status_code: Optional[int], body: str, error: Optional[str]) -> Dict[str, Any]:
+    if error:
+        return make_check(
+            "qdrant",
+            "Qdrant Cloud",
+            "down",
+            "Could not reach Qdrant Cloud.",
+            "Check QDRANT_URL in .env, then ./workstation status",
+        )
+    text = body or ""
+    if status_code == 200 and text.lstrip().startswith("{"):
+        return make_check("qdrant", "Qdrant Cloud", "ok", "Reachable.", None)
+    if SUSPENDED_QDRANT in text:
+        return make_check(
+            "qdrant",
+            "Qdrant Cloud",
+            "down",
+            "Suspended free-tier cluster.",
+            "Resume the cluster in the Qdrant Cloud console. A suspended cluster answers every path with plain text 404 page not found.",
+        )
+    return make_check(
+        "qdrant",
+        "Qdrant Cloud",
+        "down",
+        "Could not reach Qdrant Cloud.",
+        "Check QDRANT_URL in .env, then ./workstation status",
+    )
+
+
+def classify_searxng(status_code: Optional[int], payload: Any, error: Optional[str]) -> Dict[str, Any]:
+    if error or status_code is None:
+        return make_check(
+            "searxng",
+            "SearXNG",
+            "down",
+            "No answer from SearXNG.",
+            "./workstation logs searxng",
+        )
+    if status_code == 403:
+        return make_check(
+            "searxng",
+            "SearXNG",
+            "down",
+            "JSON search is turned off.",
+            "Set search.formats to include json in the SearXNG settings.",
+        )
+    if status_code != 200 or not isinstance(payload, dict):
+        return make_check(
+            "searxng",
+            "SearXNG",
+            "down",
+            f"SearXNG answered HTTP {status_code}.",
+            "./workstation logs searxng",
+        )
+    engines = payload.get("unresponsive_engines") or []
+    names: List[str] = []
+    suspended = False
+    if isinstance(engines, list):
+        for item in engines:
+            if isinstance(item, (list, tuple)) and item:
+                names.append(str(item[0]))
+                reason = str(item[1]).lower() if len(item) > 1 else ""
+                if "suspend" in reason or "too many" in reason:
+                    suspended = True
+            elif isinstance(item, str):
+                names.append(item)
+    if names and (suspended or any(name.lower() == "arxiv" for name in names)):
+        return make_check(
+            "searxng",
+            "SearXNG",
+            "down",
+            "The arXiv engine is suspended for about an hour.",
+            "Wait, then try discovery again. SearXNG still returns HTTP 200 with an empty result list while an engine is benched.",
+        )
+    if names:
+        return make_check(
+            "searxng",
+            "SearXNG",
+            "down",
+            "A search engine is unavailable: " + ", ".join(names) + ".",
+            "./workstation logs searxng",
+        )
+    return make_check("searxng", "SearXNG", "ok", "JSON search is answering.", None)
+
+
+def classify_column(status_code: Optional[int], body: Any) -> str:
+    """``applied``, ``missing`` (PGRST204), or ``unknown``."""
+    if status_code == 200:
+        return "applied"
+    blob = body if isinstance(body, dict) else {}
+    code = str(blob.get("code", ""))
+    message = str(blob.get("message", ""))
+    if code == "PGRST204" or "Could not find" in message:
+        return "missing"
+    return "unknown"
+
+
+def column_check(spec: Dict[str, str], verdict: str) -> Dict[str, Any]:
+    if verdict == "applied":
+        return make_check(spec["id"], spec["label"], "ok", "Applied.", None)
+    if verdict == "missing":
+        return make_check(
+            spec["id"],
+            spec["label"],
+            "down",
+            spec["missing"],
+            f"Apply {spec['file']} by hand, then reload the PostgREST schema.",
+        )
+    return make_check(
+        spec["id"],
+        spec["label"],
+        "down",
+        "Could not check this migration.",
+        "Confirm PostgREST is up, then open Activity again.",
+    )
+
+
+def classify_kind(status_code: Optional[int], body: Any) -> str:
+    if status_code in (200, 201):
+        return "applied"
+    text = body if isinstance(body, str) else ""
+    if isinstance(body, dict):
+        text = str(body.get("code", "")) + " " + str(body.get("message", ""))
+    if "23514" in text or "kind_check" in text or "trigger_source_check" in text:
+        return "missing"
+    return "unknown"
+
+
+def kind_check(spec: Dict[str, str], verdict: str) -> Dict[str, Any]:
+    return column_check(
+        {
+            "id": spec["id"],
+            "label": spec["label"],
+            "missing": spec["missing"],
+            "file": spec["file"],
+        },
+        verdict,
+    )
+
+
+def key_presence(settings: Any) -> Dict[str, bool]:
+    def present(value: Optional[str]) -> bool:
+        return bool(value and str(value).strip())
+
+    return {
+        "openai": present(getattr(settings, "openai_api_key", None)),
+        "anthropic": present(getattr(settings, "anthropic_api_key", None)),
+        "deepseek": present(getattr(settings, "deepseek_api_key", None)),
+    }
+
+
+def mine_key_failure(rows: Sequence[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    for row in rows:
+        error = str(row.get("error") or "")
+        lowered = error.lower()
+        for needle, provider, summary, fix in _KEY_FAILURES:
+            if needle in lowered:
+                found = {
+                    "provider": provider,
+                    "code": needle,
+                    "summary": summary,
+                    "fix": fix,
+                }
+                created = row.get("created_at")
+                if created:
+                    found["at"] = str(created)
+                return found
+    return None
+
+
+def classify_keys(
+    presence: Dict[str, bool],
+    failure: Optional[Dict[str, str]],
+    history_unreadable: bool,
+) -> Dict[str, Any]:
+    labels = (("openai", "OpenAI"), ("anthropic", "Anthropic"), ("deepseek", "DeepSeek"))
+    set_names = [label for key, label in labels if presence.get(key)]
+    missing = [label for key, label in labels if not presence.get(key)]
+    if not missing:
+        summary = "OpenAI, Anthropic and DeepSeek keys are set."
+    elif not set_names:
+        summary = _join(missing) + (" key is" if len(missing) == 1 else " keys are") + " missing."
+    else:
+        summary = (
+            _join(set_names)
+            + (" key is" if len(set_names) == 1 else " keys are")
+            + " set. "
+            + _join(missing)
+            + (" key is" if len(missing) == 1 else " keys are")
+            + " missing."
+        )
+    if history_unreadable:
+        summary += " Recent run errors could not be read."
+    fix = "Add the missing key to .env." if missing else None
+    state = "down" if missing else "ok"
+    if failure:
+        summary += " Last failure: " + failure["summary"]
+        state = "down"
+        if not missing:
+            fix = failure["fix"]
+    return make_check("keys", "Model keys", state, summary, fix)
+
+
+def classify_scheduler(enabled: bool, last: Optional[Dict[str, Any]], read_error: bool) -> Dict[str, Any]:
+    if read_error:
+        return make_check(
+            "scheduler",
+            "Scheduler",
+            "down",
+            "Could not read scheduled runs.",
+            "./workstation logs scheduler",
+        )
+    if not enabled:
+        return make_check(
+            "scheduler",
+            "Scheduler",
+            "ok",
+            "Scheduling is off. An exited scheduler is normal.",
+            None,
+        )
+    if not last:
+        return make_check(
+            "scheduler",
+            "Scheduler",
+            "ok",
+            "Scheduling is on. No scheduled run has been recorded yet.",
+            None,
+        )
+    status = str(last.get("status") or "unknown")
+    if status == "failed":
+        return make_check(
+            "scheduler",
+            "Scheduler",
+            "down",
+            "The last scheduled run failed.",
+            "Open that run on this page for the reason.",
+        )
+    return make_check(
+        "scheduler",
+        "Scheduler",
+        "ok",
+        f"The last scheduled run {status}.",
+        None,
+    )
+
+
+def classify_tts(payload: Dict[str, Any]) -> Dict[str, Any]:
+    command = str(payload.get("start_command") or "").strip()
+    workstation = "./workstation up --tts"
+    if payload.get("ready"):
+        return make_check("indextts", "IndexTTS", "ok", payload.get("message") or "IndexTTS is ready.", None)
+    fix = command
+    if workstation not in fix:
+        fix = (fix + "\n" if fix else "") + workstation
+    return make_check(
+        "indextts",
+        "IndexTTS",
+        "down",
+        public_line(str(payload.get("message") or "IndexTTS is not running.")),
+        fix,
+    )
+
+
+def classify_voices(payload: Dict[str, Any]) -> Dict[str, Any]:
+    voices = payload.get("voices") or []
+    usable = 0
+    if isinstance(voices, list):
+        usable = sum(1 for voice in voices if isinstance(voice, dict) and voice.get("usability") == "usable")
+    if usable:
+        noun = "voice" if usable == 1 else "voices"
+        return make_check("voices", "Voices", "ok", f"{usable} usable {noun}.", None)
+    return make_check(
+        "voices",
+        "Voices",
+        "down",
+        "No usable voices.",
+        "Add a WAV reference in the voices folder.",
+    )
+
+
+def classify_storage(uploads: Dict[str, Any], audio: Dict[str, Any]) -> Dict[str, Any]:
+    def phrase(name: str, usage: Dict[str, Any]) -> str:
+        if not usage.get("present"):
+            return f"{name} folder is not there yet"
+        extra = " or more" if usage.get("truncated") else ""
+        return f"{name} {human_bytes(int(usage.get('bytes') or 0))} ({usage.get('files') or 0}{extra} files)"
+
+    return make_check(
+        "storage",
+        "Storage",
+        "ok",
+        phrase("Uploads", uploads) + ". " + phrase("Audio", audio) + ".",
+        None,
+    )
+
+
+def directory_usage(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {"present": False, "bytes": 0, "files": 0, "truncated": False}
+    total = 0
+    files = 0
+    truncated = False
+    for entry in path.rglob("*"):
+        if not entry.is_file():
+            continue
+        files += 1
+        try:
+            total += entry.stat().st_size
+        except OSError:
+            continue
+        if files >= MAX_STORAGE_FILES:
+            truncated = True
+            break
+    return {"present": True, "bytes": total, "files": files, "truncated": truncated}
+
+
+def _join(names: Sequence[str]) -> str:
+    items = list(names)
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+def _auth_headers(token: Optional[str]) -> Dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["apikey"] = token
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _json_body(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+async def _guard(
+    check_id: str,
+    label: str,
+    factory: Callable[[], Any],
+    secrets: Sequence[Optional[str]],
+) -> Dict[str, Any]:
+    try:
+        return await asyncio.wait_for(factory(), timeout=OVERALL_TIMEOUT_SECONDS)
+    except Exception as exc:
+        logger.warning("status check %s failed: %s", check_id, type(exc).__name__)
+        summary = public_line(redact(str(exc), secrets)) or "Check failed."
+        return make_check(check_id, label, "down", summary, None)
+
+
+def _unchecked(spec: Dict[str, str]) -> Dict[str, Any]:
+    return make_check(
+        spec["id"],
+        spec["label"],
+        "down",
+        "Not checked because the database is not answering.",
+        "./workstation up",
+    )
+
+
+async def _check_postgrest(client: httpx.AsyncClient, base: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        response = await client.get(
+            f"{base}/pillars",
+            params={"select": "id", "limit": "1"},
+            headers=headers,
+        )
+    except httpx.HTTPError:
+        return make_check(
+            "postgrest",
+            "Database",
+            "down",
+            "No answer from PostgREST.",
+            "./workstation up",
+        )
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    if response.status_code == 200:
+        return make_check("postgrest", "Database", "ok", f"Answered in {elapsed_ms} ms.", None)
+    if response.status_code in (401, 403):
+        return make_check(
+            "postgrest",
+            "Database",
+            "down",
+            "PostgREST rejected the request token.",
+            "Check that SUPABASE_KEY matches PGRST_JWT_SECRET.",
+        )
+    return make_check(
+        "postgrest",
+        "Database",
+        "down",
+        f"PostgREST answered HTTP {response.status_code}.",
+        "./workstation up",
+    )
+
+
+async def _probe_column(
+    client: httpx.AsyncClient,
+    base: str,
+    headers: Dict[str, str],
+    spec: Dict[str, str],
+) -> Dict[str, Any]:
+    try:
+        response = await client.get(
+            f"{base}/{spec['table']}",
+            params={"select": spec["column"], "limit": "0"},
+            headers=headers,
+        )
+    except httpx.HTTPError:
+        return column_check(spec, "unknown")
+    return column_check(spec, classify_column(response.status_code, _json_body(response)))
+
+
+async def _delete_probes(client: httpx.AsyncClient, base: str, headers: Dict[str, str]) -> None:
+    try:
+        await client.delete(
+            f"{base}/pipeline_runs",
+            params={"pillar_id": f"eq.{PROBE_PILLAR}", "status": "eq.interrupted"},
+            headers={**headers, "Prefer": "return=minimal"},
+        )
+    except httpx.HTTPError:
+        logger.warning("could not delete status-probe rows")
+
+
+async def _probe_kind(
+    client: httpx.AsyncClient,
+    base: str,
+    headers: Dict[str, str],
+    spec: Dict[str, str],
+) -> Dict[str, Any]:
+    try:
+        response = await client.post(
+            f"{base}/pipeline_runs",
+            headers={**headers, "Prefer": "tx=rollback,return=minimal"},
+            json={
+                "pillar_id": PROBE_PILLAR,
+                "trigger_source": spec["trigger"],
+                "kind": spec["kind"],
+                "status": "interrupted",
+            },
+        )
+    except httpx.HTTPError:
+        return kind_check(spec, "unknown")
+    return kind_check(spec, classify_kind(response.status_code, _json_body(response) or response.text))
+
+
+async def _migration_checks(
+    client: httpx.AsyncClient,
+    base: str,
+    headers: Dict[str, str],
+    database_up: bool,
+) -> List[Dict[str, Any]]:
+    if not database_up:
+        return [_unchecked(spec) for spec in (*MIGRATION_COLUMNS, *KIND_PROBES)]
+    columns = await asyncio.gather(
+        *(_probe_column(client, base, headers, spec) for spec in MIGRATION_COLUMNS)
+    )
+    await _delete_probes(client, base, headers)
+    kinds = []
+    for spec in KIND_PROBES:
+        kinds.append(await _probe_kind(client, base, headers, spec))
+    await _delete_probes(client, base, headers)
+    return [*columns, *kinds]
+
+
+async def _check_qdrant(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
+    url = getattr(settings, "qdrant_url", None)
+    if not url or not str(url).startswith(("http://", "https://")):
+        return make_check(
+            "qdrant",
+            "Qdrant Cloud",
+            "down",
+            "QDRANT_URL is not set.",
+            "Set QDRANT_URL in .env.",
+        )
+    headers = {}
+    api_key = getattr(settings, "qdrant_api_key", None)
+    if api_key:
+        headers["api-key"] = api_key
+    try:
+        response = await client.get(str(url).rstrip("/") + "/", headers=headers)
+    except httpx.HTTPError as exc:
+        return classify_qdrant(None, "", public_line(str(exc)) or "request failed")
+    return classify_qdrant(response.status_code, response.text, None)
+
+
+async def _check_searxng(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
+    url = getattr(settings, "searxng_url", None)
+    if not url or not str(url).startswith(("http://", "https://")):
+        return make_check(
+            "searxng",
+            "SearXNG",
+            "down",
+            "SEARXNG_URL is not set.",
+            "Set SEARXNG_URL in .env.",
+        )
+    try:
+        response = await client.get(
+            str(url).rstrip("/") + "/search",
+            params={"q": "nlp", "format": "json"},
+        )
+    except httpx.HTTPError as exc:
+        return classify_searxng(None, None, public_line(str(exc)) or "request failed")
+    return classify_searxng(response.status_code, _json_body(response), None)
+
+
+async def _recent_errors(
+    client: httpx.AsyncClient, base: str, headers: Dict[str, str]
+) -> List[Dict[str, Any]]:
+    response = await client.get(
+        f"{base}/pipeline_runs",
+        params={
+            "select": "error,created_at,kind",
+            "error": "not.is.null",
+            "order": "created_at.desc",
+            "limit": "20",
+        },
+        headers=headers,
+    )
+    response.raise_for_status()
+    body = _json_body(response)
+    return body if isinstance(body, list) else []
+
+
+async def _last_scheduled(
+    client: httpx.AsyncClient, base: str, headers: Dict[str, str]
+) -> Optional[Dict[str, Any]]:
+    response = await client.get(
+        f"{base}/pipeline_runs",
+        params={
+            "select": "id,status,created_at",
+            "trigger_source": "eq.scheduler",
+            "order": "created_at.desc",
+            "limit": "1",
+        },
+        headers=headers,
+    )
+    response.raise_for_status()
+    body = _json_body(response)
+    if isinstance(body, list) and body:
+        return body[0]
+    return None
+
+
+async def _call_sync(fn: Callable[[], Any]) -> Any:
+    if asyncio.iscoroutinefunction(fn):
+        return await fn()
+    return await asyncio.to_thread(fn)
+
+
+def _default_storage(settings: Any) -> Dict[str, Any]:
+    upload_dir = Path(os.environ.get("UPLOAD_DIR", "data/uploads"))
+    audio_dir = Path(getattr(settings, "podcast_audio_dir", "/app/data/podcast_audio"))
+    return classify_storage(directory_usage(upload_dir), directory_usage(audio_dir))
+
+
+async def collect_status(
+    *,
+    client: httpx.AsyncClient,
+    settings: Any,
+    postgrest_url: str,
+    auth_token: Optional[str] = None,
+    tts_status: Optional[Callable[[], Dict[str, Any]]] = None,
+    list_voices: Optional[Callable[[], Dict[str, Any]]] = None,
+    storage: Optional[Callable[[], Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Collect every check. Always returns a payload; never raises for a check."""
+    secrets = [
+        auth_token,
+        getattr(settings, "qdrant_api_key", None),
+        getattr(settings, "openai_api_key", None),
+        getattr(settings, "anthropic_api_key", None),
+        getattr(settings, "deepseek_api_key", None),
+    ]
+    headers = _auth_headers(auth_token)
+    base = postgrest_url.rstrip("/")
+
+    web = make_check("web", "Web app", "ok", "Responding.", None)
+    database = await _guard(
+        "postgrest",
+        "Database",
+        lambda: _check_postgrest(client, base, headers),
+        secrets,
+    )
+
+    async def safe_migrations() -> List[Dict[str, Any]]:
+        try:
+            return await _migration_checks(client, base, headers, database["state"] == "ok")
+        except Exception as exc:
+            logger.warning("status check migrations failed: %s", type(exc).__name__)
+            summary = public_line(redact(str(exc), secrets)) or "Could not check migrations."
+            return [make_check("migrations", "Migrations", "down", summary, None)]
+
+    async def keys() -> Dict[str, Any]:
+        failure = None
+        history_unreadable = False
+        if database["state"] == "ok":
+            try:
+                failure = mine_key_failure(await _recent_errors(client, base, headers))
+            except (httpx.HTTPError, ValueError):
+                history_unreadable = True
+        return classify_keys(key_presence(settings), failure, history_unreadable)
+
+    async def scheduler() -> Dict[str, Any]:
+        if database["state"] != "ok":
+            return make_check(
+                "scheduler",
+                "Scheduler",
+                "down",
+                "Not checked because the database is not answering.",
+                "./workstation up",
+            )
+        try:
+            last = await _last_scheduled(client, base, headers)
+        except (httpx.HTTPError, ValueError):
+            return classify_scheduler(bool(getattr(settings, "schedule_enabled", False)), None, True)
+        return classify_scheduler(bool(getattr(settings, "schedule_enabled", False)), last, False)
+
+    async def tts() -> Dict[str, Any]:
+        fn = tts_status or _default_tts
+        payload = await _call_sync(fn)
+        if not isinstance(payload, dict):
+            raise TypeError("IndexTTS status was not an object")
+        return classify_tts(payload)
+
+    async def voices() -> Dict[str, Any]:
+        fn = list_voices or _default_voices
+        payload = await _call_sync(fn)
+        if not isinstance(payload, dict):
+            raise TypeError("voice list was not an object")
+        return classify_voices(payload)
+
+    async def stored() -> Dict[str, Any]:
+        fn = storage or (lambda: _default_storage(settings))
+        payload = await _call_sync(fn)
+        if isinstance(payload, dict) and payload.get("id") == "storage":
+            return payload
+        raise TypeError("storage check was not a status row")
+
+    migration_rows, qdrant, searxng, indextts, voice_check, key_check, schedule, disk = await asyncio.gather(
+        safe_migrations(),
+        _guard("qdrant", "Qdrant Cloud", lambda: _check_qdrant(client, settings), secrets),
+        _guard("searxng", "SearXNG", lambda: _check_searxng(client, settings), secrets),
+        _guard("indextts", "IndexTTS", tts, secrets),
+        _guard("voices", "Voices", voices, secrets),
+        _guard("keys", "Model keys", keys, secrets),
+        _guard("scheduler", "Scheduler", scheduler, secrets),
+        _guard("storage", "Storage", stored, secrets),
+    )
+    checks = [
+        web,
+        database,
+        *migration_rows,
+        qdrant,
+        searxng,
+        indextts,
+        voice_check,
+        key_check,
+        schedule,
+        disk,
+    ]
+    down = sum(1 for check in checks if check["state"] != "ok")
+    return {
+        "ok": down == 0,
+        "down_count": down,
+        "summary": public_summary(checks),
+        "checks": checks,
+    }
+
+
+def _default_tts() -> Dict[str, Any]:
+    from webui.services.podcast_audio_service import tts_status_payload
+
+    return tts_status_payload()
+
+
+def _default_voices() -> Dict[str, Any]:
+    from webui.services.podcast_audio_service import list_voices_payload
+
+    return list_voices_payload()
+
+
+def public_summary(checks: List[Dict[str, Any]]) -> str:
+    """One line for Today's date-row chip. That page prefers body.summary."""
+    down = [check for check in checks if check.get("state") != "ok"]
+    if not down:
+        return "All services up"
+    if len(down) == 1:
+        label = str(down[0].get("label") or "A service").strip() or "A service"
+        return f"{label} needs attention"
+    return f"{len(down)} services need attention"
+
+
+def failed_payload() -> Dict[str, Any]:
+    """Used only when collection itself breaks. Still HTTP 200."""
+    checks = [
+        make_check(
+            "status",
+            "Status",
+            "down",
+            "Status could not be collected.",
+            "Open Activity again in a moment.",
+        )
+    ]
+    return {
+        "ok": False,
+        "down_count": 1,
+        "summary": public_summary(checks),
+        "checks": checks,
+    }

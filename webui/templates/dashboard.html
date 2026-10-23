@@ -7,7 +7,7 @@
   <header class="today-hello">
     <div class="today-date-row">
       <p class="today-date">{{ view.date_line }}</p>
-      <p id="service-status-slot" class="status-chip" data-status-endpoint="/api/system/status" hidden></p>
+      <a id="service-status-slot" class="status-chip" data-status-endpoint="/api/system/status" href="/activity/#status" hidden></a>
     </div>
     <h1 class="today-greet">{{ view.greeting }}</h1>
     <p class="today-summary">{{ view.summary }}</p>
@@ -71,7 +71,7 @@
   <section class="today-section" aria-labelledby="running-heading">
     <div class="section-head">
       <h2 id="running-heading" class="section-title">In progress</h2>
-      <a href="/pipeline/">Activity</a>
+      <a href="/activity/">Activity</a>
     </div>
     {{ run_panel(
       "today-run-status",
