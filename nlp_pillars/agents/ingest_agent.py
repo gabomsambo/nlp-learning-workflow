@@ -16,7 +16,7 @@ from typing import Optional
 from .discovery_agent import SystemPromptGenerator
 
 from ..schemas import PaperRef, ParsedPaper
-from ..tools.pdf_loader import download_pdf, extract_text, chunk_text, PDFDownloadError, PDFParseError
+from ..tools.pdf_loader import download_pdf, extract_document, chunk_text, PDFDownloadError, PDFParseError
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -104,10 +104,14 @@ class IngestAgent:
 
             # Step 2: Extract text
             try:
-                full_text = extract_text(pdf_path)
+                extracted = extract_document(pdf_path)
+                full_text = extracted.text
                 if not full_text.strip():
                     raise IngestError(f"No text extracted from PDF: {pdf_path}")
-                logger.info(f"Extracted {len(full_text)} characters of text")
+                logger.info(
+                    f"Extracted {len(full_text)} characters of text "
+                    f"with {extracted.extractor}"
+                )
             except PDFParseError as e:
                 raise IngestError(f"Failed to extract text from {pdf_path}: {e}")
 
@@ -125,6 +129,7 @@ class IngestAgent:
                 paper_ref=paper_ref,
                 full_text=full_text,
                 chunks=chunks,
+                extractor=extracted.extractor,
                 figures_count=0,  # Placeholder - could be enhanced later
                 tables_count=0,   # Placeholder - could be enhanced later
                 references=[]     # Placeholder - could be enhanced later

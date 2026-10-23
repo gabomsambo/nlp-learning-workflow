@@ -147,6 +147,9 @@ and the one-active-per-pillar index carries `AND kind <> 'upload'`).
 **016 (`podcast_script` / `ui_podcast_script`) must be applied by hand** for script
 generation progress — until it is, `POST /api/podcast/generate` answers 503 naming
 the migration file.
+**017 (`paper_texts` / `paper_chunks`) must be applied by hand** before text
+persistence or `python -m nlp_pillars.cli text backfill` can succeed. Until it is,
+those writes fail the persist stage and name `docs/migrations/017_paper_text.sql`.
 **011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
 PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
 `add_podcast_script()` detects exactly that and retries without the key, so podcasts still
@@ -154,8 +157,8 @@ save; only the record of what they were written from is lost until it is run.
 
 ## Uploaded PDFs are retained, and are the only copy
 
-A file upload stores `papers.url_pdf = file:///app/data/uploads/<hash>.pdf` and the podcast
-agent dereferences that path to get the paper body, so the file is real data, not a cache.
+A file upload stores `papers.url_pdf = file:///app/data/uploads/<hash>.pdf`. The podcast
+agent reads `paper_texts` first and falls back to that path, so the file is real data, not a cache.
 It lives in the `nlp_uploads` named volume (mounted at `/app/data`, created and chowned in
 the `Dockerfile` so the non-root `appuser` can write into a fresh volume) and
 `upload_service.py` deletes it only when the upload never reached the database. Do not
@@ -258,12 +261,14 @@ lookup was expected but failed.
 **Qdrant Cloud**, as of 2026-08-29 — cluster `nlp-learning-workflow-retry`, aws
 eu-west-1, free/cost-optimised tier.
 
-This reverses the 2026-08-16 entry that used to be here, and the reversal matters more
-than the destination: that entry said the cloud cluster "was suspended and no longer
-exists", and the second half was simply wrong. **A free-tier cluster suspended for
-inactivity is not deleted.** Unsuspending this one took 20 seconds, and the `nlp_pillars`
-collection came back whole — 170 points, status green, `pillar_id` payload index intact.
-Nothing had to be rebuilt. Before concluding a cluster is gone, try to resume it.
+This reverses the 2026-08-16 entry that used to be here. That entry said the cloud
+cluster "was suspended and no longer exists". On 2026-08-29 the cluster was only
+suspended: unsuspending it took 20 seconds, and the `nlp_pillars` collection came
+back whole — 170 points, status green, `pillar_id` payload index intact. Qdrant's
+current docs say a free-tier cluster is **suspended after 1 week of inactivity and
+deleted after 4 weeks** (https://qdrant.tech/documentation/cloud/create-cluster/,
+checked 2026-10-23). Resume a suspended cluster while it still exists; after the
+deletion window the cluster and its points are gone.
 
 The reason it read as gone is worth keeping, because it will happen again: **a suspended
 cluster does not fail like a dead host.** DNS still resolves, the regional ingress still
@@ -345,8 +350,16 @@ all-or-nothing: a non-zero return means the paper is fully represented, 0 means 
 was written.
 
 Stored payloads carry only `pillar_id`, `paper_id`, `chunk_index` and `len` — **no chunk
-text**. `search_similar()` is a paper-level discovery API, not a snippet API; recovering
-the text of a hit means re-chunking the source with the same parameters.
+text**. `search_similar()` is a paper-level discovery API, not a snippet API. Postgres
+is the source of truth for that text: `paper_texts` (paper_id, full_text, extractor,
+extracted_at) and `paper_chunks` (text, token count, the semchunk 250/25 cl100k config
+and version, content hash; unique on paper_id, chunk_index, chunker version).
+`docs/migrations/017_paper_text.sql` is hand-applied. Ingest, daily processing and
+upload write both tables with the chunker config `upsert_text` uses, replacing a
+paper's chunks in one transaction on re-ingest. Embeddings are not on `paper_chunks`
+yet. Qdrant stays a rebuildable copy of those rows; `upsert_text` itself is unchanged.
+After the migration is applied, `python -m nlp_pillars.cli text backfill` re-extracts
+retained uploads and re-downloads URL papers (`--dry-run` prints counts only).
 
 ## The discovery candidate payload is the paper's permanent record
 
@@ -834,9 +847,11 @@ structured-output agents. Two deliberate conventions, both easy to "helpfully" u
 
 `podcast_agent` is the exception to the lazy-proxy rule and deliberately so: it has no
 module-level singleton (`webui/routers/api/podcast.py` constructs it per request), so there
-is nothing built at import time to fail. Its `_get_full_text` is synchronous and must stay
-behind `asyncio.to_thread` — `generate()` is awaited straight from a FastAPI route, and
-running the PDF ingest inline froze the event loop for every other request. Measured live:
+is nothing built at import time to fail. Its `_get_full_text` reads stored `paper_texts`
+first and falls back to downloading and parsing the PDF. The fallback is synchronous
+and must stay behind `asyncio.to_thread` — `generate()` is awaited straight from a
+FastAPI route, and running the PDF ingest inline froze the event loop for every other
+request. Measured live:
 0 co-running requests served inline vs 13/13 through `to_thread`. One podcast is five model
 calls (DeepSeek for the four Ground Pack extractions, Claude for synthesis); measured end
 to end on a 5-page paper at 37.8K input + 9.6K output tokens ≈ **$0.26** when all five

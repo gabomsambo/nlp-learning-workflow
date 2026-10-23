@@ -155,7 +155,8 @@ class TestPodcastAgent:
 
     def test_get_full_text_extracts_from_pdf(self, mock_paper):
         """Test full text extraction works for valid paper with PDF URL."""
-        with patch.object(PodcastAgent, '__init__', lambda x: None):
+        with patch.object(PodcastAgent, '__init__', lambda x: None), \
+             patch("nlp_pillars.agents.podcast_agent.get_stored_paper_text", return_value=None):
             agent = PodcastAgent()
 
             # Mock ingest agent
@@ -175,7 +176,8 @@ class TestPodcastAgent:
 
     def test_get_full_text_handles_missing_url(self, mock_paper):
         """Empty text plus a reason when there is no PDF URL."""
-        with patch.object(PodcastAgent, '__init__', lambda x: None):
+        with patch.object(PodcastAgent, '__init__', lambda x: None), \
+             patch("nlp_pillars.agents.podcast_agent.get_stored_paper_text", return_value=None):
             agent = PodcastAgent()
             agent.ingest_agent = MagicMock()
 
@@ -197,7 +199,8 @@ class TestPodcastAgent:
         """
         from nlp_pillars.agents.ingest_agent import IngestError
 
-        with patch.object(PodcastAgent, '__init__', lambda x: None):
+        with patch.object(PodcastAgent, '__init__', lambda x: None), \
+             patch("nlp_pillars.agents.podcast_agent.get_stored_paper_text", return_value=None):
             agent = PodcastAgent()
             agent.ingest_agent = MagicMock()
             agent.ingest_agent.ingest.side_effect = IngestError("PDF download failed")
@@ -613,7 +616,8 @@ class TestPodcastAgent:
 
     def test_whitespace_only_extraction_counts_as_no_body(self, mock_paper):
         """A PDF that parses to whitespace is an empty paper, not a full one."""
-        with patch.object(PodcastAgent, '__init__', lambda x: None):
+        with patch.object(PodcastAgent, '__init__', lambda x: None), \
+             patch("nlp_pillars.agents.podcast_agent.get_stored_paper_text", return_value=None):
             agent = PodcastAgent()
             parsed = MagicMock()
             parsed.full_text = "   \n  "

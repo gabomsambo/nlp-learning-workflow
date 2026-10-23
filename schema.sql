@@ -433,6 +433,104 @@ CREATE TABLE pipeline_run_stages (
 );
 
 -- ==========================================
+-- PAPER TEXT AND CHUNKS
+-- Source of truth for paper text. Vector indexes are rebuilt from these rows.
+-- Same objects as docs/migrations/017_paper_text.sql, which existing volumes
+-- apply by hand. No embedding column: that waits on a model decision.
+-- paper_chunks.id is a surrogate so a later embeddings table can reference it.
+-- ==========================================
+CREATE TABLE paper_texts (
+    paper_id TEXT PRIMARY KEY,
+    full_text TEXT NOT NULL,
+    extractor TEXT NOT NULL,
+    extracted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+
+CREATE TABLE paper_chunks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    paper_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+    text TEXT NOT NULL,
+    token_count INTEGER NOT NULL CHECK (token_count >= 0),
+    chunker TEXT NOT NULL,
+    chunker_version TEXT NOT NULL,
+    chunk_size INTEGER NOT NULL CHECK (chunk_size > 0),
+    chunk_overlap INTEGER NOT NULL CHECK (chunk_overlap >= 0),
+    encoding TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+
+CREATE UNIQUE INDEX paper_chunks_paper_idx_version
+    ON paper_chunks (paper_id, chunk_index, chunker_version);
+
+-- One transaction: a failed insert rolls back the delete.
+CREATE OR REPLACE FUNCTION replace_paper_text_and_chunks(
+    p_paper_id TEXT,
+    p_full_text TEXT,
+    p_extractor TEXT,
+    p_chunks JSONB
+) RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    inserted INTEGER;
+BEGIN
+    IF p_paper_id IS NULL OR btrim(p_paper_id) = '' THEN
+        RAISE EXCEPTION 'paper text write missing paper_id';
+    END IF;
+    IF p_full_text IS NULL OR btrim(p_full_text) = '' THEN
+        RAISE EXCEPTION 'refusing to store empty paper text for %', p_paper_id;
+    END IF;
+    IF p_extractor IS NULL OR btrim(p_extractor) = '' THEN
+        RAISE EXCEPTION 'paper text write for % missing extractor', p_paper_id;
+    END IF;
+    IF p_chunks IS NULL
+       OR jsonb_typeof(p_chunks) <> 'array'
+       OR jsonb_array_length(p_chunks) = 0 THEN
+        RAISE EXCEPTION 'refusing to replace chunks for % with an empty set', p_paper_id;
+    END IF;
+
+    INSERT INTO paper_texts (paper_id, full_text, extractor, extracted_at)
+    VALUES (p_paper_id, p_full_text, p_extractor, timezone('utc', now()))
+    ON CONFLICT (paper_id) DO UPDATE
+        SET full_text = EXCLUDED.full_text,
+            extractor = EXCLUDED.extractor,
+            extracted_at = timezone('utc', now());
+
+    DELETE FROM paper_chunks WHERE paper_id = p_paper_id;
+
+    INSERT INTO paper_chunks (
+        paper_id, chunk_index, text, token_count,
+        chunker, chunker_version, chunk_size, chunk_overlap, encoding,
+        content_hash
+    )
+    SELECT
+        p_paper_id,
+        (elem->>'chunk_index')::INTEGER,
+        elem->>'text',
+        (elem->>'token_count')::INTEGER,
+        elem->>'chunker',
+        elem->>'chunker_version',
+        (elem->>'chunk_size')::INTEGER,
+        (elem->>'chunk_overlap')::INTEGER,
+        elem->>'encoding',
+        elem->>'content_hash'
+    FROM jsonb_array_elements(p_chunks) AS elem;
+
+    GET DIAGNOSTICS inserted = ROW_COUNT;
+    IF inserted <> jsonb_array_length(p_chunks) THEN
+        RAISE EXCEPTION 'stored % chunks for %, expected %',
+            inserted, p_paper_id, jsonb_array_length(p_chunks);
+    END IF;
+    RETURN inserted;
+END;
+$$;
+
+-- 03-grants.sql covers tables created above. It does not grant functions.
+GRANT EXECUTE ON FUNCTION replace_paper_text_and_chunks(TEXT, TEXT, TEXT, JSONB) TO web_anon;
+
+-- ==========================================
 -- TRIGGERS
 -- ==========================================
 
@@ -458,9 +556,11 @@ CREATE TRIGGER trg_pillars_updated_at
 -- Link tables together with referential integrity
 -- ==========================================
 --
--- SCOPE NOTE: only the three original foreign keys are defined. No FK was
--- added for any reconstructed table, and in particular none from *.pillar_id
--- to pillars(id), for two reasons:
+-- SCOPE NOTE: the original foreign keys are the three below, plus paper_texts
+-- and paper_chunks (migration 017), which reference papers(id) because those
+-- rows are written only after the paper row exists. No FK was added for any
+-- other reconstructed table, and in particular none from *.pillar_id to
+-- pillars(id), for two reasons:
 --   1. Nothing proves the old database had them. delete_pillar() at
 --      db.py:1545 checks for associated papers with an explicit SELECT and
 --      refuses the delete in application code — which is what you write when
@@ -484,6 +584,15 @@ FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE;
 -- Quiz cards reference papers
 ALTER TABLE quiz_cards
 ADD CONSTRAINT fk_quiz_cards_paper_id
+FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE;
+
+-- Stored text references papers. Written only after the paper row exists.
+ALTER TABLE paper_texts
+ADD CONSTRAINT fk_paper_texts_paper_id
+FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE;
+
+ALTER TABLE paper_chunks
+ADD CONSTRAINT fk_paper_chunks_paper_id
 FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE;
 
 -- ==========================================
@@ -595,6 +704,9 @@ COMMENT ON TABLE review_logs IS 'Per-review FSRS history; reconstructed from cod
 COMMENT ON TABLE user_fsrs_parameters IS 'Personalised FSRS weights w0-w17; reconstructed from code';
 COMMENT ON TABLE paper_citations IS 'Citation edges for discovery; reconstructed from code';
 COMMENT ON TABLE scripts IS 'STUB: no live call site, shape taken from a docstring example only';
+COMMENT ON TABLE paper_texts IS 'Full text of a paper. Source of truth; vector indexes are rebuilt from here.';
+COMMENT ON TABLE paper_chunks IS 'Chunk text for one chunker config. No embedding column; id is for a later FK.';
+COMMENT ON COLUMN paper_chunks.chunker_version IS 'Chunker identity including its config, e.g. semchunk==4.1.1|250/25|cl100k_base';
 
 COMMENT ON COLUMN papers.pillar_id IS 'Learning pillar (slug) for content isolation';
 COMMENT ON COLUMN papers.added_at IS 'Required by the web UI papers list; db.py writes created_at instead';

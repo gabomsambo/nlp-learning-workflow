@@ -65,6 +65,35 @@ class PostgRESTClient:
         """Return a table query builder."""
         return TableQuery(self.client, self.base_url, table_name)
 
+    def rpc(self, fn: str, params: Dict[str, Any]):
+        """Call a PostgREST function. One request, one transaction.
+
+        Returns the same ``{'data', 'error'}`` shape as ``TableQuery.insert``.
+        The caller decides whether an error is fatal; this does not swallow it
+        into a success.
+        """
+        url = f"{self.base_url}/rpc/{fn}"
+        try:
+            response = self.client.post(url, json=params)
+            if response.status_code >= 400:
+                logger.error(
+                    "RPC %s failed with status %s: %s",
+                    fn, response.status_code, response.text,
+                )
+            response.raise_for_status()
+            return {'data': response.json() if response.text else None, 'error': None}
+        except httpx.HTTPStatusError as e:
+            try:
+                error_data = e.response.json()
+            except Exception:
+                error_data = {
+                    'message': e.response.text,
+                    'status_code': e.response.status_code,
+                }
+            return {'data': None, 'error': error_data}
+        except Exception as e:
+            return {'data': None, 'error': {'message': str(e)}}
+
 
 class TableQuery:
     """Simple query builder for PostgREST."""
@@ -93,6 +122,11 @@ class TableQuery:
     def limit(self, count: int):
         """Limit results."""
         self.params['limit'] = str(count)
+        return self
+
+    def offset(self, count: int):
+        """Skip the first ``count`` rows. Paired with limit to page a table."""
+        self.params['offset'] = str(count)
         return self
 
     def insert(self, data: Dict[str, Any]):
@@ -698,6 +732,184 @@ def get_paper_row_by_id(paper_id: str) -> Optional[Dict[str, Any]]:
 def paper_ref_from_row(row: Dict[str, Any]) -> PaperRef:
     """Convert a papers table row to PaperRef."""
     return _dict_to_paper_ref(row)
+
+
+_PAGE_SIZE = 200
+
+
+class PaperTextLookupError(Exception):
+    """``paper_texts`` could not be read.
+
+    Distinct from a paper that has no stored text, which is ``None`` from
+    ``get_stored_paper_text``. A missing table and a dead database both raise.
+    """
+
+
+def _each_row(table: str, columns: str, order: str):
+    """Yield every row of ``table``, paging so a long library is not truncated."""
+    client = get_client()
+    offset = 0
+    previous_first = None
+    while True:
+        response = (
+            client.table(table)
+            .select(columns)
+            .order(order)
+            .limit(_PAGE_SIZE)
+            .offset(offset)
+            .execute()
+        )
+        if response['error']:
+            raise PaperLookupError(f"Could not read {table}: {response['error']}")
+        rows = response['data'] or []
+        if not rows:
+            return
+        marker = rows[0].get('id', rows[0].get('paper_id'))
+        if marker is not None and marker == previous_first:
+            raise PaperLookupError(
+                f"Reading {table} did not advance past offset {offset}"
+            )
+        previous_first = marker
+        yield from rows
+        if len(rows) < _PAGE_SIZE:
+            return
+        offset += len(rows)
+
+
+def list_all_papers() -> List[PaperRef]:
+    """Every paper, not the capped ``get_all_papers`` page.
+
+    Raises:
+        PaperLookupError: the table could not be read.
+    """
+    try:
+        return [paper_ref_from_row(row) for row in _each_row('papers', '*', 'id')]
+    except PaperLookupError:
+        raise
+    except Exception as e:
+        raise PaperLookupError(f"Could not read the paper list: {e}") from e
+
+
+def list_stored_paper_text_ids() -> List[str]:
+    """Paper ids that already have a ``paper_texts`` row.
+
+    Raises:
+        PaperTextLookupError: the table is missing or the read failed. Apply
+            ``docs/migrations/017_paper_text.sql``.
+    """
+    try:
+        rows = list(_each_row('paper_texts', 'paper_id', 'paper_id'))
+    except PaperLookupError as e:
+        raise PaperTextLookupError(
+            f"{e}. Apply docs/migrations/017_paper_text.sql by hand."
+        ) from e
+    except Exception as e:
+        raise PaperTextLookupError(
+            f"Could not read paper_texts: {e}. "
+            "Apply docs/migrations/017_paper_text.sql by hand."
+        ) from e
+    return [row['paper_id'] for row in rows]
+
+
+def get_stored_paper_text(paper_id: str) -> Optional[str]:
+    """Stored full text for ``paper_id``, or None when no row exists.
+
+    A blank row is treated as absent so the caller can fall back to the PDF.
+    A failed read raises. Callers that must keep working without the table
+    catch ``PaperTextLookupError`` themselves.
+
+    Raises:
+        PaperTextLookupError: the read failed.
+    """
+    try:
+        client = get_client()
+        response = (
+            client.table('paper_texts')
+            .select('full_text')
+            .eq('paper_id', paper_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        raise PaperTextLookupError(
+            f"Could not read stored text for {paper_id}: {e}"
+        ) from e
+    if response['error']:
+        raise PaperTextLookupError(
+            f"Could not read stored text for {paper_id}: {response['error']}"
+        )
+    rows = response['data'] or []
+    if not rows:
+        return None
+    text = rows[0].get('full_text') or ''
+    if not str(text).strip():
+        return None
+    return text
+
+
+def replace_paper_text(paper_id: str, full_text: str, extractor: str) -> int:
+    """Store ``full_text`` and its chunks, replacing any previous chunks.
+
+    One PostgREST call to ``replace_paper_text_and_chunks``, which deletes and
+    inserts in a single transaction. Chunks use the vector index's semchunk
+    250/25 cl100k config. This does not write to Qdrant.
+
+    Returns:
+        Number of chunks stored.
+
+    Raises:
+        PaperTextWriteError: the text was not stored. Names the migration when
+            the database rejects the call.
+    """
+    from .paper_text import MIGRATION, PaperTextWriteError, build_chunk_rows
+
+    if not paper_id or not str(paper_id).strip():
+        raise PaperTextWriteError("paper text write missing paper_id")
+    if not extractor or not str(extractor).strip():
+        raise PaperTextWriteError(
+            f"paper text write for {paper_id} missing extractor"
+        )
+    try:
+        chunks = build_chunk_rows(full_text)
+    except PaperTextWriteError:
+        raise
+    except Exception as e:
+        raise PaperTextWriteError(
+            f"paper text for {paper_id} was not stored: {e}"
+        ) from e
+
+    try:
+        client = get_client()
+        response = client.rpc('replace_paper_text_and_chunks', {
+            'p_paper_id': paper_id,
+            'p_full_text': full_text,
+            'p_extractor': extractor,
+            'p_chunks': chunks,
+        })
+    except Exception as e:
+        raise PaperTextWriteError(
+            f"paper text for {paper_id} was not stored: {e}. Apply {MIGRATION} by hand."
+        ) from e
+
+    if response['error']:
+        raise PaperTextWriteError(
+            f"paper text for {paper_id} was not stored: {response['error']}. "
+            f"Apply {MIGRATION} by hand."
+        )
+
+    data = response['data']
+    try:
+        count = int(data)
+    except (TypeError, ValueError) as e:
+        raise PaperTextWriteError(
+            f"paper text for {paper_id} returned {data!r}, not a chunk count"
+        ) from e
+    if count != len(chunks):
+        raise PaperTextWriteError(
+            f"paper text for {paper_id} stored {count} chunks, expected {len(chunks)}"
+        )
+    logger.info("Stored %s chunks of text for paper %s", count, paper_id)
+    return count
 
 
 def update_paper_metadata(paper_id: str, fields: Dict[str, Any]) -> bool:

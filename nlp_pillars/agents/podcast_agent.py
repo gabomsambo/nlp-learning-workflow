@@ -24,7 +24,7 @@ from ..schemas import (
     GroundPackCallRecord, PaperNote, PaperRef, PodcastOptions, PodcastScript,
     SourceMaterial, StageName, StageStatus,
 )
-from ..db import get_paper_by_id, get_notes_by_paper_id
+from ..db import get_paper_by_id, get_notes_by_paper_id, get_stored_paper_text
 from ..orchestrator import RunCancelledError, _first_line
 from .ingest_agent import IngestAgent, IngestError
 
@@ -692,9 +692,11 @@ LIMITATIONS & THREATS:
         return key_points[:5]
 
     def _get_full_text(self, paper: PaperRef) -> FullTextResult:
-        """Extract full text from paper PDF using IngestAgent.
+        """Return the paper body, from ``paper_texts`` when a row exists.
 
-        Blocking: this downloads and parses a PDF. Call it through
+        Stored text is the source of truth and skips the PDF parse. When there
+        is no row, or the table cannot be read, this falls back to downloading
+        and parsing the PDF. That fallback is blocking: call it through
         ``asyncio.to_thread`` from async code — see ``generate``.
 
         Args:
@@ -706,6 +708,20 @@ LIMITATIONS & THREATS:
             state for a paper that has an abstract and notes — but the reason
             travels with the emptiness so ``generate`` can report it.
         """
+        try:
+            stored = get_stored_paper_text(paper.id)
+        except Exception as e:
+            logger.warning(
+                "Stored text for %s could not be read (%s); falling back to the PDF",
+                paper.id, e,
+            )
+            stored = None
+        if stored:
+            logger.info(
+                "Using stored full text for %s (%s chars)", paper.id, len(stored)
+            )
+            return FullTextResult(stored)
+
         if not paper.url_pdf:
             logger.warning(f"No PDF URL for paper {paper.id}, cannot extract full text")
             return FullTextResult("", "the paper has no PDF URL")
