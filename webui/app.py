@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 load_dotenv()
 
 from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast, activity
-from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers, system_status as api_system_status
+from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers, system_status as api_system_status, graph as api_graph
 from .services import run_service
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(api_pipeline_runs.router)
     app.include_router(api_papers.router)
     app.include_router(api_system_status.router)
+    app.include_router(api_graph.router)
 
     # Include page routers
     app.include_router(dashboard.router)

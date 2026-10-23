@@ -1476,5 +1476,51 @@ def embeddings_backfill(
     raise typer.Exit(0)
 
 
+graph_app = typer.Typer(
+    help="Learner knowledge graph projected from Postgres",
+    add_completion=False,
+)
+app.add_typer(graph_app, name="graph")
+
+
+@graph_app.command("build")
+def graph_build(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Print counts only. Do not fetch citations, embed concept names, "
+            "or write."
+        ),
+    ),
+):
+    """Rebuild concepts and derived edges from the library.
+
+    Idempotent: a second run replaces the same edge keys and does not insert
+    duplicates. Apply docs/migrations/020_knowledge_graph.sql first.
+    Semantic Scholar is queried for library papers only, through the tool's
+    own rate limit. ``--dry-run`` does not call it and does not load a model.
+    """
+    from .graph_store import GraphStoreError, execute_graph_build
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = execute_graph_build(dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except GraphStoreError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("graph build failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("graph build failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

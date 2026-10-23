@@ -15,7 +15,7 @@ from .schemas import (
     PillarConfig, PipelineResult,
     PaperRef, Lesson, QuizCard, SearchQuery,
     DiscoveryInput, SummarizerInput, SynthesisInput, QuizGeneratorInput,
-    DiscoveryCandidate, PaperCitation,
+    DiscoveryCandidate,
     StageName, StageStatus
 )
 from .agents.discovery_agent import DiscoveryAgent
@@ -301,6 +301,10 @@ class Orchestrator:
                     lessons_created.append(lesson)
                     if quiz_cards:
                         quizzes_generated.extend(quiz_cards)
+
+                    # Same citation fetch the select path already runs. A failure
+                    # here is logged inside the helper and does not fail the paper.
+                    self._fetch_and_store_citations(paper.id)
 
                     logger.info(f"Successfully processed paper {paper.id} for pillar {pillar_id}")
 
@@ -1239,51 +1243,26 @@ class Orchestrator:
         )
 
     def _fetch_and_store_citations(self, paper_id: str) -> int:
-        """Fetch citations from Semantic Scholar and store in database."""
+        """Fetch citations from Semantic Scholar and store them.
+
+        Select (``process_selected_papers``) and the daily run both call this
+        after a paper is in the library. The rate limit lives on the tool.
+        A failure is logged and does not fail the paper.
+        """
         if not self.semantic_scholar_tool:
             return 0
 
-        citations_stored = 0
-
         try:
-            # Get outgoing citations (papers this one references)
-            references = self.semantic_scholar_tool.get_references(paper_id, limit=20)
-            outgoing_citations = []
+            from .citations import fetch_and_store_citations
 
-            for ref_paper, is_influential in references:
-                citation = PaperCitation(
-                    paper_id=paper_id,
-                    cited_paper_id=ref_paper.id,
-                    citation_direction="outgoing",
-                    is_influential=is_influential,
-                    source="semantic_scholar"
-                )
-                outgoing_citations.append(citation)
-
-            citations_stored += db.add_paper_citations(outgoing_citations)
-
-            # Get incoming citations (papers that cite this one)
-            citations = self.semantic_scholar_tool.get_citations(paper_id, limit=20)
-            incoming_citations = []
-
-            for citing_paper, is_influential in citations:
-                citation = PaperCitation(
-                    paper_id=paper_id,
-                    cited_paper_id=citing_paper.id,
-                    citation_direction="incoming",
-                    is_influential=is_influential,
-                    source="semantic_scholar"
-                )
-                incoming_citations.append(citation)
-
-            citations_stored += db.add_paper_citations(incoming_citations)
-
-            logger.info(f"Stored {citations_stored} citations for paper {paper_id}")
-
+            stored = fetch_and_store_citations(
+                paper_id, self.semantic_scholar_tool
+            )
+            logger.info(f"Stored {stored} citations for paper {paper_id}")
+            return stored
         except Exception as e:
             logger.warning(f"Failed to fetch/store citations for {paper_id}: {e}")
-
-        return citations_stored
+            return 0
 
 
 # Example usage and testing

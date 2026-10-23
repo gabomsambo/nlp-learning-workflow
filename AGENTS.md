@@ -150,6 +150,9 @@ the migration file.
 **017 (`paper_texts` / `paper_chunks`) must be applied by hand** before text
 persistence or `python -m nlp_pillars.cli text backfill` can succeed. Until it is,
 those writes fail the persist stage and name `docs/migrations/017_paper_text.sql`.
+**020 (`concepts` / `paper_concepts` / `graph_edges`) must be applied by hand**
+before `python -m nlp_pillars.cli graph build` or `GET /api/graph` can succeed.
+Until it is, those calls name `docs/migrations/020_knowledge_graph.sql`.
 **011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
 PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
 `add_podcast_script()` detects exactly that and retries without the key, so podcasts still
@@ -370,6 +373,17 @@ stage if that errors. `python -m nlp_pillars.cli embeddings backfill` fills chun
 that lack a row for the active model (`--dry-run` prints counts only).
 `python -m nlp_pillars.cli text backfill` re-extracts retained uploads and
 re-downloads URL papers (`--dry-run` prints counts only).
+
+The learner graph is the same kind of projection. `concepts`, `paper_concepts`
+and `graph_edges` (`docs/migrations/020_knowledge_graph.sql`, hand-applied) are
+rebuilt by `python -m nlp_pillars.cli graph build` from pillars, papers, authors
+(capped at 10), lessons, quiz cards, episodes, `notes.key_terms` and
+mean-pooled `chunk_embeddings`. Derived rows are deleted and written again, so
+a second build does not duplicate an edge. Semantic Scholar citations for
+library papers are fetched on that build (the tool's own rate limit; cited
+papers that are not in the library are not queried) and also when a paper is
+processed by the daily run, by select, or by upload. `GET /api/graph` reads
+the stored edges. The Obsidian export is not built.
 
 ## The discovery candidate payload is the paper's permanent record
 
