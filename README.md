@@ -31,12 +31,37 @@ database lookup fails) mirrors this list. Change both together.
 
 ## 🚀 Quick Start (Docker — recommended)
 
-`docker compose up -d --build` is the supported way to run this project. It brings up
-the whole stack, with the database schema applied automatically:
+### Start it
+
+From a checkout of this repo:
+
+```bash
+./workstation up
+```
+
+That checks Docker is running, starts the stack, waits until the app answers
+`/health`, and opens http://localhost:8000/. Podcast audio (IndexTTS) runs on
+the host GPU and stays off unless you opt in. It listens on port **7860**:
+
+```bash
+./workstation up --tts
+```
+
+`./workstation status` prints what is up. `./workstation logs webui` follows one
+service (`tts` follows the IndexTTS log). `./workstation down` stops the
+containers and leaves the database and uploaded PDFs in place.
+`./workstation install-desktop` adds an application-menu icon for this checkout
+that runs `up` in a terminal. Pass `--build` when the script says the web image
+is older than the code (`./workstation up --build`).
+
+`python get_started.py` is superseded by `./workstation`.
+
+`docker compose up -d --build` is the same stack, driven by Compose directly.
+It brings up the services below, with the database schema applied automatically:
 
 | Service | Container | Host port | What it is |
 |---|---|---|---|
-| `db` | `nlp_postgres` | 127.0.0.1:5432 | Postgres — the application database |
+| `db` | `nlp_postgres` | 127.0.0.1:5434 | Postgres — the application database |
 | `postgrest` | `nlp_postgrest` | 127.0.0.1:3000 | PostgREST, the REST layer the app talks to |
 | `searxng` | `nlp_searxng` | 8080 | Metasearch, used for paper discovery |
 | `qdrant` | `nlp_qdrant` | 6333/6334 | Local vector store — **offline option only**, see below |
