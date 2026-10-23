@@ -46,7 +46,9 @@ def test_shell_exposes_palette_help_and_player():
     assert "nlp:player" in script
     assert "NlpShortcuts" in script
     podcast = (TEMPLATES / "podcast.html").read_text()
-    assert "NlpPlayer.attach" in podcast
+    assert "/static/listen.js" in podcast
+    listen = (STATIC / "listen.js").read_text()
+    assert "NlpPlayer.attach" in listen
     papers = (TEMPLATES / "papers.html").read_text()
     assert "URLSearchParams" in papers
     assert ".get('paper')" in papers

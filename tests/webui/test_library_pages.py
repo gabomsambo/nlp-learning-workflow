@@ -281,6 +281,13 @@ def test_episode_read_failure_is_not_no_episode(client, monkeypatch):
 
 
 def test_podcast_page_reads_paper_query():
-    text = (ROOT / "webui" / "templates" / "podcast.html").read_text()
-    assert ".get('paper')" in text
-    assert "paperSelect.value = urlPaperId" in text
+    """?paper= is the paper page's Make episode link.
+
+    The matching option is selected in the HTML the server sends, so the
+    choice is there before any script runs and nothing is generated from it.
+    """
+    template = (ROOT / "webui" / "templates" / "podcast.html").read_text()
+    assert "paper.id == selected_paper" in template
+    router = (ROOT / "webui" / "routers" / "podcast.py").read_text()
+    assert "paper: str" in router
+    assert "selected_paper" in router

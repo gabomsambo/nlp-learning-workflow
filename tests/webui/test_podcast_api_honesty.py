@@ -9,6 +9,7 @@ Basename is unique across tests/ because there are no __init__.py files anywhere
 under it.
 """
 
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -283,3 +284,55 @@ def test_the_page_no_longer_ships_the_fake_progress_interval(page_client, monkey
     assert "progressBar.value += 2" not in body
     assert "script-stages" in body
     assert "podcast_script" in body
+    assert "innerHTML" not in body
+    assert "#f5f5f5" not in body
+
+
+def test_a_paper_deep_link_opens_the_studio_with_that_paper_selected(page_client, monkeypatch):
+    from datetime import datetime, timezone
+
+    from nlp_pillars.schemas import AudioMetadata, PaperRef, Pillar, PodcastScript
+    from webui.routers import podcast as podcast_page
+
+    pillar = Pillar(
+        id="neural-architectures-language",
+        name="Neural architectures",
+        goal="Learn how language models are built.",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    paper = PaperRef(
+        id="arxiv:1706.03762",
+        title="Attention Is All You Need",
+        authors=["Vaswani"],
+        pillar_id="neural-architectures-language",
+    )
+    script = PodcastScript(
+        id="11111111-1111-1111-1111-111111111111",
+        paper_id="arxiv:1706.03762",
+        pillar_id="neural-architectures-language",
+        title="Attention, spoken",
+        script="[HOST]: Hello there",
+        word_count=12,
+        created_at=datetime(2026, 10, 23, tzinfo=timezone.utc),
+        audio_metadata=AudioMetadata(file_name="attention.mp3", duration_seconds=125),
+    )
+    monkeypatch.setattr(podcast_page, "get_pillars_or_empty", lambda **k: [pillar])
+    monkeypatch.setattr(podcast_page, "get_all_papers", lambda limit=100: [paper])
+    monkeypatch.setattr(podcast_page, "get_podcast_scripts", lambda limit=20: [script])
+
+    library = page_client.get("/podcast/").text
+    assert 'href="/papers/arxiv%3A1706.03762"' in library
+    assert "Attention, spoken" in library
+    assert "2:05" in library
+    assert "[HOST]:" not in library
+    assert "No podcast scripts generated yet" not in library
+
+    studio = page_client.get("/podcast/?paper=arxiv:1706.03762").text
+    studio_tag = re.search(r'<section id="listen-studio"[^>]*>', studio)
+    library_tag = re.search(r'<section id="listen-library"[^>]*>', studio)
+    assert studio_tag and "hidden" not in studio_tag.group(0)
+    assert library_tag and "hidden" in library_tag.group(0)
+    assert 'value="arxiv:1706.03762" data-pillar="neural-architectures-language" selected' in studio
+    assert "Generate Podcast Script" in studio
+    assert "about $0.26" in studio

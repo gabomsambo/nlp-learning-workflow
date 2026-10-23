@@ -2630,3 +2630,317 @@ html[data-theme="journal"] .pillar-tile.is-empty .pillar-tile-stats {
     color: var(--muted);
   }
 }
+
+/* Listen: library, player, studio. Colour comes from tokens only. */
+
+.listen-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.listen-studio { order: 1; }
+.listen-runs { order: 2; }
+.listen-script { order: 3; }
+.listen-library { order: 4; }
+
+.listen-stack.is-episodes .listen-script { order: 1; }
+.listen-stack.is-episodes .listen-runs { order: 2; }
+.listen-stack.is-episodes .listen-library { order: 3; }
+
+.listen-engine-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.listen-engine-head .card-title { margin: 0; }
+
+.listen-engine {
+  border-left: 4px solid var(--border-strong);
+}
+
+.listen-engine.is-ready { border-left-color: var(--ok); }
+.listen-engine.is-down { border-left-color: var(--danger); }
+
+pre.listen-command {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  white-space: pre-wrap;
+}
+
+.listen-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.listen-options {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+
+.listen-options summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.listen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.listen-library-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.listen-filter {
+  min-width: min(100%, 220px);
+  margin: 0;
+}
+
+.episode-group { margin-top: var(--space-4); }
+
+.episode-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+
+.episode-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--p, var(--muted));
+}
+
+.episode-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.episode-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.episode-cover,
+.player-cover {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-read);
+}
+
+.episode-cover {
+  width: 56px;
+  height: 56px;
+  font-size: 22px;
+}
+
+.episode-cover::before,
+.player-cover::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 4px;
+  background: var(--p-deep, var(--accent));
+}
+
+html[data-theme="cockpit"] .episode-cover,
+html[data-theme="cockpit"] .player-cover {
+  border-left: 3px solid var(--p, var(--accent));
+  box-shadow: none;
+}
+
+html[data-theme="cockpit"] .episode-cover::before,
+html[data-theme="cockpit"] .player-cover::before { display: none; }
+
+html[data-theme="journal"] .episode-cover,
+html[data-theme="journal"] .player-cover {
+  background: var(--p-deep, var(--accent));
+  color: var(--on-deep);
+}
+
+html[data-theme="journal"] .episode-cover::before,
+html[data-theme="journal"] .player-cover::before { display: none; }
+
+.episode-open {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-read);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+html[data-theme="cockpit"] .episode-open {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+
+.episode-open:hover { text-decoration: underline; }
+
+.episode-meta {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.episode-meta a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.episode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.player-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.player-cover {
+  width: 96px;
+  height: 96px;
+  font-size: 36px;
+}
+
+.player-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.player-title {
+  margin: 0;
+  font-family: var(--font-read);
+  font-size: var(--fs-card);
+  font-weight: 500;
+}
+
+html[data-theme="cockpit"] .player-title {
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+
+.player-transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.player-scrub {
+  flex: 1 1 140px;
+  min-width: 120px;
+  margin: 0;
+}
+
+.player-transport input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.player-time,
+.player-transport select {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.player-transport select {
+  min-height: 40px;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.voice-preview { width: 100%; margin-top: var(--space-3); }
+
+.script-body {
+  max-height: 28rem;
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  overflow: auto;
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.cue-host {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cue-mark {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.script-warnings { margin-top: var(--space-3); }
+.script-warnings strong { display: block; margin-bottom: var(--space-2); }
+.script-warnings ul { margin: 0; padding-left: 1.2rem; }
+
+@media (max-width: 859px) {
+  .listen-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .episode-row { grid-template-columns: auto minmax(0, 1fr); }
+  .episode-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .episode-actions .btn { min-height: 40px; }
+  .player-card { grid-template-columns: minmax(0, 1fr); }
+  .player-cover { width: 72px; height: 72px; }
+}
