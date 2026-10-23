@@ -3197,6 +3197,8 @@ html[data-theme="journal"] .status-row {
   line-height: 1.7;
 }
 
+.session-summary { margin-top: var(--space-5); }
+
 @media (max-width: 859px) {
   .candidate { grid-template-columns: 40px minmax(0, 1fr); }
   .candidate-year { grid-column: 2; margin-top: 0; }
