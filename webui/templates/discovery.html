@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from "_run_panel.html" import run_panel %}
 {% block content %}
 <h2>Paper Discovery</h2>
 <p>Discover papers from multiple sources and select which ones to process.</p>
@@ -51,38 +52,27 @@
   </div>
 </div>
 
-<article id="run-panel" hidden style="margin-top: 1rem;">
-  <header>
-    {# One panel for both kinds of run this page starts. The title says which. #}
-    <strong id="run-title">Run</strong>
-    <button type="button" id="cancel-btn" class="secondary outline" hidden disabled
-            style="float:right;width:auto;padding:.25rem .75rem">Cancel run</button>
-  </header>
-
-  {#
-    Rendered EMPTY on purpose — a live region announces changes, not content that was
-    already there at load. This element is what was missing: discovery.html used to
-    pass `status: null` into the poller, so every run-level message it produces
-    (Failed + reason, Interrupted, Cancelled, the paper counts) was written nowhere.
-  #}
-  <p id="run-status" role="status" aria-live="polite" aria-atomic="true"></p>
-
-  <progress id="run-bar" hidden aria-label="Processing progress"></progress>
-
-  {#
-    The queries the run is actually searching for. They arrive a couple of seconds in,
-    long before any results, and they are the first proof the run is alive and looking
-    for the right thing. Filled from the discover_queries stage detail — which is
-    model output, so it is written with textContent and nothing else.
-  #}
-  <div id="queries-panel" hidden style="margin: .5rem 0;">
-    <small><strong>Search queries</strong></small>
-    <p id="queries-text" style="margin: .15rem 0 0;"></p>
+{# One card for both kinds of run this page starts. The title says which.
+   Queries arrive a couple of seconds in, long before any results, and they are the
+   first proof the run is looking for the right thing. The detail is model output,
+   so it is written with textContent and nothing else. #}
+{% call run_panel(
+    panel_id='run-panel',
+    title='Run',
+    title_id='run-title',
+    status_id='run-status',
+    stages_id='run-progress',
+    progress_id='run-bar',
+    cancel_id='cancel-btn',
+    cancel_label='Cancel run',
+    progress_label='Processing progress',
+    hidden=True
+) %}
+  <div id="queries-panel" class="run-queries" hidden>
+    <p class="run-queries-label">Search queries</p>
+    <p id="queries-text"></p>
   </div>
-
-  {# aria-live="off": the summary above is what gets announced, not eleven rows. #}
-  <div id="run-progress" aria-live="off"></div>
-</article>
+{% endcall %}
 
 <div id="session-summary" style="display: none; margin-top: 1rem;">
   <h3>Session Summary</h3>
@@ -163,7 +153,7 @@ discoverForm.addEventListener('submit', async (e) => {
   runPanel.hidden = false;
   runTitleEl.textContent = RUN_TITLE.discover;
   runStatusEl.textContent = 'Starting…';
-  runStatusEl.style.color = '';
+  RunProgress.applyStatusClass(runStatusEl, '');
   queriesPanel.hidden = true;
   runProgressEl.replaceChildren();
 
@@ -180,7 +170,7 @@ discoverForm.addEventListener('submit', async (e) => {
       // Another run owns this pillar. Show it rather than refusing silently — and ask
       // the server which one, since a stored id may be a finished run.
       runStatusEl.textContent = data.detail || 'A run is already in progress for this pillar.';
-      runStatusEl.style.color = 'darkorange';
+      RunProgress.applyStatusClass(runStatusEl, 'run-warn');
       const active = await RunProgress.findActive(pillar) || await RunProgress.findActive();
       if (active) RunProgress.attach(active.id, progressEls, onRunFinished, onRunUpdate);
       else setDiscovering(false);
@@ -223,7 +213,7 @@ function renderQueries(run) {
     return;
   }
   queriesText.textContent = stage.detail;
-  queriesText.style.color = stage.status === 'failed' ? 'darkorange' : '';
+  RunProgress.applyStatusClass(queriesText, stage.status === 'failed' ? 'run-warn' : '');
   queriesPanel.hidden = false;
 }
 
@@ -354,10 +344,10 @@ cancelBtn.addEventListener('click', async () => {
   try {
     const result = await RunProgress.cancel(runId);
     runStatusEl.textContent = result.message;
-    runStatusEl.style.color = 'darkorange';
+    RunProgress.applyStatusClass(runStatusEl, 'run-warn');
   } catch (err) {
     runStatusEl.textContent = 'Could not cancel: ' + err.message;
-    runStatusEl.style.color = 'crimson';
+    RunProgress.applyStatusClass(runStatusEl, 'run-danger');
     cancelBtn.disabled = false;
   }
   cancelBtn.textContent = 'Cancel run';
@@ -393,7 +383,7 @@ processBtn.addEventListener('click', async () => {
   runPanel.hidden = false;
   runTitleEl.textContent = RUN_TITLE.process_selected;
   runStatusEl.textContent = 'Starting…';
-  runStatusEl.style.color = '';
+  RunProgress.applyStatusClass(runStatusEl, '');
   queriesPanel.hidden = true;
 
   try {
@@ -410,7 +400,7 @@ processBtn.addEventListener('click', async () => {
 
     if (res.status === 409) {
       runStatusEl.textContent = data.detail || 'A run is already in progress for this pillar.';
-      runStatusEl.style.color = 'darkorange';
+      RunProgress.applyStatusClass(runStatusEl, 'run-warn');
       // Ask the server which run that is. reattach() would prefer a stale
       // localStorage id and could attach to an already-finished run instead.
       const active = await RunProgress.findActive(pillar) || await RunProgress.findActive();
@@ -433,7 +423,7 @@ processBtn.addEventListener('click', async () => {
 
   } catch (err) {
     runStatusEl.textContent = `Error: ${err.message}`;
-    runStatusEl.style.color = 'crimson';
+    RunProgress.applyStatusClass(runStatusEl, 'run-danger');
     processBtn.disabled = false;
     processBtn.textContent = 'Process Selected';
     renderCandidates();

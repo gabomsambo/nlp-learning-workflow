@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_components.html" import chip, stat_tile %}
+{% from "_run_panel.html" import run_panel %}
 
 {% block title %}{{ pillar.name }}{% endblock %}
 
@@ -261,13 +262,16 @@
     </div>
 
     <div class="upload-section" id="upload-progress-section" hidden>
-      <h3 class="section-title">Upload progress</h3>
-      <p id="upload-run-status" role="status" aria-live="polite" aria-atomic="true"></p>
-      <progress id="upload-run-bar" hidden aria-label="Upload progress"></progress>
-      <div id="upload-run-stages" aria-live="off"></div>
-      <div class="dialog-actions">
-        <button type="button" id="upload-cancel-btn" class="btn btn-secondary" hidden disabled>Cancel upload</button>
-      </div>
+      {{ run_panel(
+          title='Upload',
+          status_id='upload-run-status',
+          stages_id='upload-run-stages',
+          progress_id='upload-run-bar',
+          cancel_id='upload-cancel-btn',
+          cancel_label='Cancel upload',
+          progress_label='Upload progress'
+      ) }}
+      {# Not a live region: the sentence above already announces the outcome. #}
       <div id="upload-result" hidden></div>
     </div>
 

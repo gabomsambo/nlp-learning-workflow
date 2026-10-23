@@ -21,6 +21,8 @@ const {
   stageLabel,
   summarise,
   statusColor,
+  applyStatusClass,
+  stageClass,
   countCompleted,
   displayStatus,
   duration,
@@ -247,26 +249,54 @@ test('an upload with no result payload never claims a paper was added', () => {
 
 /* ------------------------------------------------------------- statusColor */
 
-test('a clean success is green but a partial success is not', () => {
-  // Painting a run that lost papers the same green as a perfect one is how partial
-  // failures went unnoticed.
-  assert.equal(statusColor({ status: 'succeeded', papers_failed: 0 }), 'green');
-  assert.equal(statusColor({ status: 'succeeded', papers_failed: 1 }), 'darkorange');
+test('a clean success is ok but a partial success is a warning', () => {
+  // Painting a run that lost papers the same success tone as a perfect one is how
+  // partial failures went unnoticed. The strings are class names; app.css maps them
+  // onto the theme tokens.
+  assert.equal(statusColor({ status: 'succeeded', papers_failed: 0 }), 'run-ok');
+  assert.equal(statusColor({ status: 'succeeded', papers_failed: 1 }), 'run-warn');
 });
 
-test('failure is crimson, cancellation and interruption are orange', () => {
-  assert.equal(statusColor({ status: 'failed' }), 'crimson');
-  assert.equal(statusColor({ status: 'cancelled' }), 'darkorange');
-  assert.equal(statusColor({ status: 'interrupted' }), 'darkorange');
+test('failure is danger, cancellation and interruption are warnings', () => {
+  assert.equal(statusColor({ status: 'failed' }), 'run-danger');
+  assert.equal(statusColor({ status: 'cancelled' }), 'run-warn');
+  assert.equal(statusColor({ status: 'interrupted' }), 'run-warn');
 });
 
 test('a failed upload whose paper is in the library is a partial failure', () => {
-  // Crimson there says "start again", which is the wrong instruction.
+  // A danger tone there says "start again", which is the wrong instruction.
   assert.equal(
-    statusColor({ status: 'failed', result: { added: true } }), 'darkorange');
-  assert.equal(statusColor({ status: 'failed', result: {} }), 'crimson');
+    statusColor({ status: 'failed', result: { added: true } }), 'run-warn');
+  assert.equal(statusColor({ status: 'failed', result: {} }), 'run-danger');
   // Still safe for the string form, which several callers use.
-  assert.equal(statusColor('failed'), 'crimson');
+  assert.equal(statusColor('failed'), 'run-danger');
+});
+
+test('stage rows use a class per displayed status', () => {
+  assert.equal(stageClass('completed'), 'run-stage-completed');
+  assert.equal(stageClass('running'), 'run-stage-running');
+  assert.equal(stageClass('failed'), 'run-stage-failed');
+  assert.equal(stageClass('unknown'), 'run-stage-unknown');
+  assert.equal(stageClass('not-a-status'), 'run-stage-pending');
+});
+
+test('applyStatusClass swaps the tone class and clears an inline colour', () => {
+  const removed = [];
+  const added = [];
+  const el = {
+    classList: {
+      remove(...names) { removed.push(...names); },
+      add(name) { added.push(name); },
+    },
+    style: { removeProperty(prop) { this.removed = prop; } },
+  };
+  applyStatusClass(el, { status: 'failed' });
+  assert.deepEqual(added, ['run-danger']);
+  assert.ok(removed.includes('run-ok'));
+  assert.equal(el.style.removed, 'color');
+  added.length = 0;
+  applyStatusClass(el, 'run-warn');
+  assert.deepEqual(added, ['run-warn']);
 });
 
 /* --------------------------------------------- summarise: podcast_script */
@@ -318,7 +348,7 @@ test('an unsaved podcast script is not painted as a clean success', () => {
     result: { saved: false, title: 'Deep Dive: X', word_count: 100, script: '[HOST]: hi' },
   };
   assert.match(summarise(run), /NOT saved/);
-  assert.equal(statusColor(run), 'darkorange');
+  assert.equal(statusColor(run), 'run-warn');
 });
 
 /* ----------------------------------------------------------- displayStatus */
