@@ -1,38 +1,161 @@
+{% from "_components.html" import icon, nav_link, dialog %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ title or 'NLP Workflow' }}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <link rel="stylesheet" href="/static/styles.css">
+  <title>{% block title %}{{ title or 'NLP Learning' }}{% endblock %}</title>
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var theme = "paper";
+      var mode = null;
+      var density = "comfortable";
+      try {
+        var storedTheme = localStorage.getItem("nlp:theme");
+        var storedMode = localStorage.getItem("nlp:mode");
+        var storedDensity = localStorage.getItem("nlp:density");
+        if (storedTheme === "paper" || storedTheme === "cockpit" || storedTheme === "journal") theme = storedTheme;
+        if (storedMode === "light" || storedMode === "dark") mode = storedMode;
+        if (storedDensity === "compact" || storedDensity === "comfortable") density = storedDensity;
+      } catch (e) {}
+      root.setAttribute("data-theme", theme);
+      if (mode) root.setAttribute("data-mode", mode);
+      else root.removeAttribute("data-mode");
+      root.setAttribute("data-density", density);
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/vendor/pico.min.css?v={{ asset_v | default('1', true) }}">
+  <link rel="stylesheet" href="/static/tokens.css?v={{ asset_v | default('1', true) }}">
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_v | default('1', true) }}">
+  <link rel="stylesheet" href="/static/styles.css?v={{ asset_v | default('1', true) }}">
+  {% block head %}{% endblock %}
 </head>
 <body>
-  <header class="container">
-    <nav>
-      <ul>
-        <li><strong>NLP Workflow</strong></li>
-      </ul>
-      <ul>
-        <li><a href="/">Dashboard</a></li>
-        <li><a href="/pillars/">Pillars</a></li>
-        <li><a href="/discovery/">Discovery</a></li>
-        <li><a href="/papers/">Papers</a></li>
-        <li><a href="/lessons/">Lessons</a></li>
-        <li><a href="/quiz/">Quiz</a></li>
-        <li><a href="/podcast/">Podcast</a></li>
-        <li><a href="/pipeline/">Pipeline</a></li>
-        <li><a href="/analytics/">Analytics</a></li>
-      </ul>
-    </nav>
-  </header>
+  {% set path = request.url.path %}
+  {% set on_today = path == '/' %}
+  {% set on_review = path.startswith('/quiz') %}
+  {% set on_library = path.startswith('/papers') %}
+  {% set on_lessons = path.startswith('/lessons') %}
+  {% set on_listen = path.startswith('/podcast') %}
+  {% set on_add = path.startswith('/discovery') %}
+  {% set on_pillars = path.startswith('/pillars') %}
+  {% set on_activity = path.startswith('/pipeline') %}
+  {% set on_analytics = path.startswith('/analytics') %}
+  {% set on_more = on_pillars or on_activity or on_lessons or on_analytics %}
 
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">N</span>
+        <span class="brand-name">NLP <em>Learning</em></span>
+      </a>
+      <nav class="app-nav" aria-label="Primary">
+        {{ nav_link('/', 'Today', on_today, 'today') }}
+        {{ nav_link('/analytics/', 'Analytics', on_analytics, 'analytics', true) }}
+        {{ nav_link('/quiz/', 'Review', on_review, 'review') }}
+        {{ nav_link('/papers/', 'Library', on_library, 'library') }}
+        {{ nav_link('/lessons/', 'Lessons', on_lessons, 'lessons', true) }}
+        {{ nav_link('/podcast/', 'Listen', on_listen, 'listen') }}
+        {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
+        <p class="nav-section">Workspace</p>
+        {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
+        {{ nav_link('/pipeline/', 'Activity', on_activity, 'activity') }}
+      </nav>
+      <div class="sidebar-foot">
+        <button type="button" class="nav-button" data-open-settings>
+          {{ icon('settings') }}<span>Settings</span>
+        </button>
+      </div>
+    </aside>
 
-  <footer class="container"><small>Local PostgREST at http://localhost:3000</small></footer>
+    <div class="app-main">
+      <div class="phone-bar">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span class="brand-name">NLP <em>Learning</em></span>
+        </a>
+        <button type="button" class="menu-button btn btn-secondary btn-sm" id="menu-open" aria-haspopup="dialog" aria-controls="nav-drawer" aria-expanded="false" {% if on_more %}aria-current="page"{% endif %}>Menu</button>
+      </div>
+      {% block page_header %}{% endblock %}
+      <main id="main" class="container">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <nav class="tabbar" aria-label="Primary">
+    <a href="/" {% if on_today %}aria-current="page"{% endif %}>{{ icon('today') }}<span>Today</span></a>
+    <a href="/papers/" {% if on_library or on_lessons %}aria-current="page"{% endif %}>{{ icon('library') }}<span>Library</span></a>
+    <a href="/quiz/" {% if on_review %}aria-current="page"{% endif %}>{{ icon('review') }}<span>Review</span></a>
+    <a href="/podcast/" {% if on_listen %}aria-current="page"{% endif %}>{{ icon('listen') }}<span>Listen</span></a>
+    <a href="/discovery/" {% if on_add %}aria-current="page"{% endif %}>{{ icon('add') }}<span>Add</span></a>
+  </nav>
+
+  <dialog id="nav-drawer" class="dialog nav-drawer" aria-labelledby="nav-drawer-title">
+    <article>
+      <header>
+        <h2 id="nav-drawer-title">Menu</h2>
+        <button type="button" class="dialog-close" data-dialog-close aria-label="Close">&times;</button>
+      </header>
+      <nav class="app-nav" aria-label="Menu">
+        {{ nav_link('/', 'Today', on_today, 'today') }}
+        {{ nav_link('/analytics/', 'Analytics', on_analytics, 'analytics') }}
+        {{ nav_link('/quiz/', 'Review', on_review, 'review') }}
+        {{ nav_link('/papers/', 'Library', on_library, 'library') }}
+        {{ nav_link('/lessons/', 'Lessons', on_lessons, 'lessons') }}
+        {{ nav_link('/podcast/', 'Listen', on_listen, 'listen') }}
+        {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
+        {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
+        {{ nav_link('/pipeline/', 'Activity', on_activity, 'activity') }}
+        <button type="button" class="nav-button" data-open-settings>{{ icon('settings') }}<span>Settings</span></button>
+      </nav>
+    </article>
+  </dialog>
+
+  {% call dialog('settings-dialog', 'Settings') %}
+  <form id="settings-form" class="settings-form">
+    <fieldset>
+      <legend>Look</legend>
+      <div class="choice-grid">
+        <label class="choice-card">
+          <input type="radio" name="theme" value="paper">
+          <span class="choice-swatch" data-swatch="paper">Aa</span>
+          <span>Paper</span>
+        </label>
+        <label class="choice-card">
+          <input type="radio" name="theme" value="cockpit">
+          <span class="choice-swatch" data-swatch="cockpit">Aa</span>
+          <span>Cockpit</span>
+        </label>
+        <label class="choice-card">
+          <input type="radio" name="theme" value="journal">
+          <span class="choice-swatch" data-swatch="journal">Aa</span>
+          <span>Journal</span>
+        </label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Mode</legend>
+      <div class="segmented" role="radiogroup" aria-label="Mode">
+        <label><input type="radio" name="mode" value="system">System</label>
+        <label><input type="radio" name="mode" value="light">Light</label>
+        <label><input type="radio" name="mode" value="dark">Dark</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Density</legend>
+      <div class="segmented" role="radiogroup" aria-label="Density">
+        <label><input type="radio" name="density" value="comfortable">Comfortable</label>
+        <label><input type="radio" name="density" value="compact">Compact</label>
+      </div>
+    </fieldset>
+  </form>
+  {% endcall %}
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
+  <script src="/static/theme.js?v={{ asset_v | default('1', true) }}"></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
-
-

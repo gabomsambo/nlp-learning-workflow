@@ -918,7 +918,7 @@
 
 .btn-primary {
     background: var(--primary);
-    color: white;
+    color: var(--on-accent);
 }
 
 .btn-primary:hover {
@@ -1044,7 +1044,7 @@
 .search-btn {
     padding: 0.75rem 1.5rem;
     background: var(--primary);
-    color: white;
+    color: var(--on-accent);
     border: none;
     border-radius: 0.25rem;
     cursor: pointer;
@@ -1167,7 +1167,7 @@
 .enqueue-btn {
     padding: 0.5rem 1rem;
     background: var(--success-color);
-    color: white;
+    color: var(--on-accent);
     border: none;
     border-radius: 0.25rem;
     cursor: pointer;
@@ -1193,7 +1193,7 @@
 
 .view-paper-btn:hover {
     background: var(--primary);
-    color: white;
+    color: var(--on-accent);
 }
 
 /* Responsive design */
@@ -1218,7 +1218,7 @@
 {# The same poller the Pipeline and Discovery pages use. Uploads are background runs
    now, so this page needs it too — and reusing it means one place to fix a rendering
    bug, one set of stage labels, and the same reload-survival behaviour. #}
-<script src="/static/run-progress.js"></script>
+<script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Tab switching

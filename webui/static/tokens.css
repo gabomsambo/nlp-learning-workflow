@@ -1,0 +1,523 @@
+/* Design tokens for the learning workstation.
+   Three themes (paper default, cockpit, journal) × light/dark, plus density.
+   Every colour, font and radius used by the shell lives here.
+   Fonts are OFL (see fonts/licenses/) and self-hosted so the app works offline. */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/source-serif-4-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-500-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/dm-sans-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("fonts/fraunces-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Fraunces";
+  font-style: italic;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("fonts/fraunces-italic-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  color-scheme: light;
+  --color-scheme: light;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 44px;
+  --fs-caption: 12px;
+  --fs-body: 17px;
+  --fs-tldr: 20px;
+  --fs-card: 22px;
+  --fs-page: 34px;
+  --fs-greet: 40px;
+  --read-max: 680px;
+  --content-max: 1080px;
+  --sidebar-w: 236px;
+  --gutter: 44px;
+  --pad-card: 20px;
+  --on-deep: #FFFFFF;
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* Paper is the default theme. */
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-read: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --fs-ui: 14px;
+  --row-h: 44px;
+  --r-control: 8px;
+  --r-card: 12px;
+  --shadow-card: 0 1px 2px rgba(30, 28, 25, 0.05), 0 4px 16px -8px rgba(30, 28, 25, 0.12);
+
+  --bg: #FBFAF7;
+  --surface: #FFFFFF;
+  --surface-2: #F3F1EC;
+  --border: #E6E2D9;
+  --border-strong: #8F887C;
+  --text: #1E1C19;
+  --muted: #6B665E;
+  --accent: #2F5D50;
+  --accent-hover: #244A40;
+  --accent-rgb: 47, 93, 80;
+  --on-accent: #FFFFFF;
+  --accent-soft: #E3EEE9;
+  --ok: #2E7D4F;
+  --ok-soft: #E2F1E7;
+  --warn: #9A5B00;
+  --warn-soft: #FBEFD9;
+  --danger: #B3261E;
+  --danger-soft: #F9E3E1;
+  --on-danger: #FFFFFF;
+  --info: #1D4E89;
+  --info-soft: #E4EEF8;
+}
+
+html[data-theme="cockpit"] {
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-read: var(--font-ui);
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --fs-ui: 13px;
+  --row-h: 32px;
+  --r-control: 6px;
+  --r-card: 8px;
+  --shadow-card: none;
+  --color-scheme: light;
+  --bg: #F6F7F9;
+  --surface: #FFFFFF;
+  --surface-2: #EEF0F4;
+  --border: #E1E5EC;
+  --border-strong: #828892;
+  --text: #12151C;
+  --muted: #576072;
+  --accent: #3B5BDB;
+  --accent-hover: #2C46B0;
+  --accent-rgb: 59, 91, 219;
+  --on-accent: #FFFFFF;
+  --accent-soft: #E6EBFF;
+  --ok: #1E7F53;
+  --ok-soft: #E1F3EA;
+  --warn: #94600A;
+  --warn-soft: #F8EBD3;
+  --danger: #B3261E;
+  --danger-soft: #F9E3E1;
+  --on-danger: #FFFFFF;
+  --info: #1D4E89;
+  --info-soft: #E4EEF8;
+}
+
+html[data-theme="journal"] {
+  --font-ui: "DM Sans", system-ui, sans-serif;
+  --font-read: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: "DM Sans", system-ui, sans-serif;
+  --fs-ui: 15px;
+  --row-h: 44px;
+  --r-control: 999px;
+  --r-card: 20px;
+  --shadow-card: 0 1px 0 rgba(43, 33, 24, 0.04), 0 10px 30px -18px rgba(43, 33, 24, 0.35);
+  --color-scheme: light;
+  --bg: #F6F0E6;
+  --surface: #FFFBF4;
+  --surface-2: #EFE6D6;
+  --border: #E6DAC6;
+  --border-strong: #9B8D76;
+  --text: #2B2118;
+  --muted: #75644F;
+  --accent: #A3421E;
+  --accent-hover: #8A3518;
+  --accent-rgb: 163, 66, 30;
+  --on-accent: #FFFFFF;
+  --accent-soft: #F6DED2;
+  --ok: #3F6B4A;
+  --ok-soft: #E1EBDD;
+  --warn: #8C5A00;
+  --warn-soft: #F6E7C8;
+  --danger: #9E2B22;
+  --danger-soft: #F8E4DF;
+  --on-danger: #FFFFFF;
+  --info: #3E5C78;
+  --info-soft: #E4EAF1;
+}
+
+html[data-theme="paper"][data-mode="dark"] {
+  --color-scheme: dark;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --bg: #141413;
+  --surface: #1C1B19;
+  --surface-2: #252421;
+  --border: #2F2D2A;
+  --border-strong: #7A766E;
+  --text: #ECE9E2;
+  --muted: #A39E94;
+  --accent: #86C5AE;
+  --accent-hover: #A5D4C2;
+  --accent-rgb: 134, 197, 174;
+  --on-accent: #0F1A16;
+  --accent-soft: #1F3029;
+  --ok: #5CC28A;
+  --ok-soft: #1B2E22;
+  --warn: #E6A94A;
+  --warn-soft: #33270F;
+  --danger: #F2837B;
+  --danger-soft: #3A1C19;
+  --on-danger: #2A0E0C;
+  --info: #9CC4F0;
+  --info-soft: #1A2836;
+}
+
+html[data-theme="cockpit"][data-mode="dark"] {
+  --color-scheme: dark;
+  --bg: #0E1014;
+  --surface: #151821;
+  --surface-2: #1C202B;
+  --border: #232837;
+  --border-strong: #656A7E;
+  --text: #E6E9F0;
+  --muted: #8E97AA;
+  --accent: #8AA4FF;
+  --accent-hover: #A8BBFF;
+  --accent-rgb: 138, 164, 255;
+  --on-accent: #0B1022;
+  --accent-soft: #1E2742;
+  --ok: #3FB27F;
+  --ok-soft: #12291F;
+  --warn: #E0A33B;
+  --warn-soft: #33280F;
+  --danger: #F2837B;
+  --danger-soft: #3A1C19;
+  --on-danger: #2A0E0C;
+  --info: #9CC4F0;
+  --info-soft: #1A2836;
+}
+
+html[data-theme="journal"][data-mode="dark"] {
+  --color-scheme: dark;
+  --shadow-card: 0 10px 30px -18px rgba(0, 0, 0, 0.7);
+  --bg: #1B1612;
+  --surface: #241D17;
+  --surface-2: #2E251D;
+  --border: #3A2F25;
+  --border-strong: #807265;
+  --text: #F3E9DC;
+  --muted: #B8A690;
+  --accent: #F0905F;
+  --accent-hover: #F5A87A;
+  --accent-rgb: 240, 144, 95;
+  --on-accent: #22130B;
+  --accent-soft: #3A2519;
+  --ok: #8CC49A;
+  --ok-soft: #1F2C21;
+  --warn: #E6B05A;
+  --warn-soft: #3A2C14;
+  --danger: #F2837B;
+  --danger-soft: #3A1C19;
+  --on-danger: #2A0E0C;
+  --info: #A9C4DE;
+  --info-soft: #1C2833;
+}
+
+/* System mode leaves data-mode unset and follows the OS. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mode="light"]) {
+    --color-scheme: dark;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    --bg: #141413;
+    --surface: #1C1B19;
+    --surface-2: #252421;
+    --border: #2F2D2A;
+    --border-strong: #7A766E;
+    --text: #ECE9E2;
+    --muted: #A39E94;
+    --accent: #86C5AE;
+    --accent-hover: #A5D4C2;
+    --accent-rgb: 134, 197, 174;
+    --on-accent: #0F1A16;
+    --accent-soft: #1F3029;
+    --ok: #5CC28A;
+    --ok-soft: #1B2E22;
+    --warn: #E6A94A;
+    --warn-soft: #33270F;
+    --danger: #F2837B;
+    --danger-soft: #3A1C19;
+  --on-danger: #2A0E0C;
+    --info: #9CC4F0;
+    --info-soft: #1A2836;
+  }
+
+  html[data-theme="cockpit"]:not([data-mode="light"]) {
+    --color-scheme: dark;
+    --shadow-card: none;
+    --bg: #0E1014;
+    --surface: #151821;
+    --surface-2: #1C202B;
+    --border: #232837;
+    --border-strong: #656A7E;
+    --text: #E6E9F0;
+    --muted: #8E97AA;
+    --accent: #8AA4FF;
+    --accent-hover: #A8BBFF;
+    --accent-rgb: 138, 164, 255;
+    --on-accent: #0B1022;
+    --accent-soft: #1E2742;
+    --ok: #3FB27F;
+    --ok-soft: #12291F;
+    --warn: #E0A33B;
+    --warn-soft: #33280F;
+    --danger: #F2837B;
+    --danger-soft: #3A1C19;
+  --on-danger: #2A0E0C;
+    --info: #9CC4F0;
+    --info-soft: #1A2836;
+  }
+
+  html[data-theme="journal"]:not([data-mode="light"]) {
+    --color-scheme: dark;
+    --shadow-card: 0 10px 30px -18px rgba(0, 0, 0, 0.7);
+    --bg: #1B1612;
+    --surface: #241D17;
+    --surface-2: #2E251D;
+    --border: #3A2F25;
+    --border-strong: #807265;
+    --text: #F3E9DC;
+    --muted: #B8A690;
+    --accent: #F0905F;
+    --accent-hover: #F5A87A;
+    --accent-rgb: 240, 144, 95;
+    --on-accent: #22130B;
+    --accent-soft: #3A2519;
+    --ok: #8CC49A;
+    --ok-soft: #1F2C21;
+    --warn: #E6B05A;
+    --warn-soft: #3A2C14;
+    --danger: #F2837B;
+    --danger-soft: #3A1C19;
+  --on-danger: #2A0E0C;
+    --info: #A9C4DE;
+    --info-soft: #1C2833;
+  }
+}
+
+html[data-density="compact"] {
+  --row-h: 32px;
+  --pad-card: 12px;
+  --gutter: 18px;
+}
+
+html[data-theme="paper"][data-density="compact"] {
+  --fs-ui: 13px;
+}
+
+/* Pillar identity. The slug class sets --p / --p-deep; a name always sits beside the colour. */
+.pillar-formal-linguistics-nlp { --p: #8E6CC8; --p-deep: #6B4FA3; }
+.pillar-neural-architectures-language { --p: #3E7CC9; --p-deep: #2C5E9E; }
+.pillar-llm-theory-practice { --p: #2F9C8F; --p-deep: #1F7066; }
+.pillar-computational-semantics { --p: #C9883E; --p-deep: #8C5A1F; }
+.pillar-model-interpretability { --p: #C25A7C; --p-deep: #9C3E5E; }
+.pillar-ai-agents-tool-use { --p: #5E9F45; --p-deep: #3F7330; }
+.pillar-ml-systems-production { --p: #D0643B; --p-deep: #A8431F; }
+.pillar-ai-safety-alignment { --p: #6B7A8F; --p-deep: #4E5B6E; }
+
+/* Settings swatches show each theme's light paper, not the active tokens. */
+.choice-swatch[data-swatch="paper"] {
+  --swatch-bg: #FBFAF7;
+  --swatch-fg: #1E1C19;
+  --swatch-accent: #2F5D50;
+}
+.choice-swatch[data-swatch="cockpit"] {
+  --swatch-bg: #0E1014;
+  --swatch-fg: #E6E9F0;
+  --swatch-accent: #8AA4FF;
+}
+.choice-swatch[data-swatch="journal"] {
+  --swatch-bg: #F6F0E6;
+  --swatch-fg: #2B2118;
+  --swatch-accent: #A3421E;
+}
+
+/* Pico v2 is vendored and themed from these tokens.
+   Specificity must beat Pico's `:root:not([data-theme=dark])` (0,2,0).
+   `data-mode` is never the literal "unset", so this matches every themed document. */
+html[data-theme]:not([data-mode="unset"]) {
+  color-scheme: var(--color-scheme);
+  --pico-font-family: var(--font-ui);
+  --pico-font-family-sans-serif: var(--font-ui);
+  --pico-font-family-monospace: var(--font-mono);
+  --pico-font-size: 100%;
+  --pico-background-color: var(--bg);
+  --pico-color: var(--text);
+  --pico-h1-color: var(--text);
+  --pico-h2-color: var(--text);
+  --pico-h3-color: var(--text);
+  --pico-h4-color: var(--text);
+  --pico-h5-color: var(--text);
+  --pico-h6-color: var(--text);
+  --pico-muted-color: var(--muted);
+  --pico-muted-border-color: var(--border);
+  --pico-border-color: var(--border);
+  --pico-border-radius: var(--r-control);
+  --pico-primary: var(--accent);
+  --pico-primary-background: var(--accent);
+  --pico-primary-border: var(--accent);
+  --pico-primary-hover: var(--accent-hover);
+  --pico-primary-hover-background: var(--accent-hover);
+  --pico-primary-hover-border: var(--accent-hover);
+  --pico-primary-hover-underline: var(--accent-hover);
+  --pico-primary-underline: var(--accent);
+  --pico-primary-focus: var(--accent);
+  --pico-primary-inverse: var(--on-accent);
+  --pico-secondary: var(--muted);
+  --pico-secondary-background: var(--surface-2);
+  --pico-secondary-border: var(--border-strong);
+  --pico-secondary-hover: var(--text);
+  --pico-secondary-hover-background: var(--border);
+  --pico-secondary-hover-border: var(--border-strong);
+  --pico-secondary-hover-underline: var(--text);
+  --pico-secondary-underline: var(--muted);
+  --pico-secondary-focus: var(--accent);
+  --pico-secondary-inverse: var(--text);
+  --pico-contrast: var(--text);
+  --pico-contrast-background: var(--text);
+  --pico-contrast-border: var(--text);
+  --pico-contrast-hover: var(--bg);
+  --pico-contrast-hover-background: var(--text);
+  --pico-contrast-hover-border: var(--text);
+  --pico-contrast-hover-underline: var(--text);
+  --pico-contrast-underline: var(--text);
+  --pico-contrast-focus: var(--accent);
+  --pico-contrast-inverse: var(--bg);
+  --pico-box-shadow: var(--shadow-card);
+  --pico-text-selection-color: var(--accent-soft);
+  --pico-card-background-color: var(--surface);
+  --pico-card-border-color: var(--border);
+  --pico-card-box-shadow: var(--shadow-card);
+  --pico-card-sectioning-background-color: var(--surface-2);
+  --pico-form-element-background-color: var(--surface);
+  --pico-form-element-border-color: var(--border-strong);
+  --pico-form-element-color: var(--text);
+  --pico-form-element-placeholder-color: var(--muted);
+  --pico-form-element-active-background-color: var(--surface);
+  --pico-form-element-active-border-color: var(--accent);
+  --pico-form-element-focus-color: var(--accent);
+  --pico-form-element-selected-background-color: var(--accent-soft);
+  --pico-form-element-invalid-border-color: var(--danger);
+  --pico-form-element-invalid-active-border-color: var(--danger);
+  --pico-form-element-invalid-focus-color: var(--danger);
+  --pico-form-element-valid-border-color: var(--ok);
+  --pico-form-element-valid-active-border-color: var(--ok);
+  --pico-form-element-valid-focus-color: var(--ok);
+  --pico-code-background-color: var(--surface-2);
+  --pico-code-color: var(--text);
+  --pico-code-kbd-background-color: var(--surface-2);
+  --pico-code-kbd-color: var(--text);
+  --pico-table-border-color: var(--border);
+  --pico-table-row-stripped-background-color: var(--surface-2);
+  --pico-progress-background-color: var(--surface-2);
+  --pico-progress-color: var(--accent);
+  --pico-mark-background-color: var(--warn-soft);
+  --pico-mark-color: var(--text);
+  --pico-del-color: var(--danger);
+  --pico-ins-color: var(--ok);
+  --pico-blockquote-border-color: var(--accent);
+  --pico-blockquote-footer-color: var(--muted);
+  --pico-dropdown-background-color: var(--surface);
+  --pico-dropdown-border-color: var(--border);
+  --pico-dropdown-box-shadow: var(--shadow-card);
+  --pico-dropdown-color: var(--text);
+  --pico-dropdown-hover-background-color: var(--surface-2);
+  --pico-modal-overlay-background-color: color-mix(in srgb, var(--text) 32%, transparent);
+  --pico-accordion-border-color: var(--border);
+  --pico-accordion-active-summary-color: var(--accent);
+  --pico-accordion-close-summary-color: var(--text);
+  --pico-accordion-open-summary-color: var(--muted);
+  --pico-switch-background-color: var(--border-strong);
+  --pico-switch-checked-background-color: var(--accent);
+  --pico-switch-color: var(--on-accent);
+  --pico-range-border-color: var(--border);
+  --pico-range-active-border-color: var(--border-strong);
+  --pico-range-thumb-border-color: var(--surface);
+  --pico-range-thumb-color: var(--accent);
+  --pico-range-thumb-active-color: var(--accent-hover);
+  --pico-tooltip-background-color: var(--text);
+  --pico-tooltip-color: var(--bg);
+
+  /* Bare names older templates already use. Pico v2 never defined these. */
+  --primary: var(--accent);
+  --primary-hover: var(--accent-hover);
+  --primary-background: var(--accent-soft);
+  --primary-focus: var(--accent-soft);
+  --primary-rgb: var(--accent-rgb);
+  --muted-color: var(--muted);
+  --border-color: var(--border);
+  --muted-border-color: var(--border);
+  --card-background-color: var(--surface);
+  --secondary-background: var(--surface-2);
+  --background-color: var(--bg);
+  --color: var(--text);
+  --text-color: var(--text);
+  --secondary: var(--surface-2);
+  --secondary-hover: var(--border);
+  --del-color: var(--danger);
+  --warning-color: var(--warn);
+  --success-color: var(--ok);
+  --error-color: var(--danger);
+}

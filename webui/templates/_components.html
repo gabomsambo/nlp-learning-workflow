@@ -1,0 +1,190 @@
+{# Shared UI macros. Import with {% from "_components.html" import button %}.
+   Colours come from tokens.css. Run card, review card and the audio player are later PRs. #}
+
+{% macro icon(name) -%}
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  {%- if name == 'today' -%}
+  <path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/>
+  {%- elif name == 'library' -%}
+  <path d="M5 4h5a2 2 0 0 1 2 2v13H7a2 2 0 0 0-2 2V4zM12 6h5a2 2 0 0 1 2 2v11h-7V6z"/>
+  {%- elif name == 'review' -%}
+  <rect x="3" y="6" width="12" height="14" rx="2"/><path d="M9 4h10a2 2 0 0 1 2 2v12"/>
+  {%- elif name == 'listen' -%}
+  <path d="M4 13a8 8 0 0 1 16 0"/><path d="M4 13v5a1 1 0 0 0 1 1h2v-6H4zM20 13v5a1 1 0 0 1-1 1h-2v-6h3z"/>
+  {%- elif name == 'add' -%}
+  <circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>
+  {%- elif name == 'pillars' -%}
+  <rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>
+  {%- elif name == 'activity' -%}
+  <path d="M3 12h4l2-6 4 12 2-6h6"/>
+  {%- elif name == 'lessons' -%}
+  <path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>
+  {%- elif name == 'analytics' -%}
+  <path d="M4 19V10M10 19V5M16 19v-7M20 19H4"/>
+  {%- elif name == 'settings' -%}
+  <circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.5 1.5M16.9 16.9l1.5 1.5M18.4 5.6 16.9 7.1M7.1 16.9 5.6 18.4"/>
+  {%- else -%}
+  <circle cx="12" cy="12" r="8"/>
+  {%- endif -%}
+</svg>
+{%- endmacro %}
+
+{% macro nav_link(href, label, current=False, name=None, sub=False) -%}
+<a class="nav-link{% if sub %} is-sub{% endif %}" href="{{ href }}" {% if current %}aria-current="page"{% endif %}>
+  {% if name %}{{ icon(name) }}{% endif %}<span>{{ label }}</span>
+</a>
+{%- endmacro %}
+
+{% macro page_header(title, eyebrow=None) -%}
+<header class="page-header">
+  <div>
+    {% if eyebrow %}<p class="page-eyebrow">{{ eyebrow }}</p>{% endif %}
+    <h1 class="page-title">{{ title }}</h1>
+  </div>
+  {% if caller %}<div class="page-actions">{{ caller() }}</div>{% endif %}
+</header>
+{%- endmacro %}
+
+{% macro button(label, variant='primary', size='md', href=None, type='button', name=None, value=None, disabled=False, loading=False) -%}
+  {%- set cls = 'btn btn-' ~ variant ~ ' btn-' ~ size ~ (' is-loading' if loading else '') -%}
+  {%- if href and not disabled -%}
+<a class="{{ cls }}" href="{{ href }}" {% if loading %}aria-busy="true"{% endif %}>{{ label }}</a>
+  {%- else -%}
+<button class="{{ cls }}" type="{{ type }}" {% if name %}name="{{ name }}"{% endif %} {% if value is not none %}value="{{ value }}"{% endif %} {% if disabled %}disabled{% endif %} {% if loading %}aria-busy="true"{% endif %}>{{ label }}</button>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro chip(label, variant='neutral', pillar=None) -%}
+<span class="chip chip-{{ variant }}{% if pillar %} pillar-{{ pillar }}{% endif %}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro card(title=None) -%}
+<article class="card">
+  {% if title %}<h2 class="card-title">{{ title }}</h2>{% endif %}
+  {{ caller() }}
+</article>
+{%- endmacro %}
+
+{% macro list_row(title, href=None, date=None, meta=None, status=None) -%}
+{% if href %}<a class="list-row" href="{{ href }}">{% else %}<div class="list-row">{% endif %}
+  <span class="list-row-date">{{ date or '' }}</span>
+  <span class="list-row-main">
+    <span class="list-row-title">{{ title }}</span>
+    {% if meta %}<span class="list-row-meta">{{ meta }}</span>{% endif %}
+  </span>
+  <span class="list-row-status">{{ status or '' }}</span>
+{% if href %}</a>{% else %}</div>{% endif %}
+{%- endmacro %}
+
+{% macro data_table(columns, rows, dense=False, caption=None) -%}
+<div class="table-wrap">
+  <table class="data-table{% if dense %} data-table-dense{% endif %}">
+    {% if caption %}<caption>{{ caption }}</caption>{% endif %}
+    <thead>
+      <tr>{% for col in columns %}<th scope="col">{{ col }}</th>{% endfor %}</tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}
+
+{% macro tabs(items, label='Sections') -%}
+<nav class="tabs" aria-label="{{ label }}">
+  {% for item in items %}
+  <a href="{{ item.href }}" {% if item.current %}aria-current="page"{% endif %}>{{ item.label }}</a>
+  {% endfor %}
+</nav>
+{%- endmacro %}
+
+{% macro field(label, name, type='text', value='', help=None, error=None, required=False, placeholder='', options=None) -%}
+<div class="field{% if error %} field-invalid{% endif %}">
+  {% if type == 'checkbox' %}
+  <label class="check">
+    <input type="checkbox" id="{{ name }}" name="{{ name }}" {% if value %}checked{% endif %} {% if required %}required{% endif %}>
+    <span>{{ label }}</span>
+  </label>
+  {% elif type == 'file' %}
+  <span id="{{ name }}-label">{{ label }}</span>
+  <label class="dropzone">
+    <input type="file" id="{{ name }}" name="{{ name }}" aria-labelledby="{{ name }}-label" {% if required %}required{% endif %}>
+    <span>Drop a file here, or choose one</span>
+  </label>
+  {% elif type == 'textarea' %}
+  <label for="{{ name }}">{{ label }}</label>
+  <textarea id="{{ name }}" name="{{ name }}" {% if required %}required{% endif %} {% if error %}aria-invalid="true"{% endif %}>{{ value }}</textarea>
+  {% elif type == 'select' %}
+  <label for="{{ name }}">{{ label }}</label>
+  <select id="{{ name }}" name="{{ name }}" {% if required %}required{% endif %} {% if error %}aria-invalid="true"{% endif %}>
+    {% for opt in options or [] %}
+      {% set opt_value = opt.value if opt is mapping else opt %}
+      {% set opt_label = opt.label if opt is mapping else opt %}
+      <option value="{{ opt_value }}" {% if opt_value == value %}selected{% endif %}>{{ opt_label }}</option>
+    {% endfor %}
+  </select>
+  {% else %}
+  <label for="{{ name }}">{{ label }}</label>
+  <input type="{{ type }}" id="{{ name }}" name="{{ name }}" value="{{ value }}" {% if placeholder %}placeholder="{{ placeholder }}"{% endif %} {% if required %}required{% endif %} {% if error %}aria-invalid="true"{% endif %} {% if error %}aria-describedby="{{ name }}-error"{% elif help %}aria-describedby="{{ name }}-help"{% endif %}>
+  {% endif %}
+  {% if help %}<p class="field-help" id="{{ name }}-help">{{ help }}</p>{% endif %}
+  {% if error %}<p class="field-error" id="{{ name }}-error">{{ error }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro callout(kind='info', title=None) -%}
+<aside class="callout callout-{{ kind }}">
+  {% if title %}<p class="callout-title">{{ title }}</p>{% endif %}
+  <div class="callout-body">{{ caller() }}</div>
+</aside>
+{%- endmacro %}
+
+{% macro empty_state(title, message, action_href=None, action_label=None) -%}
+<div class="empty">
+  <p class="empty-title">{{ title }}</p>
+  <p class="empty-message">{{ message }}</p>
+  {% if action_href and action_label %}{{ button(action_label, href=action_href) }}{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro skeleton(lines=3) -%}
+<div class="skeleton" aria-hidden="true">
+  {% for _ in range(lines) %}<span class="skeleton-line"></span>{% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro toast(message, kind='info', href=None, link_label=None) -%}
+<div class="toast toast-{{ kind }}">
+  <p>{{ message }}</p>
+  {% if href %}<a href="{{ href }}">{{ link_label or 'Open' }}</a>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro stat_tile(label, value=None, unavailable=False, note=None) -%}
+<article class="stat{% if unavailable %} stat-unavailable{% endif %}">
+  <p class="stat-value">{% if unavailable %}—{% else %}{{ value }}{% endif %}</p>
+  <p class="stat-label">{{ label }}</p>
+  {% if unavailable %}<p class="stat-note">Count unavailable</p>{% elif note %}<p class="stat-note">{{ note }}</p>{% endif %}
+</article>
+{%- endmacro %}
+
+{% macro pillar_tile(name, slug, href=None, meta=None) -%}
+<a class="pillar-tile pillar-{{ slug }}" href="{{ href or ('/pillars/' ~ slug) }}">
+  <span class="pillar-tile-name">{{ name }}</span>
+  {% if meta %}<span class="pillar-tile-meta">{{ meta }}</span>{% endif %}
+</a>
+{%- endmacro %}
+
+{% macro dialog(id, title) -%}
+<dialog id="{{ id }}" class="dialog" aria-labelledby="{{ id }}-title">
+  <article>
+    <header>
+      <h2 id="{{ id }}-title">{{ title }}</h2>
+      <button type="button" class="dialog-close" data-dialog-close aria-label="Close">&times;</button>
+    </header>
+    <div class="dialog-body">{{ caller() }}</div>
+  </article>
+</dialog>
+{%- endmacro %}
