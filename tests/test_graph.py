@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 from typer.testing import CliRunner
 
-from nlp_pillars.citations import citations_from_tool
+from nlp_pillars.citations import citations_from_tool, fetch_library_citations
 from nlp_pillars.cli import app
 from nlp_pillars.graph import (
     AUTHORS_PER_PAPER,
@@ -23,11 +23,14 @@ from nlp_pillars.graph import (
     run_graph_build,
     slice_graph,
 )
-from nlp_pillars.graph_store import load_snapshot
+from nlp_pillars.graph_store import GraphStoreError, load_graph_rows, load_snapshot
 from nlp_pillars.orchestrator import Orchestrator
 from nlp_pillars.paper_vectors import SOURCE_TITLE_ABSTRACT
 from nlp_pillars.schemas import Lesson, PaperRef
-from nlp_pillars.tools.semantic_scholar_tool import SemanticScholarTool
+from nlp_pillars.tools.semantic_scholar_tool import (
+    SemanticScholarError,
+    SemanticScholarTool,
+)
 
 MIGRATION_SQL = (
     Path(__file__).resolve().parents[1] / "docs/migrations/020_knowledge_graph.sql"
@@ -450,6 +453,7 @@ def test_dry_run_does_not_fetch_embed_or_write():
     assert report.dry_run is True
     assert report.citations_fetched == 0
     assert report.citations_to_fetch == 2
+    assert "citations failed: 0" in report.render()
     assert "dry-run" in report.render()
 
 
@@ -481,6 +485,141 @@ def test_citation_fetch_uses_the_real_tool_interface_and_not_external_ids():
     queried = {call.args[0] for call in tool.get_references.call_args_list}
     assert queried == {"arxiv:1", "arxiv:2"}
     assert "ext:9" not in queried
+
+
+def test_file_uploads_are_not_sent_and_failures_are_counted():
+    tool = Mock(spec=SemanticScholarTool)
+    tool.get_references.side_effect = SemanticScholarError(
+        "Client error '403 Forbidden'"
+    )
+    tool.get_citations.side_effect = SemanticScholarError(
+        "Client error '403 Forbidden'"
+    )
+    assert citations_from_tool("file:2dd76e910fbc", tool) == []
+    tool.get_references.assert_not_called()
+    tool.get_citations.assert_not_called()
+
+    snapshot = _snapshot(
+        papers=[_paper("arxiv:1"), _paper("file:2dd76e910fbc")],
+        notes=[],
+    )
+    report = run_graph_build(
+        snapshot,
+        dry_run=False,
+        citation_tool=tool,
+        store_citations=lambda _rows: 0,
+        apply=MemoryGraphStore().apply,
+    )
+    assert report.citations_to_fetch == 1
+    assert report.citations_fetched == 0
+    assert report.citations_failed == 2
+    rendered = report.render()
+    assert "citations failed: 2 (Client error '403 Forbidden')" in rendered
+    assert tool.get_references.call_count == 1
+    assert tool.get_citations.call_count == 1
+    assert tool.get_references.call_args.args[0] == "arxiv:1"
+
+
+def test_a_genuine_zero_is_not_a_citation_failure():
+    tool = Mock(spec=SemanticScholarTool)
+    tool.get_references.return_value = []
+    tool.get_citations.return_value = []
+    rows, failures = fetch_library_citations(["arxiv:1", "file:abc"], tool)
+    assert rows == []
+    assert failures == []
+    tool.get_references.assert_called_once_with("arxiv:1", limit=20)
+
+
+class _PageQuery:
+    def __init__(self, table, rows, ignore_offset=False):
+        self.table = table
+        self.rows = rows
+        self.ignore_offset = ignore_offset
+        self.params = {}
+
+    def select(self, columns):
+        self.params["select"] = columns
+        return self
+
+    def order(self, column, desc=False):
+        self.params["order"] = column
+        return self
+
+    def limit(self, count):
+        self.params["limit"] = count
+        return self
+
+    def offset(self, count):
+        self.params["offset"] = count
+        return self
+
+    def execute(self):
+        keys = [part.strip() for part in self.params["order"].split(",")]
+        ordered = sorted(
+            self.rows,
+            key=lambda row: tuple(str(row.get(key) or "") for key in keys),
+        )
+        start = 0 if self.ignore_offset else int(self.params.get("offset") or 0)
+        count = int(self.params["limit"])
+        return {"data": ordered[start : start + count], "error": None}
+
+
+def _paging_client(rows, ignore_offset=False):
+    seen = []
+
+    def table(name):
+        query = _PageQuery(name, list(rows.get(name, [])), ignore_offset)
+        seen.append(query)
+        return query
+
+    client = Mock()
+    client.table.side_effect = table
+    client.seen = seen
+    return client
+
+
+def _edge(index):
+    return {
+        "src_kind": "paper",
+        "src_id": f"p{index:04d}",
+        "dst_kind": "paper",
+        "dst_id": "hub",
+        "kind": "cites",
+        "weight": 1,
+        "provenance": "semantic_scholar",
+    }
+
+
+def test_graph_read_pages_past_200_and_1000_edges(monkeypatch):
+    import nlp_pillars.graph_store as graph_store
+
+    edges = [_edge(index) for index in range(1001)]
+    concepts = [{"name": f"concept-{index:04d}", "aliases": []} for index in range(201)]
+    client = _paging_client({"graph_edges": edges, "concepts": concepts})
+    monkeypatch.setattr(graph_store.db, "get_client", lambda: client)
+    loaded = load_graph_rows()
+    assert len(loaded["edges"]) == 1001
+    assert len(loaded["concepts"]) == 201
+    edge_calls = [query for query in client.seen if query.table == "graph_edges"]
+    assert len(edge_calls) == 6
+    assert edge_calls[0].params["order"] == (
+        "src_kind,src_id,dst_kind,dst_id,kind"
+    )
+    assert edge_calls[1].params["offset"] == 200
+    concept_calls = [query for query in client.seen if query.table == "concepts"]
+    assert len(concept_calls) == 2
+
+
+def test_graph_paging_guard_trips_when_the_offset_does_not_advance(monkeypatch):
+    import nlp_pillars.graph_store as graph_store
+
+    client = _paging_client(
+        {"graph_edges": [_edge(index) for index in range(250)]},
+        ignore_offset=True,
+    )
+    monkeypatch.setattr(graph_store.db, "get_client", lambda: client)
+    with pytest.raises(GraphStoreError, match="did not advance past offset 200"):
+        load_graph_rows()
 
 
 def test_slice_respects_depth_pillar_and_the_size_cap():

@@ -64,6 +64,37 @@ def _missing_table(error: Any, table: str) -> bool:
     )
 
 
+def _marker(table: str, row: dict) -> tuple:
+    """Identity of the first row on a page.
+
+    ``graph_edges`` and ``concepts`` have none of the id columns the old
+    marker read, so every page looked like ``("None", "", "", "")`` and the
+    guard rejected a real second page. The tuple is the row's order key.
+    """
+    if table == "graph_edges":
+        return (
+            str(row.get("src_kind") or ""),
+            str(row.get("src_id") or ""),
+            str(row.get("dst_kind") or ""),
+            str(row.get("dst_id") or ""),
+            str(row.get("kind") or ""),
+        )
+    if table == "concepts":
+        return (str(row.get("name") or ""), str(row.get("id") or ""))
+    return (
+        str(
+            row.get("id")
+            or row.get("paper_id")
+            or row.get("chunk_id")
+            or row.get("ref_id")
+            or ""
+        ),
+        str(row.get("ref_kind") or ""),
+        str(row.get("model_id") or ""),
+        str(row.get("source") or ""),
+    )
+
+
 def _read_table(table: str, columns: str, order: str) -> List[dict]:
     client = db.get_client()
     rows: List[dict] = []
@@ -83,18 +114,7 @@ def _read_table(table: str, columns: str, order: str) -> List[dict]:
         page = response["data"] or []
         if not page:
             return rows
-        first = page[0]
-        marker = (
-            str(
-                first.get("id")
-                or first.get("paper_id")
-                or first.get("chunk_id")
-                or first.get("ref_id")
-            ),
-            str(first.get("ref_kind") or ""),
-            str(first.get("model_id") or ""),
-            str(first.get("source") or ""),
-        )
+        marker = _marker(table, page[0])
         if marker == previous:
             raise GraphStoreError(
                 f"Reading {table} did not advance past offset {offset}"
@@ -255,7 +275,7 @@ def load_graph_rows() -> Dict[str, list]:
         "edges": _read_table(
             "graph_edges",
             "src_kind,src_id,dst_kind,dst_id,kind,weight,provenance",
-            "src_kind,src_id",
+            "src_kind,src_id,dst_kind,dst_id,kind",
         ),
     }
 

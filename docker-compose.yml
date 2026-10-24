@@ -244,8 +244,14 @@ services:
       - uploads_data:/app/data
       # Same folder the scheduler writes when VAULT_EXPORT_ENABLED=true, so
       # `vault export` from this container and the nightly refresh cannot
-      # diverge. Docker creates the host directory on first use.
-      - ${VAULT_HOST_DIR:-${HOME}/NLP-Vault}:/vault
+      # diverge. `./workstation up` creates the host directory as the user
+      # first. create_host_path: false stops Docker from making a missing
+      # folder root-owned when compose is started on its own.
+      - type: bind
+        source: "${VAULT_HOST_DIR:-${HOME}/NLP-Vault}"
+        target: /vault
+        bind:
+          create_host_path: false
     depends_on:
       # Map form (not the list form used before) so a condition can be set.
       # Search reads the local Qdrant, so wait until its healthcheck passes.
@@ -303,7 +309,11 @@ services:
       # A scheduled run can ingest PDFs, so it needs the same retained uploads
       # volume webui writes to — not a second, divergent copy.
       - uploads_data:/app/data
-      - ${VAULT_HOST_DIR:-${HOME}/NLP-Vault}:/vault
+      - type: bind
+        source: "${VAULT_HOST_DIR:-${HOME}/NLP-Vault}"
+        target: /vault
+        bind:
+          create_host_path: false
     depends_on:
       qdrant:
         condition: service_healthy

@@ -2303,6 +2303,21 @@ html[data-theme="journal"] .shortcuts-dialog > article {
   color: var(--on-accent);
 }
 
+.mini-expand {
+  display: none;
+  flex: none;
+  min-width: 44px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  font: 600 var(--fs-caption) / 1 var(--font-ui);
+  cursor: pointer;
+}
+
 .mini-scrub {
   flex: 2 1 120px;
   min-width: 80px;
@@ -2353,18 +2368,26 @@ html[data-player="on"] .toasts { bottom: 80px; }
     left: 0;
     right: 0;
     bottom: calc(59px + env(safe-area-inset-bottom));
-    flex-wrap: wrap;
-    padding-bottom: var(--space-2);
+    flex-wrap: nowrap;
+    align-items: center;
+    min-height: 52px;
+    padding: 6px var(--space-3);
   }
   html[data-theme="journal"] .mini-player:not([hidden]) {
     right: 12px;
     bottom: calc(71px + env(safe-area-inset-bottom));
     left: 12px;
   }
-  .mini-title { flex-basis: 100%; }
-  .mini-scrub { flex-basis: 100%; }
-  html[data-player="on"] .app-main { padding-bottom: 240px; }
-  html[data-player="on"] .toasts { bottom: 200px; }
+  .mini-expand { display: inline-flex; align-items: center; justify-content: center; }
+  .mini-player:not(.is-expanded) .mini-skip,
+  .mini-player:not(.is-expanded) .mini-scrub,
+  .mini-player:not(.is-expanded) .mini-rate { display: none; }
+  .mini-player.is-expanded { flex-wrap: wrap; }
+  .mini-player.is-expanded .mini-scrub { flex: 1 1 100%; }
+  html[data-player="on"] .app-main { padding-bottom: 140px; }
+  html[data-player="expanded"] .app-main { padding-bottom: 240px; }
+  html[data-player="on"] .toasts { bottom: 130px; }
+  html[data-player="expanded"] .toasts { bottom: 210px; }
 }
 
 .kbd {
@@ -2883,7 +2906,7 @@ html[data-theme="cockpit"] .streak-count { font-family: var(--font-ui); font-wei
 
 .streak-dots {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-2);
   margin: var(--space-4) 0 0;
   padding: 0;
@@ -2912,6 +2935,18 @@ html[data-theme="cockpit"] .streak-count { font-family: var(--font-ui); font-wei
 .streak-dot.is-today { box-shadow: var(--focus-ring); }
 
 .streak-dot.is-future { opacity: 0.55; }
+
+@media (max-width: 859px) {
+  .streak { min-width: 0; }
+  .streak-dots { gap: 4px; width: 100%; }
+  .streak-dot {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 32px;
+    height: 32px;
+  }
+}
 
 .outcome {
   display: flex;

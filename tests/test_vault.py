@@ -16,7 +16,11 @@ from nlp_pillars.vault import (
     resolve_vault_dir,
     short_id,
 )
-from nlp_pillars.vault_store import VaultStoreError, load_vault_snapshot
+from nlp_pillars.vault_store import (
+    VaultStoreError,
+    export_library,
+    load_vault_snapshot,
+)
 
 GOLDEN = Path(__file__).parent / "fixtures" / "vault"
 RUNNER = CliRunner()
@@ -497,4 +501,15 @@ def test_cli_dry_run_prints_counts_and_does_not_require_a_model(monkeypatch, tmp
     assert seen["dry_run"] is True
     assert seen["out"] == tmp_path
     assert "dry-run" in result.output
-    assert "would write: 1" in result.output
+    assert result.output.count("would write: 1") == 1
+
+
+def test_export_library_does_not_log_the_report(monkeypatch, caplog, tmp_path):
+    """The CLI prints the report. Logging it here showed the counts twice."""
+    import nlp_pillars.vault_store as vault_store
+
+    monkeypatch.setattr(vault_store, "load_vault_snapshot", lambda: library())
+    with caplog.at_level("INFO"):
+        report = export_library(tmp_path, dry_run=True)
+    assert "would write" in report.render()
+    assert report.render() not in caplog.text

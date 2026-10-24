@@ -243,6 +243,8 @@ class GraphBuildReport:
     citations_fetched: int
     citations_stored: int
     warnings: List[str]
+    citations_failed: int = 0
+    citations_failure_reason: str = ""
 
     def render(self) -> str:
         """Plain-text summary. Markup is left off so ids are not styled."""
@@ -261,8 +263,22 @@ class GraphBuildReport:
             f"citations fetched: {self.citations_fetched}",
             f"citations newly stored: {self.citations_stored}",
         ]
+        if self.citations_failed:
+            reason = self.citations_failure_reason or "request failed"
+            lines.append(f"citations failed: {self.citations_failed} ({reason})")
+        else:
+            lines.append("citations failed: 0")
         lines.extend(f"warning: {warning}" for warning in self.warnings)
         return "\n".join(lines)
+
+
+def _citation_failure_reason(reasons: Sequence[str]) -> str:
+    """One short reason, or a few when the failures differ."""
+    unique: List[str] = []
+    for reason in reasons:
+        if reason and reason not in unique:
+            unique.append(reason)
+    return "; ".join(unique[:3])
 
 
 def merge_names(
@@ -724,14 +740,15 @@ def run_graph_build(
     paper_ids = [
         str(paper["id"]) for paper in snapshot.papers if paper.get("id")
     ]
-    citations_to_fetch = len(paper_ids) if citation_tool is not None else 0
+    # file: uploads 404 on Semantic Scholar. Counting them as "to fetch"
+    # made a string of failures look like a plan.
+    query_ids = [paper_id for paper_id in paper_ids if not paper_id.startswith("file:")]
+    citations_to_fetch = len(query_ids) if citation_tool is not None else 0
     fetched: List[PaperCitation] = []
+    failures: List[str] = []
     stored = 0
     if not dry_run and citation_tool is not None:
-        fetched, fetch_warnings = fetch_library_citations(
-            paper_ids, citation_tool
-        )
-        warnings.extend(fetch_warnings)
+        fetched, failures = fetch_library_citations(query_ids, citation_tool)
         if fetched and store_citations is not None:
             added = store_citations(fetched)
             stored = added if isinstance(added, int) else 0
@@ -772,6 +789,10 @@ def run_graph_build(
         citations_fetched=0 if dry_run else len(fetched),
         citations_stored=0 if dry_run else stored,
         warnings=warnings,
+        citations_failed=0 if dry_run else len(failures),
+        citations_failure_reason=(
+            "" if dry_run or not failures else _citation_failure_reason(failures)
+        ),
     )
 
 

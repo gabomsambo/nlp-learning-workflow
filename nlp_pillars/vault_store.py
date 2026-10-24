@@ -6,13 +6,10 @@ tables through PostgREST. It does not embed text and does not call a model.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from . import db
 from .vault import ExportReport, VaultExportError, VaultSnapshot, apply_export
-
-logger = logging.getLogger(__name__)
 
 MIGRATION = "docs/migrations/020_knowledge_graph.sql"
 _PAGE = 200
@@ -141,5 +138,6 @@ def export_library(out: Path, *, dry_run: bool = False) -> ExportReport:
         raise VaultStoreError(str(exc)) from exc
     except OSError as exc:
         raise VaultStoreError(f"Could not write the vault at {out}: {exc}") from exc
-    logger.info("%s", report.render())
+    # The CLI prints this report, and the scheduler logs it. Logging here too
+    # made `vault export` show the same counts twice.
     return report

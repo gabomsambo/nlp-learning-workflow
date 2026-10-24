@@ -693,13 +693,22 @@
     if (entry && typeof entry.run === 'function') entry.run();
   }
 
+  function syncPlayerChrome(bar) {
+    if (!bar || bar.hidden) {
+      document.documentElement.removeAttribute('data-player');
+      return;
+    }
+    var expanded = bar.classList.contains('is-expanded');
+    document.documentElement.setAttribute('data-player', expanded ? 'expanded' : 'on');
+  }
+
   function showPlayer(state) {
     var bar = document.getElementById('mini-player');
     var title = document.getElementById('mini-player-title');
     var rate = document.getElementById('mini-player-rate');
     if (!bar || !state) return;
     bar.hidden = false;
-    document.documentElement.setAttribute('data-player', 'on');
+    syncPlayerChrome(bar);
     if (title) {
       title.textContent = state.title || 'Episode';
       title.setAttribute('href', state.href || '/podcast/');
@@ -922,6 +931,17 @@
         if (clock && audio && isFinite(audio.duration) && audio.duration > 0) {
           clock.textContent = formatClock(next) + ' / ' + formatClock(audio.duration);
         }
+      });
+    }
+    var expand = document.getElementById('mini-player-expand');
+    var bar = document.getElementById('mini-player');
+    if (expand && bar) {
+      expand.addEventListener('click', function () {
+        var open = bar.classList.toggle('is-expanded');
+        expand.setAttribute('aria-expanded', open ? 'true' : 'false');
+        expand.textContent = open ? 'Less' : 'More';
+        expand.setAttribute('aria-label', open ? 'Hide playback controls' : 'Show playback controls');
+        syncPlayerChrome(bar);
       });
     }
     if (rate) {
