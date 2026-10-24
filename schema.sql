@@ -865,6 +865,145 @@ $$;
 GRANT EXECUTE ON FUNCTION replace_derived_graph(JSONB, JSONB, JSONB) TO web_anon;
 
 -- ==========================================
+-- PODCAST FACT CHECKS
+-- Same objects as docs/migrations/022_podcast_fact_checks.sql. Existing
+-- volumes apply that file by hand. A check reads paper_texts and writes
+-- these two tables. It does not update podcast_scripts.
+-- ==========================================
+CREATE TABLE podcast_fact_checks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    script_id UUID NOT NULL REFERENCES podcast_scripts(id) ON DELETE CASCADE,
+    script_sha256 TEXT NOT NULL CHECK (btrim(script_sha256) <> ''),
+    paper_text_sha256 TEXT NOT NULL CHECK (btrim(paper_text_sha256) <> ''),
+    status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+    models JSONB NOT NULL DEFAULT '{}'::jsonb,
+    prompt_version TEXT NOT NULL CHECK (btrim(prompt_version) <> ''),
+    counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0 CHECK (cost_usd >= 0),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    CONSTRAINT podcast_fact_checks_models_object
+        CHECK (jsonb_typeof(models) = 'object'),
+    CONSTRAINT podcast_fact_checks_counts_object
+        CHECK (jsonb_typeof(counts) = 'object')
+);
+
+CREATE INDEX podcast_fact_checks_script_id
+    ON podcast_fact_checks (script_id, created_at DESC);
+
+CREATE TABLE podcast_claims (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    fact_check_id UUID NOT NULL REFERENCES podcast_fact_checks(id) ON DELETE CASCADE,
+    line_index INTEGER NOT NULL CHECK (line_index >= 0),
+    span_start INTEGER NOT NULL CHECK (span_start >= 0),
+    span_end INTEGER NOT NULL CHECK (span_end >= span_start),
+    span_text TEXT NOT NULL,
+    claim TEXT NOT NULL CHECK (btrim(claim) <> ''),
+    scope TEXT NOT NULL CHECK (scope IN ('paper', 'background')),
+    category TEXT NOT NULL CHECK (category IN (
+        'number', 'method', 'setup', 'result', 'comparison',
+        'attribution', 'limitation', 'implication', 'background'
+    )),
+    verify_marker BOOLEAN NOT NULL DEFAULT false,
+    verdict TEXT NOT NULL CHECK (verdict IN (
+        'supported', 'partially_supported', 'contradicted',
+        'unsupported', 'not_checkable'
+    )),
+    error_type TEXT NOT NULL CHECK (error_type IN (
+        'number_mismatch', 'invented_detail', 'overstatement',
+        'wrong_attribution', 'method_misdescribed',
+        'outside_knowledge', 'other', 'none'
+    )),
+    severity TEXT NOT NULL CHECK (severity IN ('high', 'medium', 'low', 'none')),
+    rationale TEXT NOT NULL DEFAULT '',
+    source_says TEXT NOT NULL DEFAULT '',
+    evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+    evidence_status TEXT NOT NULL CHECK (evidence_status IN (
+        'located', 'not_located', 'not_required'
+    )),
+    judge_trail JSONB NOT NULL DEFAULT '[]'::jsonb,
+    dismissed_at TIMESTAMP WITH TIME ZONE,
+    dismissed_note TEXT,
+    CONSTRAINT podcast_claims_evidence_array
+        CHECK (jsonb_typeof(evidence) = 'array'),
+    CONSTRAINT podcast_claims_judge_trail_array
+        CHECK (jsonb_typeof(judge_trail) = 'array')
+);
+
+CREATE INDEX podcast_claims_fact_check_id ON podcast_claims (fact_check_id);
+
+CREATE OR REPLACE FUNCTION insert_podcast_fact_check(
+    p_check JSONB,
+    p_claims JSONB
+) RETURNS UUID
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    new_id UUID;
+    inserted INTEGER;
+BEGIN
+    IF p_check IS NULL OR jsonb_typeof(p_check) <> 'object' THEN
+        RAISE EXCEPTION 'fact check payload must be an object';
+    END IF;
+    IF p_claims IS NULL OR jsonb_typeof(p_claims) <> 'array' THEN
+        RAISE EXCEPTION 'fact check claims must be an array';
+    END IF;
+    IF p_check->>'status' IS DISTINCT FROM 'succeeded' THEN
+        RAISE EXCEPTION 'fact check insert only accepts status succeeded';
+    END IF;
+
+    INSERT INTO podcast_fact_checks (
+        script_id, script_sha256, paper_text_sha256, status,
+        models, prompt_version, counts, cost_usd
+    ) VALUES (
+        (p_check->>'script_id')::uuid,
+        p_check->>'script_sha256',
+        p_check->>'paper_text_sha256',
+        p_check->>'status',
+        COALESCE(p_check->'models', '{}'::jsonb),
+        p_check->>'prompt_version',
+        COALESCE(p_check->'counts', '{}'::jsonb),
+        COALESCE((p_check->>'cost_usd')::numeric, 0)
+    )
+    RETURNING id INTO new_id;
+
+    INSERT INTO podcast_claims (
+        fact_check_id, line_index, span_start, span_end, span_text,
+        claim, scope, category, verify_marker,
+        verdict, error_type, severity, rationale, source_says,
+        evidence, evidence_status, judge_trail
+    )
+    SELECT
+        new_id,
+        (elem->>'line_index')::integer,
+        (elem->>'span_start')::integer,
+        (elem->>'span_end')::integer,
+        elem->>'span_text',
+        elem->>'claim',
+        elem->>'scope',
+        elem->>'category',
+        COALESCE((elem->>'verify_marker')::boolean, false),
+        elem->>'verdict',
+        elem->>'error_type',
+        elem->>'severity',
+        COALESCE(elem->>'rationale', ''),
+        COALESCE(elem->>'source_says', ''),
+        COALESCE(elem->'evidence', '[]'::jsonb),
+        elem->>'evidence_status',
+        COALESCE(elem->'judge_trail', '[]'::jsonb)
+    FROM jsonb_array_elements(p_claims) AS elem;
+
+    GET DIAGNOSTICS inserted = ROW_COUNT;
+    IF inserted <> jsonb_array_length(p_claims) THEN
+        RAISE EXCEPTION 'stored % claims, expected %',
+            inserted, jsonb_array_length(p_claims);
+    END IF;
+    RETURN new_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION insert_podcast_fact_check(JSONB, JSONB) TO web_anon;
+
+-- ==========================================
 -- TRIGGERS
 -- ==========================================
 
@@ -1040,6 +1179,8 @@ COMMENT ON TABLE lessons IS 'Synthesized lessons and takeaways from papers';
 COMMENT ON TABLE quiz_cards IS 'Spaced repetition quiz cards for learning reinforcement';
 COMMENT ON TABLE pillars IS 'Dynamic learning pillars; reconstructed from code, id is a slug';
 COMMENT ON TABLE podcast_scripts IS 'Generated single-host podcast scripts; reconstructed from code';
+COMMENT ON TABLE podcast_fact_checks IS 'One finished fact-check of a podcast script against paper_texts. Does not change the script.';
+COMMENT ON TABLE podcast_claims IS 'Claims from one fact-check. Evidence quotes are only those located in the paper text.';
 COMMENT ON TABLE review_logs IS 'Per-review FSRS history; reconstructed from code';
 COMMENT ON TABLE user_fsrs_parameters IS 'Personalised FSRS weights w0-w17; reconstructed from code';
 COMMENT ON TABLE paper_citations IS 'Citation edges for discovery; reconstructed from code';

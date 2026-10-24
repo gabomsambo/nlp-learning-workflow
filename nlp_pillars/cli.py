@@ -1735,5 +1735,92 @@ def dates_repair():
     raise typer.Exit(0)
 
 
+factcheck_app = typer.Typer(
+    help="Check a podcast script against the stored paper text",
+    add_completion=False,
+)
+app.add_typer(factcheck_app, name="factcheck")
+
+
+@factcheck_app.command("run")
+def factcheck_run(
+    script: str = typer.Option(..., "--script", help="podcast_scripts id"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Read the script and stored paper text, then stop. "
+            "No model call and no write."
+        ),
+    ),
+):
+    """Fact-check one script. Flags claims; does not rewrite the script.
+
+    Apply docs/migrations/022_podcast_fact_checks.sql before a run that saves.
+    The source is paper_texts, the whole document, not the Ground Pack.
+    """
+    from .factcheck.constants import MIGRATION
+    from .factcheck.engine import execute_factcheck
+    from .factcheck.errors import FactcheckError
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        result = execute_factcheck(script, dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except FactcheckError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        if e.cost_usd:
+            console.print(
+                f"Spent ${e.cost_usd:.6f} before the failure. "
+                "Nothing was saved, and the script was not changed."
+            )
+        logging.error("factcheck failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except db.FactcheckSaveError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("factcheck save failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("factcheck failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    if result.dry_run:
+        console.print(
+            f"Dry run for script {result.script_id} paper {result.paper_id}"
+        )
+        console.print(
+            f"{result.paper_chars} characters of stored text, "
+            f"{result.chunk_count} chunks"
+        )
+        console.print(
+            "models "
+            f"extract={result.models['extract']} "
+            f"screen={result.models['screen']} "
+            f"rejudge={result.models['rejudge']}"
+        )
+        console.print("No model call. Nothing written.")
+        raise typer.Exit(0)
+
+    counts = result.counts
+    console.print(f"Fact check {result.fact_check_id}")
+    console.print(f"script {result.script_id} paper {result.paper_id}")
+    console.print(
+        f"claims {counts.get('claims', 0)} "
+        f"high {counts.get('high', 0)} "
+        f"medium {counts.get('medium', 0)} "
+        f"low {counts.get('low', 0)}"
+    )
+    console.print(f"cost_usd {result.cost_usd:.6f}")
+    for call in result.calls:
+        console.print(
+            f"call {call['step']} {call['model']} cost_usd {call['cost_usd']:.6f}"
+        )
+    console.print(f"Saved with {MIGRATION}. The script was not changed.")
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

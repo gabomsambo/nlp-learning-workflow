@@ -1,13 +1,15 @@
-"""Which models produce each podcast call.
+"""Which models produce each podcast call, and each fact-check step.
 
 The four Ground Pack prompts are mechanical extraction; call 5 is creative
-synthesis. This registry is the single place that names the providers and
-models, and env vars override the defaults without touching agent code —
-same extension pattern as ``nlp_pillars/podcast_options.py``.
+synthesis. Fact-check extraction and screening default to Haiku 5.5; the
+re-judge defaults to Sonnet 5.5. This registry is the single place that names
+the providers and models, and env vars override the defaults without touching
+agent code — same extension pattern as ``nlp_pillars/podcast_options.py``.
 
-Changing a model: set ``PODCAST_EXTRACTION_MODEL`` or ``PODCAST_SYNTHESIS_MODEL``
-in ``.env``. The provider is fixed per call kind (DeepSeek for extraction,
-Anthropic for synthesis); only the model id is overridable.
+Changing a model: set ``PODCAST_EXTRACTION_MODEL``, ``PODCAST_SYNTHESIS_MODEL``,
+``FACTCHECK_EXTRACT_MODEL``, ``FACTCHECK_SCREEN_MODEL``, or
+``FACTCHECK_REJUDGE_MODEL`` in ``.env``. The provider is fixed per call kind;
+only the model id is overridable.
 """
 
 from dataclasses import dataclass
@@ -54,4 +56,25 @@ SYNTHESIS_ROUTE = ModelRoute(
     provider="anthropic",
     default_model="claude-sonnet-5",
     settings_attr="podcast_synthesis_model",
+)
+
+# Fact-check. Haiku extracts and screens; Sonnet re-judges only flagged
+# claims. Current Claude models reject temperature — the caller omits it.
+FACTCHECK_EXTRACT = ModelRoute(
+    kind="factcheck_extract",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    settings_attr="factcheck_extract_model",
+)
+FACTCHECK_SCREEN = ModelRoute(
+    kind="factcheck_screen",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    settings_attr="factcheck_screen_model",
+)
+FACTCHECK_REJUDGE = ModelRoute(
+    kind="factcheck_rejudge",
+    provider="anthropic",
+    default_model="claude-sonnet-5-5",
+    settings_attr="factcheck_rejudge_model",
 )
