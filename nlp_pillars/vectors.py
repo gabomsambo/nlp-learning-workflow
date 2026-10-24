@@ -24,6 +24,7 @@ from .projector import (
     ensure_index,
     project_paper,
 )
+from .vector_health import INDEX_UNREACHABLE, ProjectionOutcome, failure_detail
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ def upsert_text(
     full_text: str,
     chunk_size: int = 0,
     overlap: int = 0,
-) -> int:
+) -> ProjectionOutcome:
     """Project ``paper_id``'s stored chunks into the vector indexes.
 
     The persist stage has already written ``paper_chunks`` and
@@ -136,10 +137,9 @@ def upsert_text(
     Returns how many of the paper's chunks the local index represents.
     Already-projected chunks count, so a second run is not "zero chunks".
 
-    A missing local client returns 0 (the VECTORS stage treats that as
-    failure for non-empty text). A local server that is up but rejects the
-    write raises ``ProjectionError`` with the reason. A configured cloud
-    target that is down is logged and does not change the return.
+    A missing or unreachable local target raises ``ProjectionError`` with
+    the classified reason. A configured cloud target that is down does not
+    fail the call; its reason is attached to the int-compatible outcome.
 
     Raises:
         ProjectionError: stored rows are missing, or the local index failed.
@@ -148,11 +148,16 @@ def upsert_text(
 
     if not full_text or not str(full_text).strip():
         logger.warning("Empty text provided for upsert")
-        return 0
+        return ProjectionOutcome(0)
 
     if get_client() is None:
-        logger.warning("Qdrant client not available. Cannot upsert text.")
-        return 0
+        raise ProjectionError(
+            failure_detail(
+                INDEX_UNREACHABLE,
+                "local",
+                "QDRANT_URL is not configured",
+            )
+        )
 
     logger.info("Projecting stored embeddings for paper %s in pillar %s", paper_id, pillar_id)
     projected = project_paper(pillar_id, paper_id)

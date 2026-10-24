@@ -29,6 +29,15 @@ from typing import AbstractSet, Callable, Iterable, List, Optional, Sequence
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .vector_health import (
+    CLOUD_SUSPENDED_OR_DELETED,
+    COLLECTION_OR_ALIAS_MISSING,
+    INDEX_UNREACHABLE,
+    PROJECTION_STATE_UNAVAILABLE,
+    ProjectionOutcome,
+    failure_detail,
+)
+
 logger = logging.getLogger(__name__)
 
 MIGRATION = "docs/migrations/019_vector_index_state.sql"
@@ -121,6 +130,7 @@ class SyncResult:
     deleted_ids: List[str] = field(default_factory=list)
     dry_run: bool = False
     unhealthy: bool = False
+    failure: Optional[str] = None
     error: Optional[str] = None
 
     def render(self) -> str:
@@ -142,6 +152,8 @@ class SyncResult:
             lines.append(f"deleted: {len(self.deleted_ids)}")
         if self.unhealthy:
             lines.append("unhealthy: true")
+        if self.failure:
+            lines.append(f"failure: {self.failure}")
         if self.error:
             lines.append(f"error: {self.error}")
         return "\n".join(lines)
@@ -160,12 +172,13 @@ def collection_name(model_id: str, dims: int) -> str:
     return f"chunks__{safe}__{int(dims)}"
 
 
-def probe(client: QdrantClient) -> Optional[str]:
-    """``None`` when the server answers. A reason string when it does not.
+def probe(client: QdrantClient, target: str) -> Optional[tuple[str, str]]:
+    """Return a classified failure when the server does not answer.
 
     A suspended Qdrant Cloud cluster returns plain text ``404 page not found``
-    on every path, including collection listing. That is "behind", not a
-    wrong URL and not proof the cluster was deleted.
+    on every path, including collection listing. The same ingress shape is
+    observed after deletion, so the app deliberately does not claim which
+    lifecycle state applies.
     """
     try:
         client.get_collections()
@@ -174,14 +187,24 @@ def probe(client: QdrantClient) -> Optional[str]:
         if isinstance(body, (bytes, bytearray)):
             body = body.decode("utf-8", "replace")
         text = body or ""
-        if exc.status_code == 404 and _UNHEALTHY_404 in text:
-            return (
-                "suspended (plain-text 404); this target stays behind "
-                "until the cluster answers"
+        if (
+            target == "cloud"
+            and exc.status_code == 404
+            and _UNHEALTHY_404 in text
+        ):
+            kind = CLOUD_SUSPENDED_OR_DELETED
+            return kind, failure_detail(
+                kind,
+                target,
+                "this target stays behind until a cloud cluster answers",
             )
-        return f"Qdrant answered HTTP {exc.status_code}"
+        kind = INDEX_UNREACHABLE
+        return kind, failure_detail(
+            kind, target, f"Qdrant answered HTTP {exc.status_code}"
+        )
     except Exception as exc:
-        return f"unreachable: {exc}"
+        kind = INDEX_UNREACHABLE
+        return kind, failure_detail(kind, target, str(exc))
     return None
 
 
@@ -269,9 +292,11 @@ def apply_projection(
         dry_run=dry_run,
     )
 
-    reason = probe(client)
-    if reason:
+    failed = probe(client, target)
+    if failed:
+        kind, reason = failed
         result.unhealthy = True
+        result.failure = kind
         result.error = reason
         return result
 
@@ -289,16 +314,27 @@ def apply_projection(
     try:
         result.collection = ensure_index(client, model_id, dims)
     except ProjectionError as exc:
-        result.error = str(exc)
+        result.failure = COLLECTION_OR_ALIAS_MISSING
+        result.error = failure_detail(result.failure, target, str(exc))
         return result
     except Exception as exc:
-        result.error = f"could not prepare collection {result.collection}: {exc}"
+        result.failure = COLLECTION_OR_ALIAS_MISSING
+        result.error = failure_detail(
+            result.failure,
+            target,
+            f"could not prepare collection {result.collection}: {exc}",
+        )
         return result
 
     try:
         result.upserted_ids = _upsert_chunks(client, result.collection, pending)
     except Exception as exc:
-        result.error = f"upsert failed after {len(result.upserted_ids)} point(s): {exc}"
+        result.failure = INDEX_UNREACHABLE
+        result.error = failure_detail(
+            result.failure,
+            target,
+            f"upsert failed after {len(result.upserted_ids)} point(s): {exc}",
+        )
         return result
 
     try:
@@ -311,7 +347,10 @@ def apply_projection(
             scope_complete=scope_complete,
         )
     except Exception as exc:
-        result.error = f"delete of stale points failed: {exc}"
+        result.failure = INDEX_UNREACHABLE
+        result.error = failure_detail(
+            result.failure, target, f"delete of stale points failed: {exc}"
+        )
         return result
     result.deleted_ids = sorted(deleted)
     return result
@@ -350,7 +389,7 @@ def open_client(target: str) -> Optional[QdrantClient]:
     return QdrantClient(url=url, timeout=30)
 
 
-def project_paper(pillar_id: str, paper_id: str) -> int:
+def project_paper(pillar_id: str, paper_id: str) -> ProjectionOutcome:
     """Project one paper's stored embeddings to local, then cloud if configured.
 
     Returns how many of the paper's chunks the local index now represents
@@ -383,12 +422,16 @@ def project_paper(pillar_id: str, paper_id: str) -> int:
 
     local = vectors.get_client()
     if local is None:
+        kind = INDEX_UNREACHABLE
         local_result = SyncResult(
             target="local",
             model_id=model_id,
             dims=dims,
             collection=collection_name(model_id, dims),
-            error="local vector index is not configured (QDRANT_URL)",
+            failure=kind,
+            error=failure_detail(
+                kind, "local", "QDRANT_URL is not configured"
+            ),
         )
     else:
         # loud=False so a local failure still lets the cloud copy catch up.
@@ -406,10 +449,11 @@ def project_paper(pillar_id: str, paper_id: str) -> int:
             loud=False,
         )
 
+    notices: List[str] = []
     if _cloud_configured():
-        cloud = open_client("cloud")
         try:
-            _sync_loaded(
+            cloud = open_client("cloud")
+            cloud_result = _sync_loaded(
                 "cloud",
                 cloud,
                 chunks,
@@ -421,14 +465,25 @@ def project_paper(pillar_id: str, paper_id: str) -> int:
                 scroll_paper_ids={paper_id},
                 loud=False,
             )
-        except ProjectionError as exc:
-            logger.warning("cloud projection left behind for %s: %s", paper_id, exc)
+        except Exception as exc:
+            notice = failure_detail(INDEX_UNREACHABLE, "cloud", str(exc))
+            notices.append(notice)
+            logger.warning(
+                "cloud projection left behind for %s: %s", paper_id, notice
+            )
+        else:
+            if cloud_result.unhealthy or cloud_result.error:
+                notice = cloud_result.error or "cloud vector projection is behind"
+                notices.append(notice)
+                logger.warning(
+                    "cloud projection left behind for %s: %s", paper_id, notice
+                )
 
     if local is None or local_result.unhealthy or local_result.error:
         raise ProjectionError(
             local_result.error or "local vector index failed"
         )
-    return len(chunks)
+    return ProjectionOutcome(len(chunks), notices)
 
 
 def sync_targets(
@@ -473,6 +528,7 @@ def sync_targets(
                 collection=collection_name(model_id, provider.dims),
                 pending=pending,
                 dry_run=dry_run,
+                failure=INDEX_UNREACHABLE,
                 error=message,
             ))
             continue
@@ -507,21 +563,39 @@ def _sync_loaded(
     from . import db
 
     if client is None:
+        kind = INDEX_UNREACHABLE
         result = SyncResult(
             target=target,
             model_id=model_id,
             dims=dims,
             collection=collection_name(model_id, dims),
             dry_run=dry_run,
-            error="not configured",
+            failure=kind,
+            error=failure_detail(kind, target, "not configured"),
         )
         if loud and not dry_run:
             raise ProjectionError(f"{target} vector index is not configured")
         logger.warning("%s projection left behind: not configured", target)
         return result
 
-    indexed = set(db.list_projection_state(target, model_id))
-    stale = set(db.list_projection_stale(target, model_id))
+    try:
+        indexed = set(db.list_projection_state(target, model_id))
+        stale = set(db.list_projection_stale(target, model_id))
+    except ProjectionError as exc:
+        kind = PROJECTION_STATE_UNAVAILABLE
+        result = SyncResult(
+            target=target,
+            model_id=model_id,
+            dims=dims,
+            collection=collection_name(model_id, dims),
+            dry_run=dry_run,
+            failure=kind,
+            error=failure_detail(kind, target, str(exc)),
+        )
+        if loud and not dry_run:
+            raise ProjectionError(result.error) from exc
+        logger.warning("%s projection left behind: %s", target, result.error)
+        return result
     result = apply_projection(
         client,
         target=target,
@@ -542,6 +616,7 @@ def _sync_loaded(
             db.forget_projection_state,
         )
     except ProjectionError as exc:
+        result.failure = result.failure or PROJECTION_STATE_UNAVAILABLE
         result.error = result.error or str(exc)
         if loud and not dry_run:
             raise

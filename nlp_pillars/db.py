@@ -1376,6 +1376,46 @@ def list_projection_state(target: str, model_id: str) -> List[str]:
         offset += len(page)
 
 
+def list_embedding_chunk_ids(model_id: str) -> List[str]:
+    """Chunk ids with a stored embedding for model_id, without vectors."""
+    rows: List[str] = []
+    offset = 0
+    previous_first = None
+    while True:
+        try:
+            client = get_client()
+            response = (
+                client.table('chunk_embeddings')
+                .select('chunk_id')
+                .eq('model_id', model_id)
+                .order('chunk_id')
+                .limit(_PAGE_SIZE)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as e:
+            raise EmbeddingError(
+                f"Could not read stored embedding ids for {model_id}: {e}"
+            ) from e
+        if response['error']:
+            raise EmbeddingError(
+                f"Could not read stored embedding ids for {model_id}: {response['error']}"
+            )
+        page = response['data'] or []
+        if not page:
+            return rows
+        marker = page[0].get('chunk_id')
+        if marker is not None and marker == previous_first:
+            raise EmbeddingError(
+                f"Reading embedding ids for {model_id} did not advance past offset {offset}"
+            )
+        previous_first = marker
+        rows.extend(str(row['chunk_id']) for row in page if row.get('chunk_id'))
+        if len(page) < _PAGE_SIZE:
+            return rows
+        offset += len(page)
+
+
 def list_projection_stale(target: str, model_id: str) -> List[str]:
     """Projected chunk ids whose ``paper_chunks`` row is gone.
 

@@ -55,7 +55,7 @@ def test_cloud_suspension_is_shown_and_does_not_fail_the_page():
     assert cloud["label"] == "Qdrant Cloud"
     assert cloud["state"] == "down"
     assert cloud["fatal"] is False
-    assert "Suspended free-tier cluster" in cloud["summary"]
+    assert "suspended or deleted" in cloud["summary"]
     assert "Qdrant Cloud console" in cloud["fix"]
     assert local["label"] == "Qdrant (local)"
     assert status.counts_as_down(cloud) is False
