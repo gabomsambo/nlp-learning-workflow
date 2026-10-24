@@ -1,9 +1,9 @@
 """Learner knowledge graph: plan it, store the derived rows, read a neighbourhood.
 
 Nothing here calls a model or the network. Concept-name embedding and Semantic
-Scholar are passed in by the caller, and a dry run uses neither. Chunk vectors
-are mean-pooled in this file; the database is not asked to do arithmetic on
-``real[]``.
+Scholar are passed in by the caller, and a dry run uses neither. Related-paper
+edges read one stored title+abstract vector per paper; the database is not
+asked to do arithmetic on ``real[]``.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .citations import fetch_library_citations
+from .paper_vectors import SOURCE_TITLE_ABSTRACT
 from .schemas import PaperCitation
 
 # Surface variants of one concept ("Self-Attention" / "self attention mechanism")
@@ -22,8 +23,20 @@ from .schemas import PaperCitation
 # bge cosine between NLP phrases sits high, and a low cut collapses the vocabulary.
 CONCEPT_MERGE_COSINE = 0.92
 
-# Rank cut. A fixed cosine floor linked almost every pair of NLP papers.
+# Neighbours kept per paper after the cosine floor. Five was already the rank
+# cut; without a floor it linked every paper to five others.
 RELATED_TOP_K = 5
+
+# Title+abstract bge cosines on the measured 12-paper library span 0.43–0.84
+# (std 0.093). Mean-pooled chunk centroids span 0.79–0.97 (std 0.042), so
+# top-k alone emitted 60 edges, 39 of them cross-pillar, all weighted
+# 0.84–0.97. Minimalist Grammars' five neighbours score 0.50–0.62 on
+# title+abstract; on-topic pairs in that measurement sit at 0.76–0.84
+# (DeepSeek-V4 ↔ DeepSeek-VL 0.84, the AML trio 0.76–0.81, Attention ↔ BPE
+# 0.77). 0.70 is in that gap, and it is the suggestion-eligibility floor
+# from the graph-page report (section 6). Pairs below it are dropped before
+# the rank cut. The floor is for this bge title+abstract space only.
+RELATED_MIN_COSINE = 0.70
 
 # One 319-author paper would otherwise flood the graph. First authors win.
 AUTHORS_PER_PAPER = 10
@@ -102,25 +115,6 @@ def cosine(left: Sequence[float], right: Sequence[float]) -> float:
     return dot / (math.sqrt(left_norm) * math.sqrt(right_norm))
 
 
-def mean_pool(vectors: Iterable[Sequence[float]]) -> List[float]:
-    """Arithmetic mean. Vectors of a different width are skipped."""
-    acc: List[float] = []
-    count = 0
-    for vector in vectors:
-        if not vector:
-            continue
-        if not acc:
-            acc = [0.0] * len(vector)
-        if len(vector) != len(acc):
-            continue
-        for index, value in enumerate(vector):
-            acc[index] += float(value)
-        count += 1
-    if count == 0:
-        return []
-    return [value / count for value in acc]
-
-
 def _as_vector(value: Any) -> List[float]:
     if isinstance(value, str):
         text = value.strip().strip("{}[]")
@@ -182,7 +176,7 @@ class GraphSnapshot:
     lessons: List[dict] = field(default_factory=list)
     cards: List[dict] = field(default_factory=list)
     episodes: List[dict] = field(default_factory=list)
-    chunk_vectors: List[dict] = field(default_factory=list)
+    paper_vectors: List[dict] = field(default_factory=list)
     citations: List[dict] = field(default_factory=list)
 
 
@@ -472,43 +466,52 @@ def _concept_plan(  # noqa: C901
     return concepts, links, edges, concept_merge
 
 
+def _title_abstract_by_model(snapshot: GraphSnapshot) -> Dict[str, List[dict]]:
+    """Library title+abstract rows grouped by model. Other sources are skipped."""
+    library = {str(paper["id"]) for paper in snapshot.papers if paper.get("id")}
+    by_model: Dict[str, List[dict]] = defaultdict(list)
+    for row in snapshot.paper_vectors:
+        if str(row.get("source") or "") != SOURCE_TITLE_ABSTRACT:
+            continue
+        if str(row.get("ref_kind") or "") != "paper":
+            continue
+        paper_id = str(row.get("ref_id") or "")
+        model_id = row.get("model_id")
+        vector = _as_vector(row.get("vector"))
+        if paper_id not in library or not model_id or not vector:
+            continue
+        by_model[str(model_id)].append(
+            {"paper_id": paper_id, "vector": vector}
+        )
+    return by_model
+
+
 def _related_edges(
     snapshot: GraphSnapshot,
 ) -> Tuple[Optional[str], List[GraphEdge]]:
-    library = {str(paper["id"]) for paper in snapshot.papers if paper.get("id")}
-    by_model: Dict[str, List[dict]] = defaultdict(list)
-    for row in snapshot.chunk_vectors:
-        paper_id = str(row.get("paper_id") or "")
-        model_id = row.get("model_id")
-        vector = _as_vector(row.get("vector"))
-        if paper_id in library and model_id and vector:
-            by_model[str(model_id)].append(
-                {"paper_id": paper_id, "vector": vector}
-            )
+    """Top-k title+abstract neighbours at or above ``RELATED_MIN_COSINE``.
+
+    One vector per library paper. Chunk means are not read. When several
+    models are stored, the one with the most rows wins (ties break by model
+    id) so two spaces are never mixed.
+    """
+    by_model = _title_abstract_by_model(snapshot)
     if not by_model:
         return None, []
 
     model_id = sorted(by_model, key=lambda name: (-len(by_model[name]), name))[0]
-    grouped: Dict[str, List[Sequence[float]]] = defaultdict(list)
+    vectors: Dict[str, Sequence[float]] = {}
     for row in by_model[model_id]:
-        grouped[row["paper_id"]].append(row["vector"])
-
-    centroids = {
-        paper_id: mean_pool(vectors)
-        for paper_id, vectors in grouped.items()
-    }
-    centroids = {
-        paper_id: vector for paper_id, vector in centroids.items() if vector
-    }
+        vectors.setdefault(row["paper_id"], row["vector"])
     provenance = f"derived:embedding:{model_id}"
     edges: List[GraphEdge] = []
-    for paper_id in sorted(centroids):
+    for paper_id in sorted(vectors):
         scored = []
-        for other_id in sorted(centroids):
+        for other_id in sorted(vectors):
             if other_id == paper_id:
                 continue
-            score = cosine(centroids[paper_id], centroids[other_id])
-            if score <= 0.0:
+            score = cosine(vectors[paper_id], vectors[other_id])
+            if score < RELATED_MIN_COSINE:
                 continue
             scored.append((score, other_id))
         scored.sort(key=lambda item: (-item[0], item[1]))

@@ -12,17 +12,20 @@ from nlp_pillars.citations import citations_from_tool
 from nlp_pillars.cli import app
 from nlp_pillars.graph import (
     AUTHORS_PER_PAPER,
+    RELATED_MIN_COSINE,
+    RELATED_TOP_K,
     GraphBuildReport,
     GraphEdge,
     GraphSnapshot,
     MemoryGraphStore,
     build_plan,
     canonicalize_term,
-    mean_pool,
     run_graph_build,
     slice_graph,
 )
+from nlp_pillars.graph_store import load_snapshot
 from nlp_pillars.orchestrator import Orchestrator
+from nlp_pillars.paper_vectors import SOURCE_TITLE_ABSTRACT
 from nlp_pillars.schemas import Lesson, PaperRef
 from nlp_pillars.tools.semantic_scholar_tool import SemanticScholarTool
 
@@ -205,8 +208,41 @@ def test_structural_edges_cap_authors_and_link_lesson_card_episode():
     assert ("episode", "paper", "of") in kinds
 
 
-def test_related_edges_are_mean_pooled_top_k_in_python():
-    assert mean_pool([[1.0, 1.0], [3.0, 3.0]]) == [2.0, 2.0]
+def _title_abstract(paper_id, vector, model_id="bge", source=SOURCE_TITLE_ABSTRACT):
+    return {
+        "ref_kind": "paper",
+        "ref_id": paper_id,
+        "model_id": model_id,
+        "source": source,
+        "vector": vector,
+    }
+
+
+def test_related_floor_is_the_measured_title_abstract_gap():
+    """0.70 sits between the unrelated band (≤0.62) and on-topic pairs (≥0.76)."""
+    assert RELATED_MIN_COSINE == 0.70
+    assert RELATED_TOP_K == 5
+
+
+def test_unrelated_papers_get_no_related_edge():
+    """Cosine 0.60 is the measured cross-pillar band. Top-k must not keep it.
+
+    Two papers only: without the floor, each is the other's neighbour.
+    """
+    snapshot = GraphSnapshot(
+        papers=[_paper("grammars"), _paper("probing")],
+        paper_vectors=[
+            _title_abstract("grammars", [1.0, 0.0]),
+            _title_abstract("probing", [0.6, 0.8]),
+        ],
+    )
+    plan = build_plan(snapshot)
+    related = [edge for edge in plan.edges if edge.kind == "related_to"]
+    assert related == []
+    assert plan.embedding_model == "bge"
+
+
+def test_related_edges_keep_title_abstract_neighbours_above_the_floor():
     snapshot = GraphSnapshot(
         papers=[
             _paper("arxiv:1"),
@@ -214,25 +250,120 @@ def test_related_edges_are_mean_pooled_top_k_in_python():
             _paper("arxiv:3"),
             _paper("arxiv:4"),
         ],
-        chunk_vectors=[
-            {"paper_id": "arxiv:1", "model_id": "bge", "vector": [1.0, 0.0]},
-            {"paper_id": "arxiv:1", "model_id": "bge", "vector": [1.0, 0.0]},
-            {"paper_id": "arxiv:2", "model_id": "bge", "vector": [0.8, 0.2]},
-            {"paper_id": "arxiv:4", "model_id": "bge", "vector": [0.0, 1.0]},
-            {"paper_id": "arxiv:3", "model_id": "other", "vector": [1.0, 0.0]},
+        paper_vectors=[
+            _title_abstract("arxiv:1", [1.0, 0.0]),
+            _title_abstract("arxiv:2", [0.8, 0.6]),
+            _title_abstract("arxiv:4", [-1.0, 0.0]),
+            _title_abstract("arxiv:3", [1.0, 0.0], model_id="other"),
+            {
+                "ref_kind": "external_paper",
+                "ref_id": "ext:1",
+                "model_id": "bge",
+                "source": SOURCE_TITLE_ABSTRACT,
+                "vector": [1.0, 0.0],
+            },
+            _title_abstract("arxiv:1", [0.0, 1.0], source="chunk_mean"),
         ],
     )
     plan = build_plan(snapshot)
     related = [edge for edge in plan.edges if edge.kind == "related_to"]
     assert plan.embedding_model == "bge"
-    pairs = {(edge.src_id, edge.dst_id) for edge in related}
-    assert ("arxiv:1", "arxiv:2") in pairs
-    assert ("arxiv:2", "arxiv:1") in pairs
-    # Orthogonal to arxiv:1, so that direction is dropped even though the
-    # paper is in the chosen model.
-    assert ("arxiv:1", "arxiv:4") not in pairs
+    pairs = {(edge.src_id, edge.dst_id, edge.weight) for edge in related}
+    assert pairs == {("arxiv:1", "arxiv:2", 0.8), ("arxiv:2", "arxiv:1", 0.8)}
     assert all(edge.provenance == "derived:embedding:bge" for edge in related)
-    assert all("arxiv:3" not in {edge.src_id, edge.dst_id} for edge in related)
+
+
+def test_related_edges_stop_at_top_k_when_every_pair_clears_the_floor():
+    papers = [_paper(f"p{index}") for index in range(RELATED_TOP_K + 2)]
+    vectors = [
+        _title_abstract(paper["id"], [1.0, 0.0]) for paper in papers
+    ]
+    plan = build_plan(GraphSnapshot(papers=papers, paper_vectors=vectors))
+    related = [edge for edge in plan.edges if edge.kind == "related_to"]
+    by_src = {}
+    for edge in related:
+        by_src.setdefault(edge.src_id, set()).add(edge.dst_id)
+    assert len(related) == len(papers) * RELATED_TOP_K
+    for paper in papers:
+        neighbours = by_src[paper["id"]]
+        assert len(neighbours) == RELATED_TOP_K
+        assert paper["id"] not in neighbours
+
+
+def test_related_rebuild_does_not_duplicate_edges():
+    snapshot = GraphSnapshot(
+        papers=[_paper("arxiv:1"), _paper("arxiv:2")],
+        paper_vectors=[
+            _title_abstract("arxiv:1", [1.0, 0.0]),
+            _title_abstract("arxiv:2", [0.8, 0.6]),
+        ],
+    )
+    store = MemoryGraphStore()
+    first = run_graph_build(
+        snapshot, dry_run=False, citation_tool=None, apply=store.apply
+    )
+    before = len(store.edges)
+    second = run_graph_build(
+        snapshot, dry_run=False, citation_tool=None, apply=store.apply
+    )
+    assert second.edges == first.edges
+    assert len(store.edges) == before
+    related = [edge for edge in store.edges.values() if edge.kind == "related_to"]
+    assert len(related) == 2
+
+
+def test_load_snapshot_names_the_migration_when_paper_vectors_is_missing(monkeypatch):
+    from nlp_pillars.graph_store import GraphStoreError
+
+    def fake_read(table, columns, order):
+        if table == "paper_vectors":
+            raise GraphStoreError(
+                "Could not find the table paper_vectors in the schema cache PGRST205"
+            )
+        return []
+
+    monkeypatch.setattr("nlp_pillars.graph_store._read_table", fake_read)
+    snapshot, warnings = load_snapshot()
+    assert snapshot.paper_vectors == []
+    assert any("021_paper_vectors" in warning for warning in warnings)
+    assert any("related_to" in warning for warning in warnings)
+
+
+def test_load_snapshot_reads_paper_vectors(monkeypatch):
+    tables = {
+        "papers": [{"id": "arxiv:1", "pillar_id": "p", "title": "T", "authors": []}],
+        "pillars": [],
+        "notes": [],
+        "lessons": [],
+        "quiz_cards": [],
+        "podcast_scripts": [],
+        "paper_citations": [],
+        "paper_vectors": [{
+            "ref_kind": "paper",
+            "ref_id": "arxiv:1",
+            "model_id": "bge",
+            "source": "title_abstract",
+            "vec": [0.2, 0.3],
+        }],
+    }
+
+    def fake_read(table, columns, order):
+        assert table not in {"chunk_embeddings", "paper_chunks"}
+        assert table in tables
+        if table == "paper_vectors":
+            assert "vec" in columns
+        return tables[table]
+
+    monkeypatch.setattr("nlp_pillars.graph_store._read_table", fake_read)
+    snapshot, warnings = load_snapshot()
+    assert warnings == []
+    assert snapshot.paper_vectors == [{
+        "ref_kind": "paper",
+        "ref_id": "arxiv:1",
+        "model_id": "bge",
+        "source": "title_abstract",
+        "vector": [0.2, 0.3],
+    }]
 
 
 def test_citation_edges_use_library_papers_only():

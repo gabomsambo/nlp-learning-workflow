@@ -11,8 +11,9 @@
 -- Structural edges (a paper's pillar, authors, lesson, cards, episode) are
 -- stored here too, with provenance derived:structure, and removed on rebuild.
 -- They are still derived: the columns they came from remain the truth.
--- Citation edges copy paper_citations. Embedding edges are mean-pooled from
--- chunk_embeddings in Python. Provenance derived:% and semantic_scholar are
+-- Citation edges copy paper_citations. related_to edges are the top
+-- title+abstract neighbours from paper_vectors (migration 021), not
+-- mean-pooled chunk embeddings. Provenance derived:% and semantic_scholar are
 -- replaced wholesale. provenance user and llm:% are left in place.
 --
 -- Concept endpoints in graph_edges are the canonical name, not concepts.id.

@@ -370,9 +370,15 @@ download to `EMBEDDING_CACHE_DIR` (compose: `/app/data/embedding-models` on the
 uploads volume, about 208 MB the first time), not into the image.
 `python -m nlp_pillars.cli embeddings backfill` fills chunks that lack a row
 for the active model (`--dry-run` prints counts only).
+`python -m nlp_pillars.cli embeddings papers` stores one title+abstract
+vector per library paper in `paper_vectors`
+(`docs/migrations/021_paper_vectors.sql`, hand-applied) using the pinned
+local bge model only — it does not follow `EMBEDDING_PROVIDER` and does not
+call OpenAI. A second run leaves an existing `(paper, model, title_abstract)`
+row alone and does not load the model (`--dry-run` prints counts only).
 `python -m nlp_pillars.cli text backfill` re-extracts retained uploads and
 re-downloads URL papers (`--dry-run` prints counts only).
-`python -m nlp_pillars.cli vectors sync` projects those rows into Qdrant.
+`python -m nlp_pillars.cli vectors sync` projects the chunk embeddings into Qdrant.
 **019 (`vector_index_state`) must be applied by hand** before that sync, or
 before an ingest projects; until it is, the call names
 `docs/migrations/019_vector_index_state.sql`.
@@ -381,7 +387,14 @@ The learner graph is the same kind of projection. `concepts`, `paper_concepts`
 and `graph_edges` (`docs/migrations/020_knowledge_graph.sql`, hand-applied) are
 rebuilt by `python -m nlp_pillars.cli graph build` from pillars, papers, authors
 (capped at 10), lessons, quiz cards, episodes, `notes.key_terms` and
-mean-pooled `chunk_embeddings`. Derived rows are deleted and written again, so
+title+abstract rows in `paper_vectors`. `related_to` keeps at most
+`RELATED_TOP_K` (5) neighbours whose cosine is at least `RELATED_MIN_COSINE`
+(0.70). That floor is the gap in the measured library: title+abstract bge
+pairs span 0.43–0.84 (std 0.093), unrelated cross-pillar neighbours of
+*Minimalist Grammars* sit at 0.50–0.62, and on-topic pairs sit at 0.76–0.84.
+Mean-pooled chunk vectors (0.79–0.97, std 0.042) are not the input.
+`scripts/paper_vector_spread.py` prints the pairwise std for a later check.
+Derived rows are deleted and written again, so
 a second build does not duplicate an edge. Semantic Scholar citations for
 library papers are fetched on that build (the tool's own rate limit; cited
 papers that are not in the library are not queried) and also when a paper is

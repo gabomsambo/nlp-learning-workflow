@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 from .embeddings import EmbeddingError, MIGRATION as EMBEDDINGS_MIGRATION
+from .paper_vectors import MIGRATION as PAPER_VECTORS_MIGRATION
 from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
     PaperRef, PaperNote, Lesson, QuizCard, Pillar, PillarCreate, PillarUpdate,
@@ -1054,6 +1055,112 @@ def insert_chunk_embeddings(rows: List[Dict[str, Any]]) -> int:
             error = response.text[:500]
         raise _embedding_store_error(
             error, f"Could not store {len(rows)} embedding(s)"
+        )
+    return len(rows)
+
+
+def _paper_vector_store_error(error: Any, action: str) -> EmbeddingError:
+    """Name migration 021 when ``paper_vectors`` is missing."""
+    text = str(error)
+    lowered = text.lower()
+    missing = "paper_vectors" in lowered and any(
+        token in lowered
+        for token in (
+            "pgrst202", "pgrst205", "pgrst204",
+            "does not exist", "schema cache", "404",
+        )
+    )
+    hint = f" Apply {PAPER_VECTORS_MIGRATION} by hand." if missing else ""
+    return EmbeddingError(f"{action}: {text}.{hint}")
+
+
+def list_paper_vector_ref_ids(
+    model_id: str,
+    source: str,
+    ref_kind: str = 'paper',
+) -> List[str]:
+    """Library (or external) ids that already have this model and source.
+
+    Raises:
+        EmbeddingError: the read failed. A missing table names migration 021.
+    """
+    if not model_id or not str(model_id).strip():
+        raise EmbeddingError("paper vector lookup missing model_id")
+    if not source or not str(source).strip():
+        raise EmbeddingError("paper vector lookup missing source")
+    found: List[str] = []
+    offset = 0
+    previous_first = None
+    while True:
+        try:
+            client = get_client()
+            response = (
+                client.table('paper_vectors')
+                .select('ref_id')
+                .eq('ref_kind', ref_kind)
+                .eq('model_id', model_id)
+                .eq('source', source)
+                .order('ref_id')
+                .limit(_PAGE_SIZE)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as e:
+            raise _paper_vector_store_error(
+                e, f"Could not list paper vectors for {model_id}"
+            ) from e
+        if response['error']:
+            raise _paper_vector_store_error(
+                response['error'],
+                f"Could not list paper vectors for {model_id}",
+            )
+        page = response['data'] or []
+        if not page:
+            return found
+        marker = page[0].get('ref_id')
+        if marker is not None and marker == previous_first:
+            raise EmbeddingError(
+                f"Reading paper vectors for {model_id} "
+                f"did not advance past offset {offset}"
+            )
+        previous_first = marker
+        found.extend(
+            row['ref_id'] for row in page if row.get('ref_id')
+        )
+        if len(page) < _PAGE_SIZE:
+            return found
+        offset += len(page)
+
+
+def insert_paper_vectors(rows: List[Dict[str, Any]]) -> int:
+    """Insert paper-vector rows. Does not update a key that already exists.
+
+    The caller selects missing papers first. A conflict (409) is an error so
+    a raced insert is visible; the next run skips rows that landed.
+
+    Raises:
+        EmbeddingError: the insert failed. A missing table names migration 021.
+    """
+    if not rows:
+        return 0
+    try:
+        client = get_client()
+        response = client.client.post(
+            f"{client.base_url}/paper_vectors",
+            json=rows,
+            headers={**client.headers, 'Prefer': 'return=minimal'},
+        )
+    except Exception as e:
+        raise _paper_vector_store_error(
+            e, f"Could not store {len(rows)} paper vector(s)"
+        ) from e
+    if response.status_code >= 400:
+        try:
+            error = response.json()
+        except Exception:
+            error = response.text[:500]
+        raise _paper_vector_store_error(
+            error, f"Could not store {len(rows)} paper vector(s)"
         )
     return len(rows)
 

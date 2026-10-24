@@ -17,6 +17,7 @@ from .graph import (
     run_graph_build,
     slice_graph,
 )
+from .paper_vectors import MIGRATION as PAPER_VECTORS_MIGRATION
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,15 @@ def _read_table(table: str, columns: str, order: str) -> List[dict]:
             return rows
         first = page[0]
         marker = (
-            str(first.get("id") or first.get("paper_id") or first.get("chunk_id")),
+            str(
+                first.get("id")
+                or first.get("paper_id")
+                or first.get("chunk_id")
+                or first.get("ref_id")
+            ),
+            str(first.get("ref_kind") or ""),
             str(first.get("model_id") or ""),
+            str(first.get("source") or ""),
         )
         if marker == previous:
             raise GraphStoreError(
@@ -128,26 +136,15 @@ def load_snapshot() -> Tuple[GraphSnapshot, List[str]]:
         "id,paper_id,cited_paper_id,citation_direction,source",
         "id",
     )
-    chunks, chunk_warning = _read_optional("paper_chunks", "id,paper_id", "id")
-    embeddings, embed_warning = _read_optional(
-        "chunk_embeddings", "chunk_id,model_id,embedding", "chunk_id,model_id"
+    stored, vector_warning = _read_optional(
+        "paper_vectors",
+        "ref_kind,ref_id,model_id,source,vec",
+        "ref_kind,ref_id,model_id,source",
     )
-    for warning in (chunk_warning, embed_warning):
-        if warning:
-            warnings.append(warning)
-
-    paper_by_chunk = {str(row["id"]): row.get("paper_id") for row in chunks}
-    vectors = []
-    for row in embeddings:
-        paper_id = paper_by_chunk.get(str(row.get("chunk_id")))
-        if not paper_id:
-            continue
-        vectors.append(
-            {
-                "paper_id": paper_id,
-                "model_id": row.get("model_id"),
-                "vector": row.get("embedding"),
-            }
+    if vector_warning:
+        warnings.append(
+            "paper_vectors is not available, so related_to edges are skipped. "
+            f"Apply {PAPER_VECTORS_MIGRATION} by hand."
         )
     snapshot = GraphSnapshot(
         papers=papers,
@@ -156,7 +153,16 @@ def load_snapshot() -> Tuple[GraphSnapshot, List[str]]:
         lessons=lessons,
         cards=cards,
         episodes=episodes,
-        chunk_vectors=vectors,
+        paper_vectors=[
+            {
+                "ref_kind": row.get("ref_kind"),
+                "ref_id": row.get("ref_id"),
+                "model_id": row.get("model_id"),
+                "source": row.get("source"),
+                "vector": row.get("vec"),
+            }
+            for row in stored
+        ],
         citations=[
             {
                 "paper_id": row.get("paper_id"),
