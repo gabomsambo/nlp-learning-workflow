@@ -150,6 +150,10 @@ those writes fail the persist stage and name `docs/migrations/017_paper_text.sql
 **020 (`concepts` / `paper_concepts` / `graph_edges`) must be applied by hand**
 before `python -m nlp_pillars.cli graph build` or `GET /api/graph` can succeed.
 Until it is, those calls name `docs/migrations/020_knowledge_graph.sql`.
+**022 (`podcast_fact_checks` / `podcast_claims`) must be applied by hand**
+before `python -m nlp_pillars.cli factcheck run` can save. Until it is, the
+command names `docs/migrations/022_podcast_fact_checks.sql`. `--dry-run` only
+reads the script and `paper_texts`.
 **011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
 PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
 `add_podcast_script()` detects exactly that and retries without the key, so podcasts still
@@ -960,6 +964,21 @@ genuinely absent. Same precedent as `PillarLookupError`. Routes map the error to
 never 404 — a malformed id used to produce PostgREST `400 invalid input syntax for type
 uuid` and reach the user as "Script not found". The `/podcast` page renders an explicit
 banner instead of an empty dropdown plus "No podcast scripts generated yet".
+
+Fact-checking is a separate engine (`nlp_pillars/factcheck/`), not a stage of
+generation. It splits the script into claims and checks each one against the
+whole `paper_texts` body (not retrieved chunks, not the Ground Pack). Each
+evidence quote is string-checked and located in that text and in
+`paper_chunks`. Haiku 5.5 extracts and screens; Sonnet 5.5 re-judges only
+claims the screen did not call supported or not_checkable. Severity is
+deterministic. A failed check writes nothing and does not change the script.
+Verdicts are not shown in the UI yet. Routes are `FACTCHECK_EXTRACT`,
+`FACTCHECK_SCREEN`, and `FACTCHECK_REJUDGE` in `podcast_models.py`
+(`FACTCHECK_EXTRACT_MODEL`, `FACTCHECK_SCREEN_MODEL`,
+`FACTCHECK_REJUDGE_MODEL`; defaults Haiku 5.5 / Haiku 5.5 / Sonnet 5.5).
+`python -m nlp_pillars.cli factcheck run --script <id>` records `cost_usd`
+per call and in total. Apply `docs/migrations/022_podcast_fact_checks.sql`
+by hand before it can save.
 
 The script body is built with `textContent` and cue elements (`listen.js`);
 the old `innerHTML` highlight sink is gone. Script **generation progress** is real now (`kind=podcast_script`,

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 from .embeddings import EmbeddingError, MIGRATION as EMBEDDINGS_MIGRATION
+from .factcheck.constants import MIGRATION as FACTCHECK_MIGRATION
 from .paper_vectors import MIGRATION as PAPER_VECTORS_MIGRATION
 from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
@@ -859,6 +860,62 @@ def get_stored_paper_text(paper_id: str) -> Optional[str]:
     return text
 
 
+def list_paper_chunks(paper_id: str) -> List[Dict[str, Any]]:
+    """Chunks for ``paper_id``, one chunker version, in chunk_index order.
+
+    Prefers the chunker version the app writes today. Older versions of the
+    same paper are left out so a quote is not anchored to a stale cut.
+
+    Raises:
+        PaperTextLookupError: the read failed. A missing table names migration
+            017.
+    """
+    from .factcheck.anchor import choose_chunk_rows
+    from .paper_text import chunker_version
+
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    previous_first = None
+    try:
+        client = get_client()
+        while True:
+            response = (
+                client.table('paper_chunks')
+                .select('id,chunk_index,text,chunker_version,created_at')
+                .eq('paper_id', paper_id)
+                .order('chunk_index,id')
+                .limit(_PAGE_SIZE)
+                .offset(offset)
+                .execute()
+            )
+            if response['error']:
+                raise PaperTextLookupError(
+                    f"Could not read chunks for {paper_id}: {response['error']}. "
+                    "Apply docs/migrations/017_paper_text.sql by hand."
+                )
+            page = response['data'] or []
+            if not page:
+                break
+            marker = page[0].get('id')
+            if marker is not None and marker == previous_first:
+                raise PaperTextLookupError(
+                    f"Reading chunks for {paper_id} did not advance past offset {offset}"
+                )
+            previous_first = marker
+            rows.extend(page)
+            if len(page) < _PAGE_SIZE:
+                break
+            offset += len(page)
+    except PaperTextLookupError:
+        raise
+    except Exception as e:
+        raise PaperTextLookupError(
+            f"Could not read chunks for {paper_id}: {e}. "
+            "Apply docs/migrations/017_paper_text.sql by hand."
+        ) from e
+    return choose_chunk_rows(rows, chunker_version())
+
+
 def replace_paper_text(paper_id: str, full_text: str, extractor: str) -> int:
     """Store ``full_text`` and its chunks, replacing any previous chunks.
 
@@ -1650,6 +1707,14 @@ class PodcastScriptSaveError(Exception):
     """
 
 
+class FactcheckSaveError(Exception):
+    """A finished fact-check could not be stored.
+
+    The script row is not part of this write. Callers leave it untouched and
+    surface the reason, including the migration path when the tables are absent.
+    """
+
+
 class PodcastScriptLookupError(Exception):
     """Podcast scripts could not be read from the database.
 
@@ -1837,6 +1902,64 @@ def update_podcast_audio_metadata(script_id: str, metadata: AudioMetadata) -> No
         raise
     except Exception as e:
         raise PodcastScriptSaveError(str(e)) from e
+
+
+def _factcheck_store_error(error: Any, action: str) -> FactcheckSaveError:
+    """Name migration 022 when the fact-check tables or function are missing."""
+    text = str(error)
+    lowered = text.lower()
+    missing = any(
+        name in lowered
+        for name in (
+            "podcast_fact_checks",
+            "podcast_claims",
+            "insert_podcast_fact_check",
+        )
+    ) and any(
+        token in lowered
+        for token in (
+            "pgrst202", "pgrst205", "pgrst204", "does not exist", "schema cache", "404",
+        )
+    )
+    hint = f" Apply {FACTCHECK_MIGRATION} by hand." if missing else ""
+    return FactcheckSaveError(f"{action}: {text}.{hint}")
+
+
+def insert_podcast_fact_check(
+    header: Dict[str, Any],
+    claims: List[Dict[str, Any]],
+) -> str:
+    """Insert one finished fact-check and its claims in one transaction.
+
+    Does not update ``podcast_scripts``. A failed call raises and leaves no
+    partial header behind: ``insert_podcast_fact_check`` rolls back as a unit.
+
+    Returns:
+        The new fact-check id.
+
+    Raises:
+        FactcheckSaveError: the row was not stored. A missing function names
+            ``docs/migrations/022_podcast_fact_checks.sql``.
+    """
+    try:
+        client = get_client()
+        response = client.rpc('insert_podcast_fact_check', {
+            'p_check': header,
+            'p_claims': claims,
+        })
+    except Exception as e:
+        raise _factcheck_store_error(e, "Could not save the fact check") from e
+    if response['error']:
+        raise _factcheck_store_error(
+            response['error'], "Could not save the fact check",
+        )
+    data = response['data']
+    if not data or not isinstance(data, str):
+        raise FactcheckSaveError(
+            f"fact check insert returned {data!r}, not an id. "
+            f"Apply {FACTCHECK_MIGRATION} by hand."
+        )
+    return data
 
 
 # =====================================

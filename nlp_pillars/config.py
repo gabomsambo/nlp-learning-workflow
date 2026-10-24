@@ -46,6 +46,21 @@ class Settings(BaseSettings):
         env="PODCAST_SYNTHESIS_MODEL",
     )
 
+    # Fact-check routes. See nlp_pillars/podcast_models.py. Haiku screens every
+    # claim; Sonnet re-judges only what the screen flagged. No temperature.
+    factcheck_extract_model: str = Field(
+        "claude-haiku-5-5",
+        env="FACTCHECK_EXTRACT_MODEL",
+    )
+    factcheck_screen_model: str = Field(
+        "claude-haiku-5-5",
+        env="FACTCHECK_SCREEN_MODEL",
+    )
+    factcheck_rejudge_model: str = Field(
+        "claude-sonnet-5-5",
+        env="FACTCHECK_REJUDGE_MODEL",
+    )
+
     # Discovery settings
     discovery_candidate_count: int = Field(10, env="DISCOVERY_CANDIDATE_COUNT")
     vector_search_top_k: int = Field(5, env="VECTOR_SEARCH_TOP_K")
