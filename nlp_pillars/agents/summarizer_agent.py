@@ -4,6 +4,7 @@ Extracts structured information from research papers into PaperNote objects.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import instructor
@@ -111,9 +112,11 @@ class SummarizerAgentImpl:
             ]
         )
 
-        # Set paper_id and pillar_id from input
+        # Identity and the storage timestamp come from this process. A date on
+        # the model object is the one the model invented, and it is not kept.
         result.paper_id = input_data.parsed_paper.paper_ref.id
         result.pillar_id = input_data.pillar_id
+        result.created_at = datetime.now(timezone.utc)
 
         return result
 

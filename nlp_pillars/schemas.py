@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from pydantic import BaseModel as BaseIOSchema
+from pydantic.json_schema import SkipJsonSchema
 
 
 # Enums
@@ -188,7 +189,12 @@ class PaperNote(BaseIOSchema):
     key_terms: List[str] = Field(..., description="Important technical terms")
     related_papers: List[str] = Field(default_factory=list, description="Related paper IDs")
     confidence_score: float = Field(default=0.8, ge=0.0, le=1.0, description="Extraction confidence")
-    created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the note was created")
+    # Kept on the row the app reads back, and omitted from the schema the model
+    # fills in. A model that still returns one is ignored at insert time.
+    created_at: SkipJsonSchema[Optional[datetime]] = Field(
+        default_factory=datetime.now,
+        description="When the note was stored. Stamped by the server.",
+    )
 
 
 class Lesson(BaseIOSchema):
@@ -205,7 +211,11 @@ class Lesson(BaseIOSchema):
     podcast_script: Optional[str] = Field(None, description="Generated podcast script")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
     estimated_time: int = Field(default=10, description="Reading time in minutes")
-    created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the lesson was created")
+    # Same contract as PaperNote.created_at: not part of the model schema.
+    created_at: SkipJsonSchema[Optional[datetime]] = Field(
+        default_factory=datetime.now,
+        description="When the lesson was stored. Stamped by the server.",
+    )
 
 
 class QuizCard(BaseIOSchema):

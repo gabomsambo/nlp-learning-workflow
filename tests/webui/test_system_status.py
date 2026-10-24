@@ -5,6 +5,7 @@ drives httpx.MockTransport and asserts a secret placed on the settings object
 never appears in the payload.
 """
 
+import asyncio
 import json
 
 import httpx
@@ -73,6 +74,26 @@ def test_searxng_names_a_suspended_arxiv_engine():
     check = status.classify_searxng(200, payload, None)
     assert check["state"] == "down"
     assert "suspended" in check["summary"].lower()
+
+
+def test_other_engine_suspensions_are_info_not_a_failure():
+    payload = {
+        "results": [{"title": "Attention Is All You Need"}],
+        "unresponsive_engines": [
+            ["brave", "Suspended: too many requests"],
+            ["duckduckgo", "CAPTCHA"],
+            ["startpage", "Suspended: CAPTCHA"],
+        ],
+    }
+    check = status.classify_searxng(200, payload, None)
+    assert check["state"] == "ok"
+    assert check["fix"] is None
+    assert "arXiv is answering" in check["summary"]
+    assert "brave" in check["summary"]
+    assert "duckduckgo" in check["summary"]
+    assert "startpage" in check["summary"]
+    assert "suspended" not in check["summary"].lower()
+    assert status.public_summary([check]) == "All services up"
 
 
 def test_a_missing_column_is_pgrst204_and_a_present_one_is_applied():
@@ -151,6 +172,7 @@ def _handler(seen):
             seen["qdrant_key"] = request.headers.get("api-key")
             return httpx.Response(404, text="404 page not found")
         if host == "searxng.test":
+            seen.setdefault("searxng_engines", []).append(request.url.params.get("engines"))
             return httpx.Response(
                 200,
                 json={"results": [], "unresponsive_engines": []},
@@ -195,6 +217,7 @@ def _handler(seen):
 
 
 async def test_collection_survives_a_failing_check_and_hides_secrets():
+    status.clear_status_caches()
     seen = {}
 
     def tts():
@@ -250,6 +273,108 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert seen["qdrant_key"] == "super-secret-qdrant"
     assert seen["deleted"] is True
     assert seen["kinds"] == ["upload", "podcast_script"]
+    assert seen["searxng_engines"] == ["arxiv"]
+
+
+async def test_searxng_probes_arxiv_only_and_reuses_the_result():
+    status.clear_status_caches()
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.get("engines"))
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"title": "Attention"}],
+                "unresponsive_engines": [["brave", "Suspended: too many requests"]],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        first = await status._check_searxng(client, _Settings(), now=1_000.0)
+        second = await status._check_searxng(client, _Settings(), now=1_000.0 + 60)
+        third = await status._check_searxng(
+            client, _Settings(), now=1_000.0 + status.SEARXNG_CACHE_SECONDS + 1
+        )
+
+    assert seen == ["arxiv", "arxiv"]
+    assert first["state"] == "ok"
+    assert "brave" in first["summary"]
+    assert second == first
+    assert third["state"] == "ok"
+
+
+def test_voice_budget_outlasts_a_busy_scan():
+    assert status.VOICES_TIMEOUT_SECONDS >= 8
+    assert status.VOICES_TIMEOUT_SECONDS > status.OVERALL_TIMEOUT_SECONDS
+    assert status.voice_check_age_phrase(30) == "less than a minute ago"
+    assert status.voice_check_age_phrase(60) == "1 minute ago"
+    assert status.voice_check_age_phrase(120) == "2 minutes ago"
+
+
+async def test_voices_timeout_keeps_a_recent_good_result():
+    status.clear_status_caches()
+    calls = {"n": 0}
+
+    def good():
+        calls["n"] += 1
+        return {"voices": [{"usability": "usable"}]}
+
+    async def slow():
+        calls["n"] += 1
+        await asyncio.sleep(5)
+
+    first = await status.check_voices(good, now=0.0, timeout=1.0)
+    assert first == status.make_check("voices", "Voices", "ok", "1 usable voice.", None)
+    cached = await status.check_voices(slow, now=10.0, timeout=1.0)
+    assert cached["summary"] == first["summary"]
+    assert calls["n"] == 1
+
+    aged = await status.check_voices(
+        slow, now=status.VOICES_CACHE_SECONDS + 5, timeout=0.05
+    )
+    assert aged["state"] == "ok"
+    assert aged["summary"].startswith("1 usable voice.")
+    assert "Last checked" in aged["summary"]
+    assert calls["n"] == 2
+
+    # The failed attempt starts its own cache window, so a still-busy CPU
+    # does not time out again until that window ends.
+    held = await status.check_voices(slow, now=status.VOICES_CACHE_SECONDS + 10, timeout=0.05)
+    assert held["state"] == "ok"
+    assert calls["n"] == 2
+
+    expired = await status.check_voices(
+        slow, now=status.VOICES_LAST_GOOD_SECONDS + status.VOICES_CACHE_SECONDS + 20, timeout=0.05
+    )
+    assert expired["state"] == "down"
+    assert calls["n"] == 3
+
+
+async def test_voices_scan_is_not_cut_by_the_overall_budget(monkeypatch):
+    status.clear_status_caches()
+    monkeypatch.setattr(status, "OVERALL_TIMEOUT_SECONDS", 0.01)
+
+    async def slow():
+        await asyncio.sleep(0.05)
+        return {"voices": [{"usability": "usable"}]}
+
+    seen = {}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler(seen))) as client:
+        payload = await status.collect_status(
+            client=client,
+            settings=_Settings(),
+            postgrest_url="http://postgrest.test",
+            auth_token="jwt-secret-token",
+            tts_status=lambda: {"ready": True, "message": "ready"},
+            list_voices=slow,
+            storage=lambda: status.make_check("storage", "Storage", "ok", "Uploads 0 B.", None),
+        )
+
+    by_id = {check["id"]: check for check in payload["checks"]}
+    assert by_id["voices"]["state"] == "ok"
+    assert by_id["voices"]["summary"] == "1 usable voice."
 
 
 def test_route_answers_200_when_collection_raises():

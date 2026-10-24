@@ -4,6 +4,7 @@ Converts paper notes into educational lessons with takeaways and practice ideas.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import instructor
@@ -114,9 +115,11 @@ class SynthesisAgentImpl:
             ]
         )
 
-        # Set paper_id and pillar_id from input
+        # Identity and the storage timestamp come from this process. A date on
+        # the model object is the one the model invented, and it is not kept.
         result.paper_id = input_data.paper_note.paper_id
         result.pillar_id = input_data.paper_note.pillar_id
+        result.created_at = datetime.now(timezone.utc)
 
         return result
 

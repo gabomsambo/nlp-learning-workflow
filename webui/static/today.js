@@ -20,9 +20,48 @@
     return (n < 10 ? '0' : '') + n;
   }
 
-  function browserLocalDate(ms) {
+  var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  function browserLocalParts(ms) {
     var d = new Date(ms);
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    return {
+      year: d.getFullYear(),
+      month: d.getMonth(),
+      day: d.getDate(),
+      hour: d.getHours(),
+      weekday: d.getDay(),
+    };
+  }
+
+  function browserLocalDate(ms) {
+    var parts = browserLocalParts(ms);
+    return parts.year + '-' + pad(parts.month + 1) + '-' + pad(parts.day);
+  }
+
+  function greetingForHour(hour) {
+    if (hour < 12) return 'Good morning.';
+    if (hour < 17) return 'Good afternoon.';
+    return 'Good evening.';
+  }
+
+  // Same local calendar as the streak dots. The server renders the header in
+  // the container zone (UTC), and the dots are rewritten from this clock.
+  function todayHeader(ms, toParts) {
+    var parts = (toParts || browserLocalParts)(ms);
+    return {
+      dateLine: WEEKDAYS[parts.weekday] + ', ' + MONTHS[parts.month] + ' ' + parts.day,
+      greeting: greetingForHour(parts.hour),
+      localDate: parts.year + '-' + pad(parts.month + 1) + '-' + pad(parts.day),
+    };
+  }
+
+  function applyTodayHeader(ms) {
+    var header = todayHeader(ms);
+    var date = document.querySelector('.today-date');
+    var greet = document.querySelector('.today-greet');
+    if (date) date.textContent = header.dateLine;
+    if (greet) greet.textContent = header.greeting;
   }
 
   function addDays(key, delta) {
@@ -259,12 +298,14 @@
   }
 
   function boot() {
+    var now = Date.now();
+    applyTodayHeader(now);
     var data = readPayload();
     if (Array.isArray(data.reviews)) {
-      var model = streakFromTimestamps(data.reviews, Date.now());
+      var model = streakFromTimestamps(data.reviews, now);
       var streak = document.getElementById('streak');
       if (streak) applyStreak(streak, model);
-      var today = browserLocalDate(Date.now());
+      var today = browserLocalDate(now);
       var didReview = data.reviews.some(function (iso) {
         var ms = Date.parse(iso);
         return !isNaN(ms) && browserLocalDate(ms) === today;
@@ -320,6 +361,8 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       streakFromTimestamps: streakFromTimestamps,
+      todayHeader: todayHeader,
+      greetingForHour: greetingForHour,
       addDays: addDays,
       heardPastNinety: heardPastNinety,
       readRatio: readRatio,

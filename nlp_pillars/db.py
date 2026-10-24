@@ -270,6 +270,16 @@ def _dict_to_paper_ref(row: Dict[str, Any]) -> PaperRef:
     )
 
 
+def _stored_created_at() -> str:
+    """UTC timestamp for a row written now.
+
+    Notes and lessons used to store ``created_at`` from the model object. The
+    model invented a training-era date, and that date was what the page showed.
+    The value on the object is never written.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _paper_note_to_dict(note: PaperNote) -> Dict[str, Any]:
     """Convert PaperNote to notes table row."""
     return {
@@ -281,7 +291,7 @@ def _paper_note_to_dict(note: PaperNote) -> Dict[str, Any]:
         'limitations': note.limitations,
         'future_work': note.future_work,
         'key_terms': note.key_terms,
-        'created_at': note.created_at.isoformat() if note.created_at else None
+        'created_at': _stored_created_at(),
     }
 
 
@@ -311,7 +321,7 @@ def _lesson_to_dict(lesson: Lesson) -> Dict[str, Any]:
         'connections': lesson.connections,
         'difficulty': lesson.difficulty,
         'estimated_time': lesson.estimated_time,
-        'created_at': lesson.created_at.isoformat() if lesson.created_at else None
+        'created_at': _stored_created_at(),
     }
 
 

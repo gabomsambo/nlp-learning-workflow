@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 
 CHECK_TIMEOUT_SECONDS = 2.5
 OVERALL_TIMEOUT_SECONDS = 3.0
+# Status is fetched on every page. Cache the arXiv probe so that load does not
+# search the web each time. A few minutes is fresh enough for this panel.
+SEARXNG_CACHE_SECONDS = 180.0
+# The voice folder is about 1.8 GB. A scan took 4.1s while the CPU was busy
+# and 1.2s idle, and the 3s budget around every other check reported Voices
+# DOWN. The library rarely changes, so a recent good scan stands in for one
+# that does not finish, and the next attempt waits out the cache window
+# instead of timing out on every page.
+VOICES_TIMEOUT_SECONDS = 8.0
+VOICES_CACHE_SECONDS = 300.0
+VOICES_LAST_GOOD_SECONDS = 1800.0
 PROBE_PILLAR = "status-probe"
 SUSPENDED_QDRANT = "404 page not found"
 MAX_STORAGE_FILES = 5000
@@ -145,6 +156,52 @@ def public_line(text: str, limit: int = 180) -> str:
     return line[:limit]
 
 
+_searxng_cache: Dict[str, tuple] = {}
+_voices_state: Dict[str, Any] = {
+    "checked_at": None,
+    "fallback": False,
+    "latest": None,
+    "good_at": None,
+    "good": None,
+}
+
+
+def clear_status_caches() -> None:
+    """Drop cached SearXNG and voice results. Tests start from an empty cache."""
+    _searxng_cache.clear()
+    _voices_state.update(
+        checked_at=None,
+        fallback=False,
+        latest=None,
+        good_at=None,
+        good=None,
+    )
+
+
+def _clock(now: Optional[float]) -> float:
+    return time.monotonic() if now is None else now
+
+
+def voice_check_age_phrase(seconds: float) -> str:
+    """How old a cached voice scan is, for the status summary."""
+    if seconds < 60:
+        return "less than a minute ago"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        unit = "minute" if minutes == 1 else "minutes"
+        return f"{minutes} {unit} ago"
+    hours = int(minutes // 60)
+    unit = "hour" if hours == 1 else "hours"
+    return f"{hours} {unit} ago"
+
+
+def _with_checked_age(check: Dict[str, Any], age_seconds: float) -> Dict[str, Any]:
+    aged = dict(check)
+    summary = str(check.get("summary") or "").rstrip(".")
+    aged["summary"] = f"{summary}. Last checked {voice_check_age_phrase(age_seconds)}."
+    return aged
+
+
 def redact(text: str, secrets: Sequence[Optional[str]]) -> str:
     cleaned = text or ""
     for secret in secrets:
@@ -237,6 +294,31 @@ def classify_qdrant(
     )
 
 
+def _split_unresponsive_engines(payload: Dict[str, Any]) -> tuple[bool, str, List[str]]:
+    """Return whether arXiv is listed, its reason, and the other engine names."""
+    engines = payload.get("unresponsive_engines") or []
+    arxiv_named = False
+    arxiv_reason = ""
+    others: List[str] = []
+    if not isinstance(engines, list):
+        return False, "", []
+    for item in engines:
+        if isinstance(item, (list, tuple)) and item:
+            name = str(item[0])
+            reason = str(item[1]) if len(item) > 1 else ""
+        elif isinstance(item, str) and item:
+            name = item
+            reason = ""
+        else:
+            continue
+        if name.lower() == "arxiv":
+            arxiv_named = True
+            arxiv_reason = reason
+        else:
+            others.append(name)
+    return arxiv_named, arxiv_reason, others
+
+
 def classify_searxng(status_code: Optional[int], payload: Any, error: Optional[str]) -> Dict[str, Any]:
     if error or status_code is None:
         return make_check(
@@ -262,33 +344,32 @@ def classify_searxng(status_code: Optional[int], payload: Any, error: Optional[s
             f"SearXNG answered HTTP {status_code}.",
             "./workstation logs searxng",
         )
-    engines = payload.get("unresponsive_engines") or []
-    names: List[str] = []
-    suspended = False
-    if isinstance(engines, list):
-        for item in engines:
-            if isinstance(item, (list, tuple)) and item:
-                names.append(str(item[0]))
-                reason = str(item[1]).lower() if len(item) > 1 else ""
-                if "suspend" in reason or "too many" in reason:
-                    suspended = True
-            elif isinstance(item, str):
-                names.append(item)
-    if names and (suspended or any(name.lower() == "arxiv" for name in names)):
+    # Discovery uses the arXiv engine only. Another engine being benched is
+    # information: it must not paint SearXNG DOWN, which is what a status
+    # search of every engine was doing to itself.
+    arxiv_named, arxiv_reason, others = _split_unresponsive_engines(payload)
+    if arxiv_named:
+        lowered = arxiv_reason.lower()
+        if "suspend" in lowered or "too many" in lowered:
+            summary = "The arXiv engine is suspended for about an hour."
+        else:
+            summary = "The arXiv engine is unavailable."
         return make_check(
             "searxng",
             "SearXNG",
             "down",
-            "The arXiv engine is suspended for about an hour.",
-            "Wait, then try discovery again. SearXNG still returns HTTP 200 with an empty result list while an engine is benched.",
+            summary,
+            "Wait, then try discovery again. SearXNG still returns HTTP 200 "
+            "with an empty result list while an engine is benched.",
         )
-    if names:
+    if others:
+        listed = ", ".join(others)
         return make_check(
             "searxng",
             "SearXNG",
-            "down",
-            "A search engine is unavailable: " + ", ".join(names) + ".",
-            "./workstation logs searxng",
+            "ok",
+            f"arXiv is answering. Other engines are unavailable: {listed}.",
+            None,
         )
     return make_check("searxng", "SearXNG", "ok", "JSON search is answering.", None)
 
@@ -739,7 +820,12 @@ async def _check_qdrant_cloud(client: httpx.AsyncClient, settings: Any) -> Dict[
     )
 
 
-async def _check_searxng(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
+async def _check_searxng(
+    client: httpx.AsyncClient,
+    settings: Any,
+    *,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
     url = getattr(settings, "searxng_url", None)
     if not url or not str(url).startswith(("http://", "https://")):
         return make_check(
@@ -749,14 +835,22 @@ async def _check_searxng(client: httpx.AsyncClient, settings: Any) -> Dict[str, 
             "SEARXNG_URL is not set.",
             "Set SEARXNG_URL in .env.",
         )
+    key = str(url).rstrip("/")
+    clock = _clock(now)
+    cached = _searxng_cache.get(key)
+    if cached is not None and clock - cached[0] < SEARXNG_CACHE_SECONDS:
+        return dict(cached[1])
     try:
         response = await client.get(
-            str(url).rstrip("/") + "/search",
-            params={"q": "nlp", "format": "json"},
+            key + "/search",
+            params={"q": "nlp", "format": "json", "engines": "arxiv"},
         )
     except httpx.HTTPError as exc:
-        return classify_searxng(None, None, public_line(str(exc)) or "request failed")
-    return classify_searxng(response.status_code, _json_body(response), None)
+        check = classify_searxng(None, None, public_line(str(exc)) or "request failed")
+    else:
+        check = classify_searxng(response.status_code, _json_body(response), None)
+    _searxng_cache[key] = (clock, check)
+    return dict(check)
 
 
 async def _recent_errors(
@@ -801,6 +895,70 @@ async def _call_sync(fn: Callable[[], Any]) -> Any:
     if asyncio.iscoroutinefunction(fn):
         return await fn()
     return await asyncio.to_thread(fn)
+
+
+async def check_voices(
+    list_voices: Callable[[], Any],
+    *,
+    now: Optional[float] = None,
+    timeout: float = VOICES_TIMEOUT_SECONDS,
+    secrets: Sequence[Optional[str]] = (),
+) -> Dict[str, Any]:
+    """Scan the voice library, or reuse a recent result when the scan cannot finish.
+
+    A fresh result is reused for ``VOICES_CACHE_SECONDS`` without scanning again.
+    If the scan then times out and the last good result is still inside
+    ``VOICES_LAST_GOOD_SECONDS``, that result is returned with its age and the
+    row stays up. The failed attempt also starts a cache window, so a busy CPU
+    does not pay the timeout on every page.
+    """
+    clock = _clock(now)
+    checked_at = _voices_state["checked_at"]
+    if (
+        checked_at is not None
+        and clock - checked_at < VOICES_CACHE_SECONDS
+        and _voices_state["latest"] is not None
+    ):
+        if _voices_state["fallback"] and _voices_state["good"] is not None:
+            return _with_checked_age(_voices_state["good"], clock - _voices_state["good_at"])
+        return dict(_voices_state["latest"])
+
+    async def run() -> Dict[str, Any]:
+        payload = await _call_sync(list_voices)
+        if not isinstance(payload, dict):
+            raise TypeError("voice list was not an object")
+        return classify_voices(payload)
+
+    try:
+        check = await asyncio.wait_for(run(), timeout=timeout)
+    except Exception as exc:
+        logger.warning("status check voices failed: %s", type(exc).__name__)
+        good = _voices_state["good"]
+        good_at = _voices_state["good_at"]
+        if (
+            isinstance(good, dict)
+            and good.get("state") == "ok"
+            and good_at is not None
+            and clock - good_at <= VOICES_LAST_GOOD_SECONDS
+        ):
+            _voices_state["checked_at"] = clock
+            _voices_state["fallback"] = True
+            _voices_state["latest"] = good
+            return _with_checked_age(good, clock - good_at)
+        summary = public_line(redact(str(exc), secrets)) or "Check failed."
+        down = make_check("voices", "Voices", "down", summary, None)
+        _voices_state["checked_at"] = clock
+        _voices_state["fallback"] = False
+        _voices_state["latest"] = down
+        return dict(down)
+
+    _voices_state["checked_at"] = clock
+    _voices_state["fallback"] = False
+    _voices_state["latest"] = check
+    if check.get("state") == "ok":
+        _voices_state["good"] = check
+        _voices_state["good_at"] = clock
+    return dict(check)
 
 
 def _default_storage(settings: Any) -> Dict[str, Any]:
@@ -881,10 +1039,7 @@ async def collect_status(
 
     async def voices() -> Dict[str, Any]:
         fn = list_voices or _default_voices
-        payload = await _call_sync(fn)
-        if not isinstance(payload, dict):
-            raise TypeError("voice list was not an object")
-        return classify_voices(payload)
+        return await check_voices(fn, secrets=secrets)
 
     async def stored() -> Dict[str, Any]:
         fn = storage or (lambda: _default_storage(settings))
@@ -905,7 +1060,7 @@ async def collect_status(
         ),
         _guard("searxng", "SearXNG", lambda: _check_searxng(client, settings), secrets),
         _guard("indextts", "IndexTTS", tts, secrets),
-        _guard("voices", "Voices", voices, secrets),
+        voices(),
         _guard("keys", "Model keys", keys, secrets),
         _guard("scheduler", "Scheduler", scheduler, secrets),
         _guard("storage", "Storage", stored, secrets),
