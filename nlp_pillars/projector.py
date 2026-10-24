@@ -39,6 +39,8 @@ _POINT_NAMESPACE_NAME = "https://nlp-learning-workflow.local/chunk-point"
 POINT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, _POINT_NAMESPACE_NAME)
 
 READ_ALIAS = "nlp_chunks"
+BM25_VECTOR = "bm25"
+BM25_MODEL = "Qdrant/bm25"
 PILLAR_ID_FIELD = "pillar_id"
 PAPER_ID_FIELD = "paper_id"
 PAYLOAD_INDEX_FIELDS = (PILLAR_ID_FIELD, PAPER_ID_FIELD)
@@ -49,6 +51,7 @@ SCROLL_PAGE = 128
 _STATE_BATCH = 200
 
 _UNHEALTHY_404 = "404 page not found"
+_sparse_embedder = None
 
 
 class ProjectionError(Exception):
@@ -196,7 +199,8 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
     """
     name = collection_name(model_id, dims)
     names = _collection_names(client)
-    if name in names:
+    existed = name in names
+    if existed:
         logger.info("Collection '%s' already exists", name)
     else:
         try:
@@ -206,6 +210,11 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
                     size=int(dims),
                     distance=models.Distance.COSINE,
                 ),
+                sparse_vectors_config={
+                    BM25_VECTOR: models.SparseVectorParams(
+                        modifier=models.Modifier.IDF,
+                    )
+                },
             )
         except Exception as exc:
             if "already exists" not in str(exc).lower():
@@ -219,6 +228,8 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
                 name,
                 dims,
             )
+    if existed:
+        _ensure_sparse_vector(client, name)
     _ensure_payload_indexes(client, name)
     _ensure_alias(client, name)
     return name
@@ -611,6 +622,42 @@ def _collection_names(client: QdrantClient) -> List[str]:
     return [col.name for col in collections]
 
 
+def _ensure_sparse_vector(client: QdrantClient, name: str) -> None:
+    """Add the BM25 sparse vector config to a pre-hybrid collection.
+
+    Qdrant 1.19 can update sparse vector configuration in place. This is what
+    lets ``vectors sync --rebuild`` backfill the collection created by the
+    previous projector release instead of requiring a destructive rebuild.
+    """
+    try:
+        info = client.get_collection(name)
+        config = getattr(info, "config", None)
+        params = getattr(config, "params", None)
+        sparse = getattr(params, "sparse_vectors", None) or {}
+        if not isinstance(sparse, dict):
+            sparse = {}
+    except Exception as exc:
+        raise ProjectionError(
+            f"could not read sparse vector config for {name}: {exc}"
+        ) from exc
+    if BM25_VECTOR in sparse:
+        return
+    try:
+        client.update_collection(
+            collection_name=name,
+            sparse_vectors_config={
+                BM25_VECTOR: models.SparseVectorParams(
+                    modifier=models.Modifier.IDF,
+                )
+            },
+        )
+    except Exception as exc:
+        raise ProjectionError(
+            f"could not add {BM25_VECTOR} sparse vectors to {name}: {exc}"
+        ) from exc
+    logger.info("Added '%s' sparse vector config to '%s'", BM25_VECTOR, name)
+
+
 def _ensure_payload_indexes(client: QdrantClient, name: str) -> None:
     try:
         info = client.get_collection(name)
@@ -679,9 +726,10 @@ def _upsert_chunks(
 
 
 def _point(chunk: ChunkVector) -> models.PointStruct:
+    sparse = bm25_passage(chunk.text)
     return models.PointStruct(
         id=point_id(chunk.chunk_id),
-        vector=chunk.embedding,
+        vector={"": chunk.embedding, BM25_VECTOR: sparse},
         payload={
             "pillar_id": chunk.pillar_id,
             "paper_id": chunk.paper_id,
@@ -690,6 +738,44 @@ def _point(chunk: ChunkVector) -> models.PointStruct:
             "text": chunk.text,
         },
     )
+
+
+def _get_sparse_embedder():
+    """Return the lazy FastEmbed BM25 encoder.
+
+    Import and construction stay lazy so module imports, dry runs, and tests do
+    not download model files. The BM25 package is tiny, but it follows the same
+    cache location as the dense embedding model.
+    """
+    global _sparse_embedder
+    if _sparse_embedder is None:
+        from fastembed import SparseTextEmbedding
+
+        cache_dir = os.getenv("EMBEDDING_CACHE_DIR") or None
+        _sparse_embedder = SparseTextEmbedding(
+            model_name=BM25_MODEL,
+            cache_dir=cache_dir,
+        )
+    return _sparse_embedder
+
+
+def _as_sparse_vector(embedding) -> models.SparseVector:
+    return models.SparseVector(
+        indices=[int(item) for item in embedding.indices.tolist()],
+        values=[float(item) for item in embedding.values.tolist()],
+    )
+
+
+def bm25_passage(text: str) -> models.SparseVector:
+    """Encode one stored chunk with FastEmbed's BM25 document weights."""
+    embedding = next(iter(_get_sparse_embedder().passage_embed([text])))
+    return _as_sparse_vector(embedding)
+
+
+def bm25_query(text: str) -> models.SparseVector:
+    """Encode one search query for the BM25 sparse-vector leg."""
+    embedding = next(iter(_get_sparse_embedder().query_embed(text)))
+    return _as_sparse_vector(embedding)
 
 
 def _delete_stale(

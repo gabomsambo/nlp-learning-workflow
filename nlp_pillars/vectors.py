@@ -17,10 +17,12 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from .projector import (
+    BM25_VECTOR,
     PAPER_ID_FIELD,
     PILLAR_ID_FIELD,
     READ_ALIAS,
     ProjectionError,
+    bm25_query,
     ensure_index,
     project_paper,
 )
@@ -165,7 +167,9 @@ def upsert_text(
     return projected
 
 
-def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def search_similar(
+    pillar_id: Optional[str], query_text: str, top_k: int = 5
+) -> List[Dict[str, Any]]:
     """
     Search for similar text chunks within a pillar namespace.
 
@@ -173,13 +177,13 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
     Results come from the ``nlp_chunks`` alias on the local server.
 
     Args:
-        pillar_id: Pillar to search within
+        pillar_id: Pillar to search within, or None to search all pillars
         query_text: Text to find similar content for
         top_k: Maximum number of results to return
 
     Returns:
-        List of {"paper_id": str, "score": float} dictionaries,
-        deduplicated by paper_id (keeping highest score) and limited to top_k
+        Dictionaries with paper id, fused score, and matched chunk payload,
+        deduplicated by paper_id (keeping highest score) and limited to top_k.
 
     Raises:
         RuntimeError: If the query call does not match the installed
@@ -203,10 +207,24 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
     # Embedding is a model call: a genuine runtime failure, and degrading
     # to "no vector candidates" is the right answer for it.
     try:
-        query_vector = _query_vector(query_text.strip())
+        clean_query = query_text.strip()
+        query_vector = _query_vector(clean_query)
+        sparse_query = bm25_query(clean_query)
     except Exception as e:
         logger.error(f"Failed to embed query text for pillar {pillar_id}: {e}")
         return []
+
+    query_filter = None
+    if pillar_id is not None:
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key=PILLAR_ID_FIELD,
+                    match=models.MatchValue(value=pillar_id),
+                )
+            ]
+        )
+    candidate_limit = top_k * 3
 
     # query_points(), NOT search(). search()/search_batch()/search_groups()/
     # recommend()/discover() were all removed in qdrant-client 1.19, the pinned
@@ -215,17 +233,22 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
     try:
         response = client.query_points(
             collection_name=COLLECTION_NAME,
-            query=query_vector,
-            query_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="pillar_id",
-                        match=models.MatchValue(value=pillar_id)
-                    )
-                ]
-            ),
-            limit=top_k * 3,  # Get more results for deduplication
-            with_payload=True
+            prefetch=[
+                models.Prefetch(
+                    query=query_vector,
+                    filter=query_filter,
+                    limit=candidate_limit,
+                ),
+                models.Prefetch(
+                    query=sparse_query,
+                    using=BM25_VECTOR,
+                    filter=query_filter,
+                    limit=candidate_limit,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=candidate_limit,
+            with_payload=True,
         )
     except (AttributeError, TypeError) as e:
         # A missing method or a rejected signature means this code and the
@@ -269,18 +292,29 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
         )
 
     # Deduplicate by paper_id, keeping highest score
-    paper_scores: Dict[str, float] = {}
+    paper_hits: Dict[str, Dict[str, Any]] = {}
     for hit in hits:
-        paper_id = (hit.payload or {}).get("paper_id")
+        payload = hit.payload or {}
+        paper_id = payload.get("paper_id")
         score = hit.score
 
-        if paper_id and (paper_id not in paper_scores or score > paper_scores[paper_id]):
-            paper_scores[paper_id] = score
+        if paper_id and (
+            paper_id not in paper_hits or score > paper_hits[paper_id]["score"]
+        ):
+            paper_hits[paper_id] = {
+                "paper_id": paper_id,
+                "score": score,
+                "snippet": str(payload.get("text") or ""),
+                "chunk_id": payload.get("chunk_id"),
+                "chunk_index": payload.get("chunk_index"),
+            }
 
     # Sort by score and limit to top_k
     results = [
-        {"paper_id": paper_id, "score": score}
-        for paper_id, score in sorted(paper_scores.items(), key=lambda x: x[1], reverse=True)
+        result
+        for result in sorted(
+            paper_hits.values(), key=lambda item: item["score"], reverse=True
+        )
     ][:top_k]
 
     logger.info(f"Found {len(results)} similar papers in pillar {pillar_id}")

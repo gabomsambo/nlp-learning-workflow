@@ -17,6 +17,7 @@ from nlp_pillars.db import (
     _lesson_to_dict, _dict_to_lesson, _quiz_card_to_dict, _dict_to_quiz_card,
     get_pillars, get_pillars_or_empty, PillarLookupError,
     add_podcast_script, get_podcast_scripts, get_podcast_script_by_id, get_all_papers,
+    get_papers_by_ids,
     PodcastScriptSaveError, PodcastScriptLookupError, PaperLookupError,
 )
 
@@ -331,6 +332,28 @@ class TestUpsertPaper:
         assert upsert_paper("linguistic-cognitive-foundations", paper) is False
         mock_supabase_client.table().insert.assert_not_called()
 
+
+def test_get_papers_by_ids_uses_one_quoted_in_query(mock_supabase_client):
+    query = mock_supabase_client.table.return_value
+    query.select.return_value = query
+    query.params = {}
+    query.execute.return_value = {
+        "data": [
+            {"id": "arxiv:2402.08593", "title": "One", "authors": []},
+            {"id": "doi,with-comma", "title": "Two", "authors": []},
+        ],
+        "error": None,
+    }
+
+    papers = get_papers_by_ids(
+        ["arxiv:2402.08593", "doi,with-comma", "arxiv:2402.08593"]
+    )
+
+    mock_supabase_client.table.assert_called_once_with("papers")
+    query.execute.assert_called_once_with()
+    assert query.params["id"] == 'in.("arxiv:2402.08593","doi,with-comma")'
+    assert query.params["limit"] == "2"
+    assert [paper.id for paper in papers] == ["arxiv:2402.08593", "doi,with-comma"]
 
 class TestMarkProcessed:
     """Test mark processed functionality."""
