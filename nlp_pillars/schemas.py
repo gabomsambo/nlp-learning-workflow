@@ -680,6 +680,14 @@ class StageName(str, Enum):
     PODCAST_SYNTHESIZE = "podcast_synthesize"
     PODCAST_PERSIST = "podcast_persist"
 
+    # Podcast fact-check. Separate from script generation so a failed check
+    # cannot fail the script run. Slugs match nlp_pillars/factcheck/constants.py.
+    FACTCHECK_EXTRACT = "factcheck_extract"
+    FACTCHECK_SCREEN = "factcheck_screen"
+    FACTCHECK_REJUDGE = "factcheck_rejudge"
+    FACTCHECK_ANCHOR = "factcheck_anchor"
+    FACTCHECK_PERSIST = "factcheck_persist"
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
 #:
@@ -772,6 +780,19 @@ PODCAST_SCRIPT_STAGES: List[StageName] = [
     StageName.PODCAST_LIMITATIONS,
     StageName.PODCAST_SYNTHESIZE,
     StageName.PODCAST_PERSIST,
+]
+
+#: Stages for one fact-check of a stored script, in order.
+#:
+#: extract / screen / rejudge are the model calls. anchor locates evidence
+#: quotes in the stored paper text. persist is the insert into
+#: podcast_fact_checks. A failure before persist writes nothing.
+FACTCHECK_STAGES: List[StageName] = [
+    StageName.FACTCHECK_EXTRACT,
+    StageName.FACTCHECK_SCREEN,
+    StageName.FACTCHECK_REJUDGE,
+    StageName.FACTCHECK_ANCHOR,
+    StageName.FACTCHECK_PERSIST,
 ]
 
 

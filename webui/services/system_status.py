@@ -80,6 +80,14 @@ KIND_PROBES = (
         "file": "docs/migrations/016_podcast_script_runs.sql",
         "missing": "pipeline_runs does not accept a podcast script run yet.",
     },
+    {
+        "id": "migration-023",
+        "label": "Fact-check runs",
+        "kind": "podcast_factcheck",
+        "trigger": "ui_podcast_factcheck",
+        "file": "docs/migrations/023_podcast_factcheck_runs.sql",
+        "missing": "pipeline_runs does not accept a fact-check run yet.",
+    },
 )
 
 # Short, stable phrases mined from pipeline_runs.error. The raw exception stays

@@ -340,6 +340,47 @@ test('a saved podcast script run names the title and word count', () => {
   assert.match(summarise(run), /4803 words/);
 });
 
+test('fact-check stages have prose labels and a claim summary', () => {
+  assert.equal(stageLabel('factcheck_extract'), 'Splitting the script into claims');
+  assert.equal(stageLabel('factcheck_screen'), 'Checking claims against the paper');
+  assert.equal(stageLabel('factcheck_rejudge'), 'Re-checking flagged claims');
+  assert.equal(stageLabel('factcheck_anchor'), 'Locating evidence quotes');
+  assert.equal(stageLabel('factcheck_persist'), 'Saving the fact check');
+  const names = [
+    'factcheck_extract', 'factcheck_screen', 'factcheck_rejudge',
+    'factcheck_anchor', 'factcheck_persist',
+  ];
+  const running = {
+    kind: 'podcast_factcheck',
+    status: 'running',
+    current_stage: 'factcheck_screen',
+    stages: names.map((name, i) => ({
+      name,
+      status: i < 1 ? 'completed' : (i === 1 ? 'running' : 'pending'),
+    })),
+  };
+  assert.equal(
+    summarise(running),
+    'Step 2 of 5 — Checking claims against the paper',
+  );
+  const done = {
+    kind: 'podcast_factcheck',
+    status: 'succeeded',
+    stages: names.map((name) => ({ name, status: 'completed' })),
+    result: { counts: { claims: 12, high: 2, medium: 1, low: 0 } },
+  };
+  assert.equal(summarise(done), 'Done — 12 claims, 2 high, 1 medium, 0 low');
+  const failed = {
+    kind: 'podcast_factcheck',
+    status: 'failed',
+    stages: names.map((name) => ({ name, status: 'completed' })),
+    error: 'no stored paper text',
+  };
+  assert.match(summarise(failed), /Fact check failed/);
+  assert.match(summarise(failed), /script was not changed/);
+  assert.equal(statusColor(failed), 'run-danger');
+});
+
 test('an unsaved podcast script is not painted as a clean success', () => {
   const run = {
     kind: 'podcast_script',

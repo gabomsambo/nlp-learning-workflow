@@ -180,6 +180,9 @@ services:
       QDRANT_CLOUD_URL: "${QDRANT_CLOUD_URL:-}"
       QDRANT_CLOUD_API_KEY: "${QDRANT_CLOUD_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
+      # Fact-check a saved script on its own run. A failed check does not fail
+      # the script run and does not change the script. Unset means on.
+      FACTCHECK_AUTO_DISPATCH: ${FACTCHECK_AUTO_DISPATCH:-true}
       # Local embedding weights (pinned BAAI/bge-base-en-v1.5 ONNX, about 208 MB
       # on first use). On the uploads volume so a restart or image rebuild does
       # not fetch them again and the image does not carry the weights.

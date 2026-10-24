@@ -36,6 +36,7 @@ from nlp_pillars import db
 from nlp_pillars.orchestrator import Orchestrator, RunCancelledError
 from nlp_pillars.schemas import (
     DISCOVER_STAGES,
+    FACTCHECK_STAGES,
     PODCAST_AUDIO_STAGES,
     PODCAST_SCRIPT_STAGES,
     PROCESS_SELECTED_STAGES,
@@ -48,8 +49,12 @@ from nlp_pillars.schemas import (
     UploadUrlRequest,
 )
 from nlp_pillars.services.upload_service import get_upload_service
+from webui.services import (
+    podcast_audio_service,
+    podcast_factcheck_service,
+    podcast_script_service,
+)
 from webui.services.discovery_results import candidates_payload
-from webui.services import podcast_audio_service, podcast_script_service
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,7 @@ KIND_PROCESS_SELECTED = "process_selected"
 KIND_DISCOVER = "discover"
 KIND_PODCAST_AUDIO = podcast_audio_service.KIND_PODCAST_AUDIO
 KIND_PODCAST_SCRIPT = podcast_script_service.KIND_PODCAST_SCRIPT
+KIND_PODCAST_FACTCHECK = podcast_factcheck_service.KIND_PODCAST_FACTCHECK
 KIND_UPLOAD = "upload"
 
 #: The trigger source for both manual upload routes. Uploads are exempt from the
@@ -75,6 +81,7 @@ _STAGES_FOR_KIND = {
     KIND_DISCOVER: DISCOVER_STAGES,
     KIND_PODCAST_AUDIO: PODCAST_AUDIO_STAGES,
     KIND_PODCAST_SCRIPT: PODCAST_SCRIPT_STAGES,
+    KIND_PODCAST_FACTCHECK: FACTCHECK_STAGES,
     KIND_UPLOAD: UPLOAD_STAGES,
 }
 
@@ -121,6 +128,10 @@ def dispatch_run(
 
             KIND_PODCAST_SCRIPT is exempted the same way (migration 016): generation
             is scoped to one paper, and must not 409 against discovery or TTS.
+
+            KIND_PODCAST_FACTCHECK is exempted the same way (migration 023). One
+            script still has at most one active fact-check; that conflict is a
+            separate index and the route answers 409 with the run to attach to.
         ValueError: on an unknown ``kind``.
         db.PipelineRunCreateError: the row could not be written for any other reason
             — including the CHECK constraints migration 015 widens.
@@ -129,8 +140,11 @@ def dispatch_run(
     if kind not in _STAGES_FOR_KIND:
         raise ValueError(f"Unknown run kind: {kind}")
 
+    initial_result = kwargs.pop("initial_result", None)
     stage_names = [s.value for s in _STAGES_FOR_KIND[kind]]
-    run = db.create_pipeline_run(pillar_id, trigger_source, kind, stage_names)
+    run = db.create_pipeline_run(
+        pillar_id, trigger_source, kind, stage_names, result=initial_result,
+    )
     if run is None:
         raise RunAlreadyActiveError(
             f"A pipeline run is already in progress for pillar {pillar_id}"
@@ -142,10 +156,14 @@ def dispatch_run(
     # The run row exists BEFORE the job is scheduled, deliberately: a fast job that
     # started first could write stage updates against a parent row that does not yet
     # exist, and the client would poll a 404.
+    job_kwargs = dict(kwargs)
+    # The script job starts a fact-check after it succeeds. The scheduler is
+    # not stored on the run row; it only rides along on this in-memory job.
+    job_kwargs["scheduler"] = scheduler
     scheduler.add_job(
         execute_run,
         args=[run.id, kind, pillar_id, cancel_event, cancel_events],
-        kwargs=kwargs,
+        kwargs=job_kwargs,
         id=f"run:{run.id}",
         name=f"Pipeline run {run.id} ({kind}, {pillar_id})",
         trigger="date",  # no run_date => fire now
@@ -195,7 +213,14 @@ def execute_run(
 
         if kind == KIND_PODCAST_SCRIPT:
             # Same no-Orchestrator rule: script generation never needs Qdrant.
-            _finish_podcast_script(run_id, pillar_id, cancel_event, kwargs, on_stage)
+            _finish_podcast_script(
+                run_id, pillar_id, cancel_event, cancel_events, kwargs, on_stage,
+            )
+            return
+
+        if kind == KIND_PODCAST_FACTCHECK:
+            # Same no-Orchestrator rule: a fact-check reads stored text only.
+            _finish_podcast_factcheck(run_id, cancel_event, kwargs, on_stage)
             return
 
         # Built HERE, inside the worker thread. Never cached on app.state and never
@@ -339,10 +364,64 @@ def _finish_podcast_audio(
     logger.info("Run %s finished podcast audio for script %s", run_id, script_id)
 
 
+def _finish_podcast_factcheck(
+    run_id: str,
+    cancel_event: threading.Event,
+    kwargs: Dict[str, Any],
+    on_stage,
+) -> None:
+    """Close out a fact-check. A failure raises and does not touch the script."""
+    script_id = kwargs.get("script_id")
+    if not script_id:
+        raise ValueError("podcast_factcheck run requires script_id")
+    payload = podcast_factcheck_service.run_factcheck_job(
+        script_id, on_stage, cancel_event,
+    )
+    db.finish_pipeline_run(
+        run_id,
+        RunStatus.SUCCEEDED.value,
+        papers_processed=0,
+        papers_failed=0,
+        result=payload,
+    )
+    logger.info(
+        "Run %s finished fact check %s for script %s",
+        run_id,
+        payload.get("fact_check_id"),
+        script_id,
+    )
+
+
+def _maybe_factcheck_after_script(
+    scheduler,
+    cancel_events,
+    *,
+    script_id: str,
+    paper_id: str,
+    pillar_id: str,
+) -> None:
+    """Start a fact-check without letting it change the script run's outcome."""
+    try:
+        podcast_factcheck_service.maybe_dispatch_after_script(
+            scheduler,
+            cancel_events,
+            script_id=script_id,
+            paper_id=paper_id,
+            pillar_id=pillar_id,
+        )
+    except Exception:
+        logger.exception(
+            "Fact-check was not started after script %s. "
+            "The script run stays succeeded and the script was not changed.",
+            script_id,
+        )
+
+
 def _finish_podcast_script(
     run_id: str,
     pillar_id: str,
     cancel_event: threading.Event,
+    cancel_events: Dict[str, threading.Event],
     kwargs: Dict[str, Any],
     on_stage,
 ) -> None:
@@ -388,6 +467,14 @@ def _finish_podcast_script(
         paper_id,
         result_payload.get("saved"),
     )
+    if result_payload.get("saved") and result_payload.get("script_id"):
+        _maybe_factcheck_after_script(
+            kwargs.get("scheduler"),
+            cancel_events,
+            script_id=result_payload["script_id"],
+            paper_id=result_payload.get("paper_id") or paper_id,
+            pillar_id=pillar_id,
+        )
 
 
 def _finish_upload(
@@ -543,6 +630,8 @@ WEBUI_TRIGGER_SOURCES = [
     TRIGGER_UI_UPLOAD,
     podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
     podcast_script_service.TRIGGER_UI_PODCAST_SCRIPT,
+    podcast_factcheck_service.TRIGGER_UI_PODCAST_FACTCHECK,
+    podcast_factcheck_service.TRIGGER_AUTO_PODCAST_FACTCHECK,
 ]
 
 

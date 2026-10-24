@@ -252,6 +252,7 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert by_id["migration-014"]["state"] == "ok"
     assert by_id["migration-015"]["state"] == "ok"
     assert by_id["migration-016"]["state"] == "down"
+    assert by_id["migration-023"]["state"] == "ok"
     assert by_id["qdrant"]["label"] == "Qdrant (local)"
     assert by_id["qdrant"]["state"] == "down"
     assert "plain text 404" in by_id["qdrant"]["summary"]
@@ -272,7 +273,7 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert payload["summary"].endswith("services need attention")
     assert seen["qdrant_key"] == "super-secret-qdrant"
     assert seen["deleted"] is True
-    assert seen["kinds"] == ["upload", "podcast_script"]
+    assert seen["kinds"] == ["upload", "podcast_script", "podcast_factcheck"]
     assert seen["searxng_engines"] == ["arxiv"]
 
 

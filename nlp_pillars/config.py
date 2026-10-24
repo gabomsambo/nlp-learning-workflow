@@ -60,6 +60,10 @@ class Settings(BaseSettings):
         "claude-sonnet-5-5",
         env="FACTCHECK_REJUDGE_MODEL",
     )
+    # Start a fact-check run after a podcast script is saved. A failed check
+    # does not fail the script run and does not change the script. Set false
+    # to leave checks to POST /api/podcast/{id}/factcheck and the CLI.
+    factcheck_auto_dispatch: bool = Field(True, env="FACTCHECK_AUTO_DISPATCH")
 
     # Discovery settings
     discovery_candidate_count: int = Field(10, env="DISCOVERY_CANDIDATE_COUNT")

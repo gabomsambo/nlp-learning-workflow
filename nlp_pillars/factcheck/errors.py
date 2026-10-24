@@ -26,3 +26,11 @@ class FactcheckError(Exception):
 
 class FactcheckBudgetError(FactcheckError):
     """The run crossed its cost cap and stopped before another model call."""
+
+
+class FactcheckCancelled(FactcheckError):
+    """The cancel event was set at a stage boundary.
+
+    Raised before the next stage starts. The script is not modified and the
+    check is not saved. The run job turns this into ``RunCancelledError``.
+    """

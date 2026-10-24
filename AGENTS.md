@@ -154,6 +154,12 @@ Until it is, those calls name `docs/migrations/020_knowledge_graph.sql`.
 before `python -m nlp_pillars.cli factcheck run` can save. Until it is, the
 command names `docs/migrations/022_podcast_fact_checks.sql`. `--dry-run` only
 reads the script and `paper_texts`.
+**023 (`podcast_factcheck` / `ui_podcast_factcheck` / `auto_podcast_factcheck`)
+must be applied by hand** before `POST /api/podcast/{id}/factcheck` or the
+automatic check after a saved script can start. Until it is, that route
+answers 503 naming `docs/migrations/023_podcast_factcheck_runs.sql`. The kind
+is exempt from the one-active-per-pillar guard. One script still has at most
+one active fact-check.
 **011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
 PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
 `add_podcast_script()` detects exactly that and retries without the key, so podcasts still
@@ -988,7 +994,16 @@ Verdicts are not shown in the UI yet. Routes are `FACTCHECK_EXTRACT`,
 `FACTCHECK_REJUDGE_MODEL`; defaults Haiku 5.5 / Haiku 5.5 / Sonnet 5.5).
 `python -m nlp_pillars.cli factcheck run --script <id>` records `cost_usd`
 per call and in total. Apply `docs/migrations/022_podcast_fact_checks.sql`
-by hand before it can save.
+by hand before it can save. A check is also a pipeline run
+(`kind=podcast_factcheck`, migration 023, five stages in `run-progress.js`).
+After a script is saved, webui starts that run when `FACTCHECK_AUTO_DISPATCH`
+is true (the default). A fact-check failure does not fail the script run and
+does not change the script. `POST /api/podcast/{id}/factcheck` starts one
+and answers 409 with the active `run_id` when one is already running.
+`GET /api/podcast/{id}/factcheck` returns the latest claims, verdicts,
+evidence quotes and anchors. `python -m nlp_pillars.cli factcheck backfill`
+checks scripts that have none yet. The 7 existing scripts are about
+$0.6–1.3. Do not run that backfill unless you mean to spend it.
 
 The script body is built with `textContent` and cue elements (`listen.js`);
 the old `innerHTML` highlight sink is gone. Script **generation progress** is real now (`kind=podcast_script`,
