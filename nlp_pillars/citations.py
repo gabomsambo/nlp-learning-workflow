@@ -21,6 +21,36 @@ logger = logging.getLogger(__name__)
 CITATION_LIMIT = 20
 
 
+def is_file_upload(paper_id: str) -> bool:
+    """Return whether this id is an uploaded PDF Semantic Scholar cannot resolve."""
+    return str(paper_id or "").startswith("file:")
+
+
+def _reason(exc: BaseException) -> str:
+    text = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+    if " for url " in text:
+        text = text.split(" for url ", 1)[0]
+    return text[:180]
+
+
+def _rows_from_batch(paper_id: str, batch, direction: str) -> List[PaperCitation]:
+    rows: List[PaperCitation] = []
+    for other, influential in batch or []:
+        other_id = getattr(other, "id", None)
+        if not other_id or other_id == paper_id:
+            continue
+        rows.append(
+            PaperCitation(
+                paper_id=paper_id,
+                cited_paper_id=other_id,
+                citation_direction=direction,
+                is_influential=bool(influential),
+                source="semantic_scholar",
+            )
+        )
+    return rows
+
+
 def citations_from_tool(
     paper_id: str,
     tool,
@@ -31,38 +61,20 @@ def citations_from_tool(
 
     ``tool`` is a ``SemanticScholarTool``. A missing tool returns nothing.
     Papers the tool cannot see come back as an empty list from the tool
-    itself (it treats 404 that way) and produce no rows.
+    itself (it treats 404 that way) and produce no rows. ``file:`` uploads
+    are not sent: Semantic Scholar answers 404 for every one of them.
     """
-    if tool is None or not paper_id:
+    if tool is None or not paper_id or is_file_upload(paper_id):
         return []
 
-    rows: List[PaperCitation] = []
-    for ref_paper, influential in tool.get_references(paper_id, limit=limit):
-        cited_id = getattr(ref_paper, "id", None)
-        if not cited_id or cited_id == paper_id:
-            continue
-        rows.append(
-            PaperCitation(
-                paper_id=paper_id,
-                cited_paper_id=cited_id,
-                citation_direction="outgoing",
-                is_influential=bool(influential),
-                source="semantic_scholar",
-            )
+    rows = _rows_from_batch(
+        paper_id, tool.get_references(paper_id, limit=limit), "outgoing"
+    )
+    rows.extend(
+        _rows_from_batch(
+            paper_id, tool.get_citations(paper_id, limit=limit), "incoming"
         )
-    for citing_paper, influential in tool.get_citations(paper_id, limit=limit):
-        citing_id = getattr(citing_paper, "id", None)
-        if not citing_id or citing_id == paper_id:
-            continue
-        rows.append(
-            PaperCitation(
-                paper_id=paper_id,
-                cited_paper_id=citing_id,
-                citation_direction="incoming",
-                is_influential=bool(influential),
-                source="semantic_scholar",
-            )
-        )
+    )
     return rows
 
 
@@ -101,20 +113,36 @@ def fetch_library_citations(
 ):
     """Fetch citations for these ids only.
 
-    Returns ``(rows, warnings)``. One paper's failure is a warning. The other
-    papers are still fetched. ``paper_ids`` must already be the library:
-    this function does not expand to the papers those citations name.
+    Returns ``(rows, failure_reasons)``. One call's failure is a reason
+    string. The other calls are still made. An empty list of reasons means
+    every call succeeded, including a paper Semantic Scholar does not know
+    (the tool returns no rows for a 404). ``file:`` uploads are skipped and
+    are not failures. ``paper_ids`` must already be the library: this
+    function does not expand to the papers those citations name.
     """
     rows: List[PaperCitation] = []
-    warnings: List[str] = []
+    failures: List[str] = []
     if tool is None:
-        return rows, warnings
+        return rows, failures
+    calls = (
+        ("get_references", "outgoing"),
+        ("get_citations", "incoming"),
+    )
     for paper_id in paper_ids:
-        if not paper_id:
+        if not paper_id or is_file_upload(paper_id):
             continue
-        try:
-            rows.extend(citations_from_tool(paper_id, tool, limit=limit))
-        except Exception as exc:
-            logger.warning("Citation fetch failed for %s: %s", paper_id, exc)
-            warnings.append(f"{paper_id}: {exc}")
-    return rows, warnings
+        for method, direction in calls:
+            try:
+                batch = getattr(tool, method)(paper_id, limit=limit)
+            except Exception as exc:
+                reason = _reason(exc)
+                logger.warning(
+                    "Citation fetch failed for %s via %s: %s",
+                    paper_id,
+                    method,
+                    reason,
+                )
+                failures.append(reason)
+                continue
+            rows.extend(_rows_from_batch(paper_id, batch, direction))
+    return rows, failures

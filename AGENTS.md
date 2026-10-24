@@ -150,14 +150,16 @@ those writes fail the persist stage and name `docs/migrations/017_paper_text.sql
 **020 (`concepts` / `paper_concepts` / `graph_edges`) must be applied by hand**
 before `python -m nlp_pillars.cli graph build` or `GET /api/graph` can succeed.
 Until it is, those calls name `docs/migrations/020_knowledge_graph.sql`.
+Applied on the captain's volume on 2026-10-24.
 **022 (`podcast_fact_checks` / `podcast_claims`) must be applied by hand**
 before `python -m nlp_pillars.cli factcheck run` can save. Until it is, the
 command names `docs/migrations/022_podcast_fact_checks.sql`. `--dry-run` only
 reads the script and `paper_texts`.
-**011 (`podcast_scripts.source_material`) has NOT been applied** — verified against the live
-PostgREST on 2026-08-29, which answers `PGRST204 Could not find the 'source_material' column`.
-`add_podcast_script()` detects exactly that and retries without the key, so podcasts still
-save; only the record of what they were written from is lost until it is run.
+**011 (`podcast_scripts.source_material`) has been applied** on the captain's volume
+(verified 2026-10-24; the 2026-08-29 note that PostgREST answered `PGRST204` for
+this column is stale). `add_podcast_script()` still detects a missing column and
+retries without the key, so a database that does not have it can save a script;
+only the record of what it was written from is lost until the migration is run.
 
 ## Uploaded PDFs are retained, and are the only copy
 
@@ -376,7 +378,8 @@ uploads volume, about 208 MB the first time), not into the image.
 for the active model (`--dry-run` prints counts only).
 `python -m nlp_pillars.cli embeddings papers` stores one title+abstract
 vector per library paper in `paper_vectors`
-(`docs/migrations/021_paper_vectors.sql`, hand-applied) using the pinned
+(`docs/migrations/021_paper_vectors.sql`, hand-applied; on the captain's
+volume as of 2026-10-24) using the pinned
 local bge model only — it does not follow `EMBEDDING_PROVIDER` and does not
 call OpenAI. A second run leaves an existing `(paper, model, title_abstract)`
 row alone and does not load the model (`--dry-run` prints counts only).
@@ -385,7 +388,8 @@ re-downloads URL papers (`--dry-run` prints counts only).
 `python -m nlp_pillars.cli vectors sync` projects the chunk embeddings into Qdrant.
 **019 (`vector_index_state`) must be applied by hand** before that sync, or
 before an ingest projects; until it is, the call names
-`docs/migrations/019_vector_index_state.sql`.
+`docs/migrations/019_vector_index_state.sql`. Applied on the captain's
+volume on 2026-10-24.
 
 The learner graph is the same kind of projection. `concepts`, `paper_concepts`
 and `graph_edges` (`docs/migrations/020_knowledge_graph.sql`, hand-applied) are

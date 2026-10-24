@@ -200,6 +200,8 @@ def _handler(seen):
             )
         if select in ("options", "audio_metadata"):
             return httpx.Response(200, json=[])
+        if select == "*" and request.url.params.get("limit") == "0":
+            return httpx.Response(200, json=[])
         if request.url.params.get("error") == "not.is.null":
             return httpx.Response(
                 200,
@@ -252,6 +254,13 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert by_id["migration-014"]["state"] == "ok"
     assert by_id["migration-015"]["state"] == "ok"
     assert by_id["migration-016"]["state"] == "down"
+    for number in range(17, 23):
+        row = by_id[f"migration-{number:03d}"]
+        assert row["state"] == "ok", row
+        assert row["summary"] == "Applied."
+    assert by_id["semantic-scholar"]["state"] == "ok"
+    assert by_id["semantic-scholar"]["fatal"] is False
+    assert "No API key" in by_id["semantic-scholar"]["summary"]
     assert by_id["qdrant"]["label"] == "Qdrant (local)"
     assert by_id["qdrant"]["state"] == "down"
     assert "plain text 404" in by_id["qdrant"]["summary"]
@@ -400,3 +409,70 @@ def test_route_answers_200_when_collection_raises():
     assert body["summary"] == "Status needs attention"
     assert body["checks"][0]["state"] == "down"
     assert "super-secret-qdrant" not in response.text
+
+
+def test_migration_rows_follow_the_sql_file_convention(tmp_path):
+    specs = status.migration_table_specs()
+    ids = [spec["id"] for spec in specs]
+    assert ids[:6] == [f"migration-{number:03d}" for number in range(17, 23)]
+    by_id = {spec["id"]: spec for spec in specs}
+    assert "paper_texts" in by_id["migration-017"]["tables"]
+    assert "paper_chunks" in by_id["migration-017"]["tables"]
+    assert "podcast_fact_checks" in by_id["migration-022"]["tables"]
+    assert "podcast_claims" in by_id["migration-022"]["tables"]
+    assert not any(spec["id"] == "migration-016" for spec in specs)
+
+    (tmp_path / "016_skip.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS should_not_appear (id int);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "023_future_widget.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS future_widget (id int);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "024_no_table.sql").write_text(
+        "-- a column migration with no new table\n",
+        encoding="utf-8",
+    )
+    found = status.migration_table_specs(tmp_path)
+    assert [spec["id"] for spec in found] == ["migration-023"]
+    assert found[0]["tables"] == ["future_widget"]
+    assert "024" not in found[0]["file"]
+
+
+def test_a_missing_migration_table_is_down():
+    assert status.classify_table(
+        404,
+        {"code": "PGRST205", "message": "Could not find the table paper_texts"},
+    ) == "missing"
+    assert status.classify_table(200, []) == "applied"
+
+
+async def test_rejected_semantic_scholar_key_is_on_the_status_page(caplog):
+    status.clear_status_caches()
+    settings = _Settings()
+    settings.semantic_scholar_api_key = "rejected-s2-key"
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        assert request.headers["x-api-key"] == "rejected-s2-key"
+        assert "rejected-s2-key" not in str(request.url)
+        return httpx.Response(403, json={"message": "Forbidden"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with caplog.at_level("ERROR"):
+            check = await status._check_semantic_scholar(client, settings, now=10.0)
+            again = await status._check_semantic_scholar(client, settings, now=20.0)
+
+    assert calls["n"] == 1
+    assert check["id"] == "semantic-scholar"
+    assert check["state"] == "down"
+    assert check["fatal"] is False
+    assert "rejected" in check["summary"]
+    assert "403" in check["summary"]
+    assert "rejected-s2-key" not in json.dumps(check)
+    assert again == check
+    assert "SEMANTIC_SCHOLAR_API_KEY" in caplog.text
+    assert "not changed" in caplog.text
+    assert status.counts_as_down(check) is False

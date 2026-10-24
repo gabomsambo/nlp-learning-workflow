@@ -277,6 +277,38 @@ open_browser() {
   fi
 }
 
+# Host folder bind-mounted at /vault. Compose must not create it: a missing
+# path becomes root:root and the container user cannot write the export.
+vault_host_dir() {
+  local dir tilde rest
+  dir="$(resolve VAULT_HOST_DIR)"
+  # resolve() can hand back the compose default with HOME still unexpanded.
+  # shellcheck disable=SC2016
+  if [[ -z "$dir" || "$dir" == *'${HOME}'* ]]; then
+    dir="${HOME}/NLP-Vault"
+  fi
+  tilde='~'
+  rest="${dir#"$tilde"}"
+  if [[ "$rest" != "$dir" ]]; then
+    dir="${HOME}${rest}"
+  fi
+  printf '%s' "$dir"
+}
+
+ensure_vault_host_dir() {
+  local dir
+  dir="$(vault_host_dir)"
+  if [[ -z "$dir" || "$dir" != /* ]]; then
+    echo "Vault directory must be an absolute path (got: ${dir}). Set VAULT_HOST_DIR." >&2
+    return 1
+  fi
+  if [[ -e "$dir" && ! -d "$dir" ]]; then
+    echo "Vault path exists and is not a directory: ${dir}" >&2
+    return 1
+  fi
+  mkdir -p -- "$dir"
+}
+
 cmd_up() {
   local build=0 tts=0
   while [[ $# -gt 0 ]]; do
@@ -291,6 +323,7 @@ Usage: ./workstation up [--build] [--tts]"
     shift
   done
   require_docker
+  ensure_vault_host_dir || fail "Could not create the Obsidian vault directory."
   echo "Starting the workstation…"
   local -a args=(up -d)
   if [[ "$build" -eq 1 ]]; then
@@ -305,7 +338,13 @@ Usage: ./workstation up [--build] [--tts]"
   if [[ "$tts" -eq 1 ]]; then
     start_indextts_if_needed
   else
-    echo "IndexTTS is off. Start it with: ./workstation up --tts"
+    local tts_port
+    tts_port="$(port_from_url "$(host_tts_url)")"
+    if port_open "$tts_port"; then
+      echo "IndexTTS is already listening on port ${tts_port}."
+    else
+      echo "IndexTTS was not started by this command. Start it with: ./workstation up --tts"
+    fi
   fi
   if ! wait_until "the app" "$WEBUI_WAIT_SECONDS" webui_ready; then
     fail "See why with: ./workstation logs webui"

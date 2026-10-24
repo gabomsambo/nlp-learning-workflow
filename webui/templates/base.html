@@ -200,9 +200,9 @@
     <audio id="mini-player-audio" preload="none"></audio>
     <a id="mini-player-title" class="mini-title" href="/podcast/">Episode</a>
     <div class="mini-transport">
-      <button type="button" class="mini-btn" id="mini-player-back" aria-label="Back 15 seconds">−15</button>
+      <button type="button" class="mini-btn mini-skip" id="mini-player-back" aria-label="Back 15 seconds">−15</button>
       <button type="button" class="mini-btn mini-play" id="mini-player-toggle" aria-label="Play">Play</button>
-      <button type="button" class="mini-btn" id="mini-player-forward" aria-label="Forward 30 seconds">+30</button>
+      <button type="button" class="mini-btn mini-skip" id="mini-player-forward" aria-label="Forward 30 seconds">+30</button>
     </div>
     <label class="mini-scrub">
       <span class="visually-hidden">Position</span>
@@ -220,6 +220,7 @@
         <option value="2">2×</option>
       </select>
     </label>
+    <button type="button" class="mini-expand" id="mini-player-expand" aria-expanded="false" aria-controls="mini-player" aria-label="Show playback controls">More</button>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>

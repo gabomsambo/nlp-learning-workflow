@@ -205,6 +205,7 @@ def launcher(tmp_path: Path):
             "XDG_DATA_HOME": str(data),
             "WORKSTATION_STUB_LOG": str(log),
             "DOCKER_HOST": "unix:///tmp/nlp-workstation-test-does-not-exist.sock",
+            "VAULT_HOST_DIR": str(home / "NLP-Vault"),
             "INDEXTTS_URL": f"http://127.0.0.1:{port}",
             "INDEXTTS_START_COMMAND": f"echo started >> {marker}; sleep 60",
             "QDRANT_URL": "http://qdrant.example.test",
@@ -225,6 +226,10 @@ def launcher(tmp_path: Path):
         "WORKSTATION_SS_LISTEN_PORT",
     ):
         env.pop(key, None)
+    # The copy of the parent environment must not point mkdir at a real vault.
+    # VAULT_HOST_DIR is set to the fixture home above; drop a parent value
+    # only if that assignment is later removed.
+    assert env["VAULT_HOST_DIR"] == str(home / "NLP-Vault")
 
     real_desktop = Path.home() / ".local/share/applications/nlp-workstation.desktop"
     before = real_desktop.stat().st_mtime if real_desktop.exists() else None
@@ -320,7 +325,14 @@ def test_unknown_command_and_option_do_not_call_docker(launcher):
 def test_up_without_tts_does_not_start_indextts_or_rebuild(launcher):
     proc = launcher["run"](["up"])
     assert proc.returncode == 0, proc.stderr
-    assert "IndexTTS is off. Start it with: ./workstation up --tts" in proc.stdout
+    assert (
+        "IndexTTS was not started by this command. "
+        "Start it with: ./workstation up --tts"
+    ) in proc.stdout
+    assert "IndexTTS is off" not in proc.stdout
+    vault = launcher["home"] / "NLP-Vault"
+    assert vault.is_dir()
+    assert vault.stat().st_uid == os.getuid()
     assert "Waiting for the app ready." in proc.stdout
     assert "App: http://localhost:8000/" in proc.stdout
     assert not launcher["marker"].exists()
@@ -329,6 +341,36 @@ def test_up_without_tts_does_not_start_indextts_or_rebuild(launcher):
     assert "--build" not in log
     assert " stop" not in log
     assert "xdg-open http://localhost:8000/" in log
+
+
+def test_up_without_tts_notices_a_running_indextts(launcher):
+    proc = launcher["run"](
+        ["up"],
+        extra={"WORKSTATION_SS_LISTEN_PORT": str(launcher["port"])},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (
+        f"IndexTTS is already listening on port {launcher['port']}."
+        in proc.stdout
+    )
+    assert "IndexTTS is off" not in proc.stdout
+    assert "was not started" not in proc.stdout
+    assert not launcher["marker"].exists()
+
+
+def test_up_creates_a_custom_vault_directory(launcher):
+    target = launcher["home"] / "custom-vault"
+    proc = launcher["run"](["up"], extra={"VAULT_HOST_DIR": str(target)})
+    assert proc.returncode == 0, proc.stderr
+    assert target.is_dir()
+    assert target.stat().st_uid == os.getuid()
+    assert not (launcher["home"] / "NLP-Vault").exists()
+
+
+def test_vault_bind_does_not_ask_docker_to_create_the_host_path():
+    text = (ROOT / "docker-compose.yml").read_text()
+    assert text.count("create_host_path: false") >= 2
+    assert "${VAULT_HOST_DIR:-${HOME}/NLP-Vault}:/vault" not in text
 
 
 def test_up_build_and_tts_flag_order(launcher):

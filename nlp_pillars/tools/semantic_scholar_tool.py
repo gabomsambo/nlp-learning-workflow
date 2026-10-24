@@ -15,6 +15,31 @@ from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Logged once, at error, when a configured key is rejected. The key itself
+# is never written. .env is not changed; renewing or removing it is the
+# captain's call.
+KEY_REJECTED_LOG = (
+    "SEMANTIC_SCHOLAR_API_KEY was rejected with HTTP 403. "
+    "Retrying this request once without the key. "
+    "The key in .env was not changed; renew or remove it."
+)
+
+
+class SemanticScholarError(Exception):
+    """A Semantic Scholar call failed. An empty citation list is not this.
+
+    A 404 is "this paper is not in the index" and stays an empty list.
+    This exception is everything else, so a 403 or a 429 cannot be reported
+    as zero citations.
+    """
+
+
+def _public_reason(exc: BaseException) -> str:
+    text = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+    if " for url " in text:
+        text = text.split(" for url ", 1)[0]
+    return text[:180]
+
 
 class SemanticScholarTool:
     """Tool for searching Semantic Scholar and fetching citation data with rate limiting."""
@@ -30,6 +55,7 @@ class SemanticScholarTool:
         self.last_request_time = 0
         # Rate limit: 100 requests per 5 minutes = 1 per 3 seconds
         self.rate_limit_seconds = 3.0
+        self.key_rejected = False
 
         # Set up headers
         self.headers = {"Content-Type": "application/json"}
@@ -59,6 +85,24 @@ class SemanticScholarTool:
             time.sleep(sleep_time)
 
         self.last_request_time = time.time()
+
+    def _reject_configured_key(self) -> None:
+        """Drop a key Semantic Scholar refused. Log once. Do not edit .env."""
+        if "x-api-key" not in self.headers:
+            return
+        self.headers.pop("x-api-key", None)
+        if self.key_rejected:
+            return
+        self.key_rejected = True
+        logger.error(KEY_REJECTED_LOG)
+
+    def _get(self, url: str, *, params: dict) -> httpx.Response:
+        """GET, and on HTTP 403 with a key set, retry that call once without it."""
+        response = self.client.get(url, params=params, headers=self.headers)
+        if response.status_code == 403 and "x-api-key" in self.headers:
+            self._reject_configured_key()
+            response = self.client.get(url, params=params, headers=self.headers)
+        return response
 
     def _map_paper_id(self, paper_id: str) -> str:
         """
@@ -112,10 +156,9 @@ class SemanticScholarTool:
 
             logger.info(f"Searching Semantic Scholar for: {query}")
 
-            response = self.client.get(
+            response = self._get(
                 f"{self.base_url}/paper/search",
                 params=params,
-                headers=self.headers
             )
 
             if response.status_code == 429:
@@ -167,13 +210,12 @@ class SemanticScholarTool:
 
             s2_id = self._map_paper_id(paper_id)
 
-            response = self.client.get(
+            response = self._get(
                 f"{self.base_url}/paper/{s2_id}/citations",
                 params={
                     "fields": "paperId,externalIds,title,authors,year,citationCount,abstract",
                     "limit": min(limit, 100)
                 },
-                headers=self.headers
             )
 
             if response.status_code == 404:
@@ -183,7 +225,9 @@ class SemanticScholarTool:
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", 60))
                 time.sleep(retry_after)
-                raise httpx.HTTPError("Rate limited")
+                raise SemanticScholarError(
+                    f"Rate limited (retry after {retry_after}s)"
+                )
 
             response.raise_for_status()
             data = response.json()
@@ -203,13 +247,16 @@ class SemanticScholarTool:
             logger.info(f"Found {len(citations)} citations for paper {paper_id}")
             return citations
 
+        except SemanticScholarError:
+            raise
         except httpx.HTTPError as e:
-            if "404" not in str(e):
-                logger.error(f"Error fetching citations for {paper_id}: {e}")
-            return []
+            if "404" in str(e):
+                return []
+            logger.error(f"Error fetching citations for {paper_id}: {e}")
+            raise SemanticScholarError(_public_reason(e)) from e
         except Exception as e:
             logger.error(f"Unexpected error fetching citations: {e}")
-            return []
+            raise SemanticScholarError(_public_reason(e)) from e
 
     @retry(
         stop=stop_after_attempt(3),
@@ -232,13 +279,12 @@ class SemanticScholarTool:
 
             s2_id = self._map_paper_id(paper_id)
 
-            response = self.client.get(
+            response = self._get(
                 f"{self.base_url}/paper/{s2_id}/references",
                 params={
                     "fields": "paperId,externalIds,title,authors,year,citationCount,abstract",
                     "limit": min(limit, 100)
                 },
-                headers=self.headers
             )
 
             if response.status_code == 404:
@@ -248,7 +294,9 @@ class SemanticScholarTool:
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", 60))
                 time.sleep(retry_after)
-                raise httpx.HTTPError("Rate limited")
+                raise SemanticScholarError(
+                    f"Rate limited (retry after {retry_after}s)"
+                )
 
             response.raise_for_status()
             data = response.json()
@@ -268,13 +316,16 @@ class SemanticScholarTool:
             logger.info(f"Found {len(references)} references for paper {paper_id}")
             return references
 
+        except SemanticScholarError:
+            raise
         except httpx.HTTPError as e:
-            if "404" not in str(e):
-                logger.error(f"Error fetching references for {paper_id}: {e}")
-            return []
+            if "404" in str(e):
+                return []
+            logger.error(f"Error fetching references for {paper_id}: {e}")
+            raise SemanticScholarError(_public_reason(e)) from e
         except Exception as e:
             logger.error(f"Unexpected error fetching references: {e}")
-            return []
+            raise SemanticScholarError(_public_reason(e)) from e
 
     def get_paper(self, paper_id: str) -> Optional[PaperRef]:
         """
@@ -291,12 +342,14 @@ class SemanticScholarTool:
 
             s2_id = self._map_paper_id(paper_id)
 
-            response = self.client.get(
+            response = self._get(
                 f"{self.base_url}/paper/{s2_id}",
                 params={
-                    "fields": "paperId,externalIds,title,authors,year,citationCount,abstract,influentialCitationCount,openAccessPdf"
+                    "fields": (
+                        "paperId,externalIds,title,authors,year,citationCount,"
+                        "abstract,influentialCitationCount,openAccessPdf"
+                    )
                 },
-                headers=self.headers
             )
 
             if response.status_code == 404:

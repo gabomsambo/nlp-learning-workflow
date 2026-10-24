@@ -9,8 +9,10 @@ way, so a server that ignores the rollback preference cannot leave a run behind.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -81,6 +83,18 @@ KIND_PROBES = (
         "missing": "pipeline_runs does not accept a podcast script run yet.",
     },
 )
+
+# Migrations 017 onward add tables. A new file under docs/migrations whose
+# name starts with a number >= 017 and which contains CREATE TABLE is a
+# status row. Column and kind checks above stay explicit: those files do
+# not introduce a table the panel can GET.
+_TABLE_SQL = re.compile(
+    r"CREATE TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+    re.IGNORECASE,
+)
+_MIGRATION_TABLES_FROM = 17
+S2_PROBE_URL = "https://api.semanticscholar.org/graph/v1/paper/ARXIV:1706.03762"
+S2_CACHE_SECONDS = 180.0
 
 # Short, stable phrases mined from pipeline_runs.error. The raw exception stays
 # on the Activity row, one click away; this surface only names the failure.
@@ -157,6 +171,7 @@ def public_line(text: str, limit: int = 180) -> str:
 
 
 _searxng_cache: Dict[str, tuple] = {}
+_s2_cache: Dict[str, tuple] = {}
 _voices_state: Dict[str, Any] = {
     "checked_at": None,
     "fallback": False,
@@ -167,8 +182,9 @@ _voices_state: Dict[str, Any] = {
 
 
 def clear_status_caches() -> None:
-    """Drop cached SearXNG and voice results. Tests start from an empty cache."""
+    """Drop cached SearXNG, Semantic Scholar, and voice results."""
     _searxng_cache.clear()
+    _s2_cache.clear()
     _voices_state.update(
         checked_at=None,
         fallback=False,
@@ -645,7 +661,44 @@ async def _guard(
         return make_check(check_id, label, "down", summary, None, fatal=fatal)
 
 
-def _unchecked(spec: Dict[str, str]) -> Dict[str, Any]:
+def migration_table_specs(migrations_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Status rows for table migrations, from the SQL files themselves.
+
+    ``011``–``016`` are columns and pipeline kinds, probed above. From
+    ``017`` on, each migration that creates a table is one row. A future
+    file is picked up without editing this module.
+    """
+    directory = migrations_dir
+    if directory is None:
+        directory = Path(__file__).resolve().parents[2] / "docs" / "migrations"
+    specs: List[Dict[str, Any]] = []
+    for path in sorted(directory.glob("[0-9][0-9][0-9]_*.sql")):
+        number = int(path.name[:3])
+        if number < _MIGRATION_TABLES_FROM:
+            continue
+        tables: List[str] = []
+        for name in _TABLE_SQL.findall(path.read_text(encoding="utf-8")):
+            if name not in tables:
+                tables.append(name)
+        if not tables:
+            continue
+        words = path.stem.split("_", 1)[1].replace("_", " ")
+        rel = f"docs/migrations/{path.name}"
+        specs.append(
+            {
+                "id": f"migration-{number:03d}",
+                "label": f"{number:03d} {words}",
+                "tables": tables,
+                "file": rel,
+                "missing": (
+                    f"{', '.join(tables)} is missing. Apply {rel} by hand."
+                ),
+            }
+        )
+    return specs
+
+
+def _unchecked(spec: Dict[str, Any]) -> Dict[str, Any]:
     return make_check(
         spec["id"],
         spec["label"],
@@ -741,14 +794,63 @@ async def _probe_kind(
     return kind_check(spec, classify_kind(response.status_code, _json_body(response) or response.text))
 
 
+def classify_table(status_code: Optional[int], body: Any) -> str:
+    """Classify a table probe as applied, missing, or unknown."""
+    if status_code == 200:
+        return "applied"
+    blob = body if isinstance(body, dict) else {}
+    code = str(blob.get("code", ""))
+    message = str(blob.get("message", ""))
+    if code == "PGRST205" or "Could not find the table" in message:
+        return "missing"
+    return "unknown"
+
+
+async def _probe_migration_tables(
+    client: httpx.AsyncClient,
+    base: str,
+    headers: Dict[str, str],
+    spec: Dict[str, Any],
+) -> Dict[str, Any]:
+    missing: List[str] = []
+    unknown = False
+    for table in spec["tables"]:
+        try:
+            response = await client.get(
+                f"{base}/{table}",
+                params={"select": "*", "limit": "0"},
+                headers=headers,
+            )
+        except httpx.HTTPError:
+            unknown = True
+            continue
+        verdict = classify_table(response.status_code, _json_body(response))
+        if verdict == "missing":
+            missing.append(table)
+        elif verdict != "applied":
+            unknown = True
+    if missing:
+        narrowed = dict(spec)
+        narrowed["missing"] = (
+            f"{', '.join(missing)} is missing. Apply {spec['file']} by hand."
+        )
+        return column_check(narrowed, "missing")
+    if unknown:
+        return column_check(spec, "unknown")
+    return column_check(spec, "applied")
+
+
 async def _migration_checks(
     client: httpx.AsyncClient,
     base: str,
     headers: Dict[str, str],
     database_up: bool,
 ) -> List[Dict[str, Any]]:
+    tables = migration_table_specs()
     if not database_up:
-        return [_unchecked(spec) for spec in (*MIGRATION_COLUMNS, *KIND_PROBES)]
+        return [
+            _unchecked(spec) for spec in (*MIGRATION_COLUMNS, *KIND_PROBES, *tables)
+        ]
     columns = await asyncio.gather(
         *(_probe_column(client, base, headers, spec) for spec in MIGRATION_COLUMNS)
     )
@@ -757,7 +859,13 @@ async def _migration_checks(
     for spec in KIND_PROBES:
         kinds.append(await _probe_kind(client, base, headers, spec))
     await _delete_probes(client, base, headers)
-    return [*columns, *kinds]
+    table_rows = await asyncio.gather(
+        *(
+            _probe_migration_tables(client, base, headers, spec)
+            for spec in tables
+        )
+    )
+    return [*columns, *kinds, *table_rows]
 
 
 def _qdrant_headers(api_key: Any) -> Dict[str, str]:
@@ -850,6 +958,106 @@ async def _check_searxng(
     else:
         check = classify_searxng(response.status_code, _json_body(response), None)
     _searxng_cache[key] = (clock, check)
+    return dict(check)
+
+
+def classify_semantic_scholar(
+    status_code: Optional[int], *, had_key: bool
+) -> Dict[str, Any]:
+    """Activity row for the Semantic Scholar key.
+
+    A rejected key is DOWN on the page and does not flip the shell chip:
+    requests retry once without the key, so citations still run.
+    """
+    if not had_key:
+        return make_check(
+            "semantic-scholar",
+            "Semantic Scholar",
+            "ok",
+            "No API key configured. Requests use the shared rate limit.",
+            None,
+            fatal=False,
+        )
+    if status_code == 403:
+        return make_check(
+            "semantic-scholar",
+            "Semantic Scholar",
+            "down",
+            (
+                "The configured SEMANTIC_SCHOLAR_API_KEY is rejected "
+                "(HTTP 403). Requests retry once without the key."
+            ),
+            (
+                "Renew the key or remove SEMANTIC_SCHOLAR_API_KEY from .env. "
+                "The file was not changed."
+            ),
+            fatal=False,
+        )
+    if status_code == 200:
+        return make_check(
+            "semantic-scholar",
+            "Semantic Scholar",
+            "ok",
+            "API key accepted.",
+            None,
+            fatal=False,
+        )
+    if status_code is None:
+        summary = "Semantic Scholar could not be reached."
+    else:
+        summary = f"Semantic Scholar answered HTTP {status_code}."
+    return make_check(
+        "semantic-scholar",
+        "Semantic Scholar",
+        "down",
+        summary,
+        "Open Activity again in a moment.",
+        fatal=False,
+    )
+
+
+def _semantic_scholar_key(settings: Any) -> str:
+    raw = getattr(settings, "semantic_scholar_api_key", None)
+    return str(raw).strip() if raw else ""
+
+
+async def _check_semantic_scholar(
+    client: httpx.AsyncClient,
+    settings: Any,
+    *,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    key = _semantic_scholar_key(settings)
+    if not key:
+        return classify_semantic_scholar(None, had_key=False)
+    digest = hashlib.sha256(key.encode()).hexdigest()[:12]
+    clock = _clock(now)
+    cached = _s2_cache.get(digest)
+    if cached is not None and clock - cached[0] < S2_CACHE_SECONDS:
+        return dict(cached[1])
+    try:
+        response = await client.get(
+            S2_PROBE_URL,
+            params={"fields": "paperId"},
+            headers={"x-api-key": key},
+        )
+    except httpx.HTTPError as exc:
+        check = classify_semantic_scholar(None, had_key=True)
+        detail = public_line(str(exc))
+        if detail:
+            check = dict(check)
+            check["summary"] = public_line(
+                f"Semantic Scholar could not be reached. {detail}"
+            )
+    else:
+        check = classify_semantic_scholar(response.status_code, had_key=True)
+        if response.status_code == 403:
+            logger.error(
+                "SEMANTIC_SCHOLAR_API_KEY was rejected with HTTP 403. "
+                "Citation requests retry once without the key. "
+                "The key in .env was not changed; renew or remove it."
+            )
+    _s2_cache[digest] = (clock, check)
     return dict(check)
 
 
@@ -985,6 +1193,7 @@ async def collect_status(
         getattr(settings, "openai_api_key", None),
         getattr(settings, "anthropic_api_key", None),
         getattr(settings, "deepseek_api_key", None),
+        getattr(settings, "semantic_scholar_api_key", None),
     ]
     headers = _auth_headers(auth_token)
     base = postgrest_url.rstrip("/")
@@ -1048,7 +1257,18 @@ async def collect_status(
             return payload
         raise TypeError("storage check was not a status row")
 
-    migration_rows, qdrant, qdrant_cloud, searxng, indextts, voice_check, key_check, schedule, disk = await asyncio.gather(
+    (
+        migration_rows,
+        qdrant,
+        qdrant_cloud,
+        searxng,
+        scholar,
+        indextts,
+        voice_check,
+        key_check,
+        schedule,
+        disk,
+    ) = await asyncio.gather(
         safe_migrations(),
         _guard("qdrant", "Qdrant (local)", lambda: _check_qdrant(client, settings), secrets),
         _guard(
@@ -1059,6 +1279,13 @@ async def collect_status(
             fatal=False,
         ),
         _guard("searxng", "SearXNG", lambda: _check_searxng(client, settings), secrets),
+        _guard(
+            "semantic-scholar",
+            "Semantic Scholar",
+            lambda: _check_semantic_scholar(client, settings),
+            secrets,
+            fatal=False,
+        ),
         _guard("indextts", "IndexTTS", tts, secrets),
         voices(),
         _guard("keys", "Model keys", keys, secrets),
@@ -1072,6 +1299,7 @@ async def collect_status(
         qdrant,
         qdrant_cloud,
         searxng,
+        scholar,
         indextts,
         voice_check,
         key_check,
