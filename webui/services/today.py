@@ -39,7 +39,12 @@ _KIND_NOUN = {
 
 
 def greeting(hour: int) -> str:
-    """Time-of-day line. The hour is already in the viewer's local zone."""
+    """Time-of-day line for an hour already in the zone being shown.
+
+    The page script replaces the rendered greeting and date with the browser's
+    local clock, which is the clock the streak dots use. This function is the
+    value in the HTML before that script runs.
+    """
     if hour < 12:
         return "Good morning."
     if hour < 17:
@@ -878,6 +883,8 @@ def build_today_view(inputs: TodayInputs, *, now: datetime, tz: datetime.tzinfo)
         "active": active,
     }
     return TodayView(
+        # Container zone. webui/static/today.js rewrites both from the browser
+        # clock in the same turn that it redraws the streak dots.
         greeting=greeting(local.hour),
         date_line=f"{local.strftime('%A, %B')} {local.day}",
         summary=summary_line(due=due, has_lesson=up_next is not None, active_clause=clause),

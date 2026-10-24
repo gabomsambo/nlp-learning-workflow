@@ -1654,5 +1654,25 @@ def vectors_sync(
     raise typer.Exit(0)
 
 
+dates_app = typer.Typer(
+    help="One-off repairs for dates stored on lessons and notes",
+    add_completion=False,
+)
+app.add_typer(dates_app, name="dates")
+
+
+@dates_app.command("repair")
+def dates_repair():
+    """Print the SQL that restamps invented lesson and note dates.
+
+    Does not connect to a database and does not apply the repair. The header
+    of the printed SQL says how to apply it by hand.
+    """
+    from .created_at_repair import repair_sql_text
+
+    console.print(repair_sql_text(), markup=False)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

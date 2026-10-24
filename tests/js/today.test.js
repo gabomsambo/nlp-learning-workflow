@@ -8,6 +8,8 @@ const assert = require('node:assert');
 
 const {
   streakFromTimestamps,
+  todayHeader,
+  greetingForHour,
   heardPastNinety,
   readRatio,
   readDone,
@@ -93,4 +95,45 @@ test('the status chip stays blank unless the endpoint answers', () => {
     statusChipText(200, { services: [{ name: 'Database', ok: false }] }),
     { ok: false, text: 'Database needs attention' },
   );
+});
+
+function partsAtOffset(minutes) {
+  return function (ms) {
+    const shifted = new Date(ms + minutes * 60000);
+    return {
+      year: shifted.getUTCFullYear(),
+      month: shifted.getUTCMonth(),
+      day: shifted.getUTCDate(),
+      hour: shifted.getUTCHours(),
+      weekday: shifted.getUTCDay(),
+    };
+  };
+}
+
+test('the date header uses the same local clock as the streak dots', () => {
+  // 23:38 UTC Friday is 01:38 Saturday in UTC+2. UTC would still say Friday evening.
+  const ms = Date.parse('2026-10-23T23:38:00Z');
+  const berlinParts = partsAtOffset(120);
+  const header = todayHeader(ms, berlinParts);
+  assert.equal(header.dateLine, 'Saturday, October 24');
+  assert.equal(header.greeting, 'Good morning.');
+
+  const streak = streakFromTimestamps([], ms, berlin);
+  const todayDot = streak.dots.find((dot) => dot.isToday);
+  assert.equal(header.localDate, todayDot.iso);
+  assert.equal(todayDot.label, 'S');
+
+  const utc = todayHeader(ms, partsAtOffset(0));
+  assert.equal(utc.dateLine, 'Friday, October 23');
+  assert.equal(utc.greeting, 'Good evening.');
+  assert.notEqual(utc.localDate, header.localDate);
+});
+
+test('the greeting follows the same hour bands on that local clock', () => {
+  assert.equal(greetingForHour(0), 'Good morning.');
+  assert.equal(greetingForHour(11), 'Good morning.');
+  assert.equal(greetingForHour(12), 'Good afternoon.');
+  assert.equal(greetingForHour(16), 'Good afternoon.');
+  assert.equal(greetingForHour(17), 'Good evening.');
+  assert.equal(greetingForHour(23), 'Good evening.');
 });
