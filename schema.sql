@@ -435,12 +435,15 @@ CREATE TABLE pipeline_run_stages (
 -- ==========================================
 -- PAPER TEXT, CHUNKS, AND EMBEDDINGS
 -- Source of truth for paper text and for the vectors computed from it.
--- Same objects as docs/migrations/017_paper_text.sql and
--- docs/migrations/018_chunk_embeddings.sql, which existing volumes apply by
--- hand. chunk_embeddings.embedding is real[] (float4), not bytea and not
--- pgvector: PostgREST returns a JSON array. Qdrant is a rebuildable
--- projection of these rows (docs/migrations/019_vector_index_state.sql).
--- paper_chunks.id is the surrogate chunk_embeddings references.
+-- Same objects as docs/migrations/017_paper_text.sql,
+-- docs/migrations/018_chunk_embeddings.sql,
+-- docs/migrations/019_vector_index_state.sql, and
+-- docs/migrations/021_paper_vectors.sql, which existing volumes apply by
+-- hand. Vector columns are real[] (float4), not bytea and not pgvector:
+-- PostgREST returns a JSON array. Qdrant is a rebuildable projection of
+-- the chunk rows (019). paper_chunks.id is the surrogate chunk_embeddings
+-- references. paper_vectors has no foreign key: an external paper is not a
+-- row in papers.
 -- ==========================================
 CREATE TABLE paper_texts (
     paper_id TEXT PRIMARY KEY,
@@ -684,6 +687,24 @@ GRANT EXECUTE ON FUNCTION replace_paper_text_and_chunks(TEXT, TEXT, TEXT, JSONB)
 GRANT EXECUTE ON FUNCTION chunks_missing_embeddings(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
 GRANT EXECUTE ON FUNCTION chunks_with_embeddings(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
 GRANT EXECUTE ON FUNCTION projection_stale_chunks(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
+
+-- One title+abstract vector per paper per model. Graph related_to reads
+-- these rows. Chunk embeddings stay the source the search index is rebuilt
+-- from. Unique (ref_kind, ref_id, model_id, source) is what makes
+-- embeddings papers idempotent. dims is checked against the array length.
+CREATE TABLE paper_vectors (
+    ref_kind TEXT NOT NULL CHECK (ref_kind IN ('paper', 'external_paper')),
+    ref_id TEXT NOT NULL CHECK (btrim(ref_id) <> ''),
+    model_id TEXT NOT NULL CHECK (btrim(model_id) <> ''),
+    source TEXT NOT NULL DEFAULT 'title_abstract' CHECK (btrim(source) <> ''),
+    dims INTEGER NOT NULL CHECK (dims > 0),
+    vec REAL[] NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    CONSTRAINT paper_vectors_dims_match CHECK (cardinality(vec) = dims)
+);
+
+CREATE UNIQUE INDEX paper_vectors_ref_model_source
+    ON paper_vectors (ref_kind, ref_id, model_id, source);
 
 -- ==========================================
 -- KNOWLEDGE GRAPH
@@ -1029,6 +1050,10 @@ COMMENT ON TABLE chunk_embeddings IS 'One float32 vector per chunk per model. re
 COMMENT ON TABLE vector_index_state IS 'Chunks projected into one Qdrant target. Not a foreign key: the row outlives the chunk so the point can be deleted.';
 COMMENT ON COLUMN chunk_embeddings.embedding IS 'float4[] (PostgreSQL real[]). Chosen over bytea so the array is readable without a codec, and over pgvector so the Postgres image stays unchanged.';
 COMMENT ON COLUMN chunk_embeddings.model_id IS 'Provider model id including the pinned revision, e.g. BAAI/bge-base-en-v1.5@<onnx sha>.';
+COMMENT ON TABLE paper_vectors IS 'One float32 title+abstract vector per paper per model. Rebuildable. Not the chunk index.';
+COMMENT ON COLUMN paper_vectors.vec IS 'float4[] (PostgreSQL real[]). Same storage choice as chunk_embeddings.embedding.';
+COMMENT ON COLUMN paper_vectors.source IS 'What was embedded. title_abstract is the graph related_to input.';
+COMMENT ON COLUMN paper_vectors.ref_kind IS 'paper for a library row, external_paper for a paper that is not in the library.';
 COMMENT ON COLUMN paper_chunks.chunker_version IS 'Chunker identity including its config, e.g. semchunk==4.1.1|250/25|cl100k_base';
 
 COMMENT ON COLUMN papers.pillar_id IS 'Learning pillar (slug) for content isolation';
