@@ -563,6 +563,79 @@ def test_save_failure_does_not_change_the_script():
     assert exc.value.cost_usd > 0
 
 
+def test_stages_run_extract_through_persist_in_order():
+    script = _script()
+    events = []
+    client, messages = _client(_pipeline_parse)
+
+    def on_stage(name, status, detail=None):
+        events.append((name, status, detail))
+
+    with (
+        patch("nlp_pillars.factcheck.engine.db.get_podcast_script_by_id", return_value=script),
+        patch("nlp_pillars.factcheck.engine.db.get_stored_paper_text", return_value=PAPER),
+        patch("nlp_pillars.factcheck.engine.db.list_paper_chunks", return_value=[]),
+        patch(
+            "nlp_pillars.factcheck.engine.db.insert_podcast_fact_check",
+            return_value="fc-1",
+        ) as insert,
+        patch("nlp_pillars.factcheck.engine.make_client") as maker,
+        patch("nlp_pillars.podcast_models.get_settings") as settings,
+    ):
+        settings.return_value.factcheck_extract_model = "claude-haiku-5-5"
+        settings.return_value.factcheck_screen_model = "claude-haiku-5-5"
+        settings.return_value.factcheck_rejudge_model = "claude-sonnet-5-5"
+        result = execute_factcheck(SCRIPT_ID, client=client, on_stage=on_stage)
+
+    completed = [name for name, status, _detail in events if status == "completed"]
+    assert completed == [
+        "factcheck_extract",
+        "factcheck_screen",
+        "factcheck_rejudge",
+        "factcheck_anchor",
+        "factcheck_persist",
+    ]
+    assert ("factcheck_rejudge", "completed", "1 re-judged") in events
+    assert result.fact_check_id == "fc-1"
+    assert script.script == SCRIPT
+    insert.assert_called_once()
+    maker.assert_not_called()
+    assert messages.parse.called
+
+
+def test_cancel_before_extract_does_not_call_the_model():
+    import threading
+
+    from nlp_pillars.factcheck.errors import FactcheckCancelled
+
+    script = _script()
+    client, messages = _client(_pipeline_parse)
+    cancel = threading.Event()
+    cancel.set()
+    events = []
+    with (
+        patch("nlp_pillars.factcheck.engine.db.get_podcast_script_by_id", return_value=script),
+        patch("nlp_pillars.factcheck.engine.db.get_stored_paper_text", return_value=PAPER),
+        patch("nlp_pillars.factcheck.engine.db.list_paper_chunks", return_value=[]),
+        patch("nlp_pillars.factcheck.engine.db.insert_podcast_fact_check") as insert,
+        patch("nlp_pillars.podcast_models.get_settings") as settings,
+    ):
+        settings.return_value.factcheck_extract_model = "claude-haiku-5-5"
+        settings.return_value.factcheck_screen_model = "claude-haiku-5-5"
+        settings.return_value.factcheck_rejudge_model = "claude-sonnet-5-5"
+        with pytest.raises(FactcheckCancelled):
+            execute_factcheck(
+                SCRIPT_ID,
+                client=client,
+                on_stage=lambda *args: events.append(args),
+                cancel=cancel,
+            )
+    assert events == []
+    messages.parse.assert_not_called()
+    insert.assert_not_called()
+    assert script.script == SCRIPT
+
+
 def test_cli_dry_run_does_not_call_a_model_or_write():
     script = _script()
     with (

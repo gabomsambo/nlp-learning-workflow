@@ -201,6 +201,11 @@
     podcast_limitations: 'Extracting limitations',
     podcast_synthesize: 'Writing the podcast script',
     podcast_persist: 'Saving the script',
+    factcheck_extract: 'Splitting the script into claims',
+    factcheck_screen: 'Checking claims against the paper',
+    factcheck_rejudge: 'Re-checking flagged claims',
+    factcheck_anchor: 'Locating evidence quotes',
+    factcheck_persist: 'Saving the fact check',
   };
 
   function stageLabel(name) {
@@ -436,6 +441,23 @@
       }
       if (run.status === 'failed') {
         return 'Failed' + (run.error ? ' — ' + run.error : '');
+      }
+    }
+    if (run.kind === 'podcast_factcheck') {
+      var counts = run.result && run.result.counts;
+      if (run.status === 'succeeded' && counts && counts.claims != null) {
+        return 'Done — ' + counts.claims + ' claims, ' +
+               (counts.high || 0) + ' high, ' +
+               (counts.medium || 0) + ' medium, ' +
+               (counts.low || 0) + ' low';
+      }
+      if (run.status === 'succeeded') return 'Done — fact check saved';
+      if (run.status === 'failed') {
+        return 'Fact check failed' + (run.error ? ' — ' + run.error : '') +
+               '. The script was not changed.';
+      }
+      if (run.status === 'cancelled') {
+        return 'Cancelled. The script was not changed.';
       }
     }
     if (run.status === 'succeeded') {

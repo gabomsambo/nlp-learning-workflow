@@ -8,7 +8,9 @@ text was not modified.
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,12 +22,24 @@ from ..podcast_models import (
 )
 from .anchor import evidence_for_quotes
 from .claude import Spend, make_client
-from .constants import PROMPT_VERSION
+from .constants import (
+    PROMPT_VERSION,
+    STAGE_ANCHOR,
+    STAGE_EXTRACT,
+    STAGE_PERSIST,
+    STAGE_REJUDGE,
+    STAGE_SCREEN,
+)
 from .cost import require_price
-from .errors import FactcheckError
+from .errors import FactcheckCancelled, FactcheckError
 from .extract import DraftClaim, extract_claims
+from .schemas import TERMINAL_SCREEN_VERDICTS
 from .severity import assign_severity
 from .verify import rejudge_claims, screen_claims
+
+logger = logging.getLogger(__name__)
+
+StageCallback = Callable[[str, str, str | None], None]
 
 _COUNT_KEY = {
     "supported": "supported",
@@ -134,6 +148,55 @@ def _claim_row(
     }
 
 
+def _short(exc: BaseException) -> str:
+    text = str(exc).strip().splitlines()
+    line = text[0] if text else exc.__class__.__name__
+    return line[:160]
+
+
+def _emit(
+    on_stage: StageCallback | None,
+    name: str,
+    status: str,
+    detail: str | None = None,
+) -> None:
+    if on_stage is None:
+        return
+    try:
+        on_stage(name, status, detail)
+    except Exception:
+        logger.warning(
+            "factcheck on_stage(%s, %s) raised", name, status, exc_info=True,
+        )
+
+
+def _gate(cancel: Any, name: str) -> None:
+    if cancel is not None and cancel.is_set():
+        raise FactcheckCancelled(f"cancelled before {name}")
+
+
+def _stage(
+    name: str,
+    on_stage: StageCallback | None,
+    cancel: Any,
+    work: Callable[[], Any],
+    detail,
+) -> Any:
+    """Run one stage. A cancel is raised before it starts, not mid-call."""
+    _gate(cancel, name)
+    _emit(on_stage, name, "running")
+    try:
+        value = work()
+    except FactcheckCancelled:
+        raise
+    except Exception as exc:
+        _emit(on_stage, name, "failed", _short(exc))
+        raise
+    text = detail(value) if callable(detail) else detail
+    _emit(on_stage, name, "completed", text)
+    return value
+
+
 def run_factcheck(
     script_text: str,
     paper_text: str,
@@ -144,6 +207,8 @@ def run_factcheck(
     paper_id: str,
     models: dict[str, str] | None = None,
     budget_usd: float | None = None,
+    on_stage: StageCallback | None = None,
+    cancel: Any = None,
 ) -> FactcheckResult:
     """Check ``script_text`` against the whole ``paper_text``. Do not persist."""
     if not script_text or not script_text.strip():
@@ -160,24 +225,68 @@ def run_factcheck(
         require_price(chosen[name])
 
     spend = Spend(budget_usd)
-    claims, _dropped = extract_claims(
-        client, script_text, model=chosen["extract"], spend=spend,
+
+    def _extract():
+        return extract_claims(
+            client, script_text, model=chosen["extract"], spend=spend,
+        )
+
+    def _extract_detail(pair: tuple[list[DraftClaim], int]) -> str:
+        found, dropped = pair
+        text = f"{len(found)} claims"
+        if dropped:
+            text += f", {dropped} spans dropped"
+        return text
+
+    claims, _dropped = _stage(
+        STAGE_EXTRACT, on_stage, cancel, _extract, _extract_detail,
     )
-    screen_claims(
-        client,
-        claims,
-        paper_text=paper_text,
-        model=chosen["screen"],
-        spend=spend,
+
+    def _screen() -> int:
+        screen_claims(
+            client,
+            claims,
+            paper_text=paper_text,
+            model=chosen["screen"],
+            spend=spend,
+        )
+        return len(claims)
+
+    _stage(
+        STAGE_SCREEN, on_stage, cancel, _screen, lambda n: f"{n} screened",
     )
-    rejudge_claims(
-        client,
-        claims,
-        paper_text=paper_text,
-        model=chosen["rejudge"],
-        spend=spend,
+    flagged = sum(
+        1 for claim in claims if claim.verdict not in TERMINAL_SCREEN_VERDICTS
     )
-    rows = [_claim_row(claim, paper_text, chunks) for claim in claims]
+
+    def _rejudge() -> int:
+        rejudge_claims(
+            client,
+            claims,
+            paper_text=paper_text,
+            model=chosen["rejudge"],
+            spend=spend,
+        )
+        return flagged
+
+    _stage(
+        STAGE_REJUDGE,
+        on_stage,
+        cancel,
+        _rejudge,
+        lambda n: "nothing flagged" if not n else f"{n} re-judged",
+    )
+
+    def _anchor() -> list[dict[str, Any]]:
+        return [_claim_row(claim, paper_text, chunks) for claim in claims]
+
+    def _anchor_detail(anchored: list[dict[str, Any]]) -> str:
+        located = sum(
+            1 for row in anchored if row["evidence_status"] == "located"
+        )
+        return f"{located} of {len(anchored)} claims have a located quote"
+
+    rows = _stage(STAGE_ANCHOR, on_stage, cancel, _anchor, _anchor_detail)
     counts = _counts(claims)
     return FactcheckResult(
         dry_run=False,
@@ -209,6 +318,8 @@ def execute_factcheck(
     dry_run: bool = False,
     budget_usd: float | None = None,
     client: Any = None,
+    on_stage: StageCallback | None = None,
+    cancel: Any = None,
 ) -> FactcheckResult:
     """Load the script and paper text, check, and insert on success.
 
@@ -252,15 +363,21 @@ def execute_factcheck(
         paper_id=script.paper_id,
         models=models,
         budget_usd=budget_usd,
+        on_stage=on_stage,
+        cancel=cancel,
     )
+    _gate(cancel, STAGE_PERSIST)
+    _emit(on_stage, STAGE_PERSIST, "running", "Saving the fact check")
     try:
         result.fact_check_id = db.insert_podcast_fact_check(
             result.header(), result.claims,
         )
     except db.FactcheckSaveError as exc:
+        _emit(on_stage, STAGE_PERSIST, "failed", _short(exc))
         raise FactcheckError(
             f"{exc} The script was not changed and the fact check was not saved.",
             cost_usd=result.cost_usd,
             calls=result.calls,
         ) from exc
+    _emit(on_stage, STAGE_PERSIST, "completed", f"Saved {result.fact_check_id}")
     return result

@@ -1822,5 +1822,50 @@ def factcheck_run(
     raise typer.Exit(0)
 
 
+@factcheck_app.command("backfill")
+def factcheck_backfill(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "List scripts that have no fact check and print the expected cost. "
+            "No model call and no write."
+        ),
+    ),
+):
+    """Fact-check scripts that have no stored check yet.
+
+    Expected cost for the 7 existing scripts is about $0.6–1.3 total
+    (Haiku 5.5 extract and screen, Sonnet 5.5 re-judge of flagged claims
+    only). ``--dry-run`` lists those scripts and does not call a model.
+    Apply docs/migrations/022_podcast_fact_checks.sql before a run that
+    saves. Does not modify podcast scripts. Stops at the first failure;
+    checks saved before that stay saved.
+    """
+    from .db import FactcheckLookupError, PodcastScriptLookupError
+    from .factcheck.backfill import run_backfill
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = run_backfill(dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except (FactcheckLookupError, PodcastScriptLookupError) as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("factcheck backfill failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("factcheck backfill failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    for line in report.lines:
+        console.print(line, markup=False)
+    if report.failed:
+        raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

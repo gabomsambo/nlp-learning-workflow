@@ -23,6 +23,7 @@
     upload: 'Upload',
     podcast_script: 'Script',
     podcast_audio: 'Audio',
+    podcast_factcheck: 'Fact check',
   };
 
   var STATUS_LABEL = {
