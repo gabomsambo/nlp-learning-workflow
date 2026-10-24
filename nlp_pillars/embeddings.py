@@ -1,7 +1,6 @@
 """Embedding providers for chunk vectors stored in Postgres.
 
-Two providers implement one interface: OpenAI ``text-embedding-3-small`` (the
-existing Qdrant path's model, same request shape) and local
+Two providers implement one interface: OpenAI ``text-embedding-3-small`` and local
 ``BAAI/bge-base-en-v1.5`` through fastembed's quantized ONNX export. That ONNX
 file is the model the local-knowledge report measured. sentence-transformers
 would load the fp32 PyTorch checkpoint instead, which is a heavier download and
@@ -9,15 +8,14 @@ does not produce these vectors. onnxruntime is already in the image, so the
 image grows by fastembed and three small libraries, not by the weights.
 
 Weights download into ``EMBEDDING_CACHE_DIR`` on first use (about 208 MB) and
-are not copied into the image. The Qdrant upsert in ``vectors.py`` is a
-different path and still calls OpenAI directly.
+are not copied into the image. Qdrant does not embed: ``vectors.upsert_text``
+projects the rows this module stored.
 
 Selection is ``EMBEDDING_PROVIDER`` (``local`` or ``openai``) and
 ``EMBEDDING_MODEL``. The default provider is ``local``. A value of
-``EMBEDDING_MODEL`` that starts with ``text-embedding-`` is the OpenAI model
-``vectors.py`` already reads; with the default local provider it does not
-replace bge. Set ``EMBEDDING_PROVIDER=openai`` to store OpenAI vectors in
-``chunk_embeddings``.
+``EMBEDDING_MODEL`` that starts with ``text-embedding-`` does not replace bge
+while the provider is local. Set ``EMBEDDING_PROVIDER=openai`` to store OpenAI
+vectors in ``chunk_embeddings`` and project those.
 """
 
 from __future__ import annotations
@@ -100,9 +98,8 @@ def resolve_embedding_selection(
     """Return ``(provider name, stored model_id)``.
 
     ``provider`` defaults to ``local``. An OpenAI model id
-    (``text-embedding-…``) with the local provider is the value ``vectors.py``
-    reads for the Qdrant upsert; the Postgres store still uses the pinned bge
-    model. ``EMBEDDING_PROVIDER=openai`` is how OpenAI vectors are stored.
+    (``text-embedding-…``) with the local provider does not replace the pinned
+    bge model. ``EMBEDDING_PROVIDER=openai`` is how OpenAI vectors are stored.
     """
     name = (provider or "").strip().lower() or "local"
     requested = (model or "").strip()

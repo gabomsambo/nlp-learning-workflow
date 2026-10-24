@@ -747,10 +747,9 @@ def _normalize_whitespace(text: str) -> str:
     return text.strip()
 
 
-# Chunk sizes are denominated in TOKENS, counted with the encoding the embedding
-# model actually uses. Chunks produced here are embedded with
-# text-embedding-3-small (see nlp_pillars/vectors.py::_embed), which tokenizes
-# with cl100k_base, so a cl100k_base count is the size the downstream model sees.
+# Chunk sizes are denominated in TOKENS, counted with cl100k_base. paper_chunks
+# records that count. The default embedder is local bge, which has its own
+# tokenizer; the stored token_count is this budget, not bge's.
 EMBEDDING_ENCODING = "cl100k_base"
 
 # The one cut vectors.upsert_text embeds, and the one cut paper_chunks stores.

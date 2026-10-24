@@ -31,6 +31,7 @@ from .config import get_settings, get_pillar_config
 from .paper_ids import resolvable_pdf_url
 from . import db
 from . import vectors
+from .projector import ProjectionError
 
 logger = logging.getLogger(__name__)
 
@@ -666,7 +667,7 @@ class Orchestrator:
         # Stored text is the source of truth. Embeddings for the new chunks
         # are the next write. Either failure raises, the in-flight PERSIST
         # stage is marked failed, and the queue row stays unprocessed.
-        # upsert_text below is unchanged.
+        # Projection of those rows is the VECTORS stage below.
         n_chunks = db.replace_paper_text(
             paper.id, parsed_paper.full_text, parsed_paper.extractor,
         )
@@ -678,31 +679,30 @@ class Orchestrator:
             f"{n_embedded} embedding(s)",
         )
 
-        # Step 5f: Store in vector database
-        logger.info(f"Step 5f: Upserting vectors for paper {paper.id} in pillar {pillar_id}")
+        # Step 5f: Project stored embeddings into the local index (and cloud
+        # when configured). Local failure is this stage only: the lesson and
+        # quiz are already written, so the paper still counts as processed.
+        # A down cloud does not raise — that target stays behind.
+        logger.info(f"Step 5f: Projecting vectors for paper {paper.id} in pillar {pillar_id}")
         self._stage(StageName.VECTORS, StageStatus.RUNNING.value, paper.id)
-        # Ensure Qdrant collection exists before upserting
         vectors.ensure_collections()
-        chunks_upserted = vectors.upsert_text(
-            pillar_id, paper.id, parsed_paper.full_text
-        )
-        # upsert_text() wraps its whole body in `except Exception: return 0`, so an
-        # unreachable Qdrant, a bad API key and a chunker contract break all arrive
-        # here as a plain 0 — indistinguishable from "this paper had no text".
-        # Reporting that as a completed stage is how a dead vector store stayed
-        # invisible. Infer the difference from the text we actually handed it, and
-        # mark the stage failed. Non-fatal on purpose: the lesson and quiz are already
-        # written, so the paper still counts as processed (see AGENTS.md on why
-        # upsert_text must not be made to raise).
-        if chunks_upserted == 0 and parsed_paper.full_text.strip():
-            self._stage(
-                StageName.VECTORS, StageStatus.FAILED.value,
-                "no chunks written — vector store unavailable or chunking failed; "
-                "this paper will not appear in semantic search",
+        try:
+            chunks_upserted = vectors.upsert_text(
+                pillar_id, paper.id, parsed_paper.full_text
             )
+        except ProjectionError as exc:
+            self._stage(StageName.VECTORS, StageStatus.FAILED.value, str(exc))
         else:
-            self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
-                        f"{chunks_upserted} chunks")
+            # 0 from a missing local client is the same failure, with less detail.
+            if chunks_upserted == 0 and parsed_paper.full_text.strip():
+                self._stage(
+                    StageName.VECTORS, StageStatus.FAILED.value,
+                    "no chunks written — vector store unavailable or chunking failed; "
+                    "this paper will not appear in semantic search",
+                )
+            else:
+                self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
+                            f"{chunks_upserted} chunks")
 
         logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
         return lesson, quiz_cards

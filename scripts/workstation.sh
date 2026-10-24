@@ -47,7 +47,7 @@ Usage:
   ./workstation up [--build] [--tts]   Start the stack and open the app
   ./workstation down                   Stop containers, keep database and uploads
   ./workstation status                 Show whether each dependency is up
-  ./workstation logs [service]         Follow logs (webui, db, postgrest, searxng, scheduler, tts)
+  ./workstation logs [service]         Follow logs (webui, db, postgrest, searxng, qdrant, scheduler, tts)
   ./workstation install-desktop        Add an application-menu icon for this checkout
   ./workstation help                   Show this help
 
@@ -423,30 +423,45 @@ status_indextts() {
   fi
 }
 
-status_qdrant() {
-  local url key body base
-  url="$(resolve QDRANT_URL)"
+status_qdrant_probe() {
+  local label url key body base down_hint
+  label="$1"
+  url="$2"
+  key="$3"
+  down_hint="$4"
   if [[ "$url" != http://* && "$url" != https://* ]]; then
-    row bad "Qdrant Cloud" "DOWN" "QDRANT_URL is not set"
-    fix_line "Set QDRANT_URL in .env"
+    row bad "$label" "DOWN" "not configured"
     return
   fi
   base="${url%/}"
-  key="$(resolve QDRANT_API_KEY)"
   if [[ -n "$key" ]]; then
     body="$(curl -sS --max-time 8 --header "api-key: ${key}" "${base}/" 2>/dev/null || true)"
   else
     body="$(http_get "${base}/")"
   fi
   if [[ "$body" == \{* ]]; then
-    row ok "Qdrant Cloud" "OK" "reachable"
+    row ok "$label" "OK" "reachable"
   elif [[ "$body" == *"404 page not found"* ]]; then
-    row bad "Qdrant Cloud" "DOWN" "suspended free-tier cluster (plain-text 404)"
+    row bad "$label" "DOWN" "suspended free-tier cluster (plain-text 404)"
     fix_line "Resume the cluster in the Qdrant Cloud console"
   else
-    row bad "Qdrant Cloud" "DOWN" "could not reach ${base}/"
-    fix_line "Check QDRANT_URL in .env, then ./workstation status"
+    row bad "$label" "DOWN" "could not reach ${base}/"
+    fix_line "$down_hint"
   fi
+}
+
+status_qdrant() {
+  local cloud key
+  # Published host port of the compose `qdrant` service. Inside the
+  # containers QDRANT_URL is http://qdrant:6333; this probe is from the host.
+  status_qdrant_probe "Qdrant" "http://127.0.0.1:6333" "" "./workstation up"
+  cloud="$(resolve QDRANT_CLOUD_URL)"
+  if [[ -z "$cloud" ]]; then
+    row ok "Qdrant Cloud" "OK" "not configured"
+    return
+  fi
+  key="$(resolve QDRANT_CLOUD_API_KEY)"
+  status_qdrant_probe "Qdrant Cloud" "$cloud" "$key" "Check QDRANT_CLOUD_URL in .env"
 }
 
 status_scheduler() {

@@ -438,9 +438,9 @@ CREATE TABLE pipeline_run_stages (
 -- Same objects as docs/migrations/017_paper_text.sql and
 -- docs/migrations/018_chunk_embeddings.sql, which existing volumes apply by
 -- hand. chunk_embeddings.embedding is real[] (float4), not bytea and not
--- pgvector: PostgREST returns a JSON array, and the search index is a later
--- projection of these rows. paper_chunks.id is the surrogate that table
--- references.
+-- pgvector: PostgREST returns a JSON array. Qdrant is a rebuildable
+-- projection of these rows (docs/migrations/019_vector_index_state.sql).
+-- paper_chunks.id is the surrogate chunk_embeddings references.
 -- ==========================================
 CREATE TABLE paper_texts (
     paper_id TEXT PRIMARY KEY,
@@ -480,6 +480,21 @@ CREATE TABLE chunk_embeddings (
 
 CREATE UNIQUE INDEX chunk_embeddings_chunk_model
     ON chunk_embeddings (chunk_id, model_id);
+
+-- Which chunks are already in which Qdrant. Same object as
+-- docs/migrations/019_vector_index_state.sql (hand-applied on an existing
+-- volume). No foreign key: re-ingest deletes the chunk, and the state row
+-- has to survive so the projector can delete the Qdrant point.
+CREATE TABLE vector_index_state (
+    target TEXT NOT NULL CHECK (target IN ('local', 'cloud')),
+    chunk_id UUID NOT NULL,
+    model_id TEXT NOT NULL CHECK (btrim(model_id) <> ''),
+    indexed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    PRIMARY KEY (target, chunk_id, model_id)
+);
+
+CREATE INDEX vector_index_state_target_model
+    ON vector_index_state (target, model_id);
 
 -- One transaction: a failed insert rolls back the delete.
 CREATE OR REPLACE FUNCTION replace_paper_text_and_chunks(
@@ -584,9 +599,91 @@ BEGIN
 END;
 $$;
 
+-- Chunks that have an embedding for this model, joined to the paper's pillar.
+CREATE OR REPLACE FUNCTION chunks_with_embeddings(
+    p_model_id TEXT,
+    p_paper_id TEXT DEFAULT NULL,
+    p_limit INTEGER DEFAULT 200,
+    p_offset INTEGER DEFAULT 0
+) RETURNS TABLE (
+    chunk_id UUID,
+    paper_id TEXT,
+    pillar_id TEXT,
+    chunk_index INTEGER,
+    chunk_text TEXT,
+    dims INTEGER,
+    embedding REAL[]
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_model_id IS NULL OR btrim(p_model_id) = '' THEN
+        RAISE EXCEPTION 'chunks_with_embeddings missing model_id';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 THEN
+        RAISE EXCEPTION 'chunks_with_embeddings limit must be positive';
+    END IF;
+    IF p_offset IS NULL OR p_offset < 0 THEN
+        RAISE EXCEPTION 'chunks_with_embeddings offset must be >= 0';
+    END IF;
+
+    RETURN QUERY
+    SELECT c.id, c.paper_id, p.pillar_id, c.chunk_index, c.text, e.dims, e.embedding
+    FROM paper_chunks c
+    JOIN chunk_embeddings e
+      ON e.chunk_id = c.id
+     AND e.model_id = p_model_id
+    JOIN papers p
+      ON p.id = c.paper_id
+    WHERE p_paper_id IS NULL OR c.paper_id = p_paper_id
+    ORDER BY c.paper_id, c.chunk_index, c.id
+    LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
+-- State rows whose chunk has been deleted.
+CREATE OR REPLACE FUNCTION projection_stale_chunks(
+    p_target TEXT,
+    p_model_id TEXT,
+    p_limit INTEGER DEFAULT 200,
+    p_offset INTEGER DEFAULT 0
+) RETURNS TABLE (
+    chunk_id UUID
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_target IS NULL OR p_target NOT IN ('local', 'cloud') THEN
+        RAISE EXCEPTION 'projection_stale_chunks target must be local or cloud';
+    END IF;
+    IF p_model_id IS NULL OR btrim(p_model_id) = '' THEN
+        RAISE EXCEPTION 'projection_stale_chunks missing model_id';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 THEN
+        RAISE EXCEPTION 'projection_stale_chunks limit must be positive';
+    END IF;
+    IF p_offset IS NULL OR p_offset < 0 THEN
+        RAISE EXCEPTION 'projection_stale_chunks offset must be >= 0';
+    END IF;
+
+    RETURN QUERY
+    SELECT s.chunk_id
+    FROM vector_index_state s
+    WHERE s.target = p_target
+      AND s.model_id = p_model_id
+      AND NOT EXISTS (
+          SELECT 1 FROM paper_chunks c WHERE c.id = s.chunk_id
+      )
+    ORDER BY s.chunk_id
+    LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
 -- 03-grants.sql covers tables created above. It does not grant functions.
 GRANT EXECUTE ON FUNCTION replace_paper_text_and_chunks(TEXT, TEXT, TEXT, JSONB) TO web_anon;
 GRANT EXECUTE ON FUNCTION chunks_missing_embeddings(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
+GRANT EXECUTE ON FUNCTION chunks_with_embeddings(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
+GRANT EXECUTE ON FUNCTION projection_stale_chunks(TEXT, TEXT, INTEGER, INTEGER) TO web_anon;
 
 -- ==========================================
 -- KNOWLEDGE GRAPH
@@ -928,7 +1025,8 @@ COMMENT ON TABLE paper_citations IS 'Citation edges for discovery; reconstructed
 COMMENT ON TABLE scripts IS 'STUB: no live call site, shape taken from a docstring example only';
 COMMENT ON TABLE paper_texts IS 'Full text of a paper. Source of truth; vector indexes are rebuilt from here.';
 COMMENT ON TABLE paper_chunks IS 'Chunk text for one chunker config. Vectors live in chunk_embeddings, keyed by id.';
-COMMENT ON TABLE chunk_embeddings IS 'One float32 vector per chunk per model. real[] so PostgREST returns JSON. Not the search index.';
+COMMENT ON TABLE chunk_embeddings IS 'One float32 vector per chunk per model. real[] so PostgREST returns JSON. Qdrant is rebuilt from these rows.';
+COMMENT ON TABLE vector_index_state IS 'Chunks projected into one Qdrant target. Not a foreign key: the row outlives the chunk so the point can be deleted.';
 COMMENT ON COLUMN chunk_embeddings.embedding IS 'float4[] (PostgreSQL real[]). Chosen over bytea so the array is readable without a codec, and over pgvector so the Postgres image stays unchanged.';
 COMMENT ON COLUMN chunk_embeddings.model_id IS 'Provider model id including the pinned revision, e.g. BAAI/bge-base-en-v1.5@<onnx sha>.';
 COMMENT ON COLUMN paper_chunks.chunker_version IS 'Chunker identity including its config, e.g. semchunk==4.1.1|250/25|cl100k_base';

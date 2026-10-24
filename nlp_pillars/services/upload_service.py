@@ -837,9 +837,9 @@ class UploadService:
             errors.append(f"metadata_persistence: {e}")
             stages.failed(StageName.PERSIST, _reason(e))
         else:
-            # Same chunker config as the vector upsert below, which is unchanged.
-            # A text failure and an embedding failure are each a failed persist
-            # stage, not a swallowed exception. The Qdrant upsert still runs.
+            # Same chunker config the projector reads back. A text failure and
+            # an embedding failure are each a failed persist stage. Projection
+            # into Qdrant is the VECTORS stage after this.
             try:
                 n_chunks = db.replace_paper_text(
                     paper.id,
@@ -865,9 +865,10 @@ class UploadService:
                         f"{n_embedded} embedding(s)",
                     )
 
-        # Step 5f: Store in vector database for semantic search
-        stages.start(StageName.VECTORS, "Embedding the paper for semantic search")
-        logger.info(f"Step 5f: Upserting vectors for {paper.id}")
+        # Step 5f: Project stored embeddings. Local failure fails this stage.
+        # A configured cloud target that is down is logged and left behind.
+        stages.start(StageName.VECTORS, "Projecting the paper into the vector index")
+        logger.info(f"Step 5f: Projecting vectors for {paper.id}")
         try:
             vectors.ensure_collections()
             chunks = vectors.upsert_text(pillar_id, paper.id, parsed_paper.full_text)

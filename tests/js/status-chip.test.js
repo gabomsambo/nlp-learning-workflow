@@ -13,6 +13,15 @@ test('the chip counts services that are not ok', () => {
   assert.equal(chipLabel({ checks: [{ state: 'down' }, { state: 'down' }] }), '2 down');
   assert.equal(chipState({ checks: [{ state: 'ok' }] }), 'ok');
   assert.equal(chipState({ checks: [{ state: 'down' }] }), 'down');
+  assert.equal(chipLabel({
+    checks: [{ state: 'ok' }, { state: 'down', fatal: false, label: 'Qdrant Cloud' }],
+  }), 'All up');
+  assert.equal(chipState({
+    checks: [{ state: 'ok' }, { state: 'down', fatal: false }],
+  }), 'ok');
+  assert.equal(chipLabel({
+    checks: [{ state: 'down', label: 'Qdrant (local)' }, { state: 'down', fatal: false }],
+  }), '1 down');
 });
 
 test('a fresh cache is kept and a stale one is fetched again', () => {
