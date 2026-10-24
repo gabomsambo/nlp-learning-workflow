@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from contextlib import asynccontextmanager
@@ -124,7 +125,19 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"ok": True}
+        from nlp_pillars.vector_health import cached_vector_health
+
+        try:
+            vectors_health = await asyncio.to_thread(cached_vector_health)
+        except Exception as exc:
+            logger.exception("vector health could not be collected")
+            vectors_health = {
+                "ok": False,
+                "failure": "vector_health_failed",
+                "detail": str(exc).strip().splitlines()[0][:180],
+                "targets": [],
+            }
+        return {"ok": bool(vectors_health.get("ok")), "vectors": vectors_health}
 
     return app
 

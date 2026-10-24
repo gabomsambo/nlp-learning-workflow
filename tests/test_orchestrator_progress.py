@@ -26,6 +26,7 @@ from nlp_pillars.schemas import (
     StageName,
     StageStatus,
 )
+from nlp_pillars.vector_health import ProjectionOutcome
 
 PILLAR = "neural-architectures-language"
 
@@ -154,7 +155,10 @@ def test_all_eleven_stages_fire_in_order(
     mock_summ.run.return_value = note
     mock_synth.run.return_value = lesson
     mock_quiz.run.return_value = cards
-    mock_vectors.upsert_text.return_value = 3
+    mock_vectors.upsert_text.return_value = ProjectionOutcome(
+        3,
+        ["cloud vector index suspended or deleted (plain-text 404)"],
+    )
 
     recorder = StageRecorder()
     orch = _build(on_stage=recorder, parsed=parsed, paper=paper)
@@ -171,6 +175,15 @@ def test_all_eleven_stages_fire_in_order(
     for stage in expected:
         assert stage in recorder.completed(), f"{stage} never completed"
     assert recorder.failed() == []
+    vectors_detail = next(
+        detail
+        for name, state, detail in recorder.events
+        if name == StageName.VECTORS.value
+        and state == StageStatus.COMPLETED.value
+    )
+    assert "3 chunks" in vectors_detail
+    assert "cloud copy behind" in vectors_detail
+    assert "suspended or deleted" in vectors_detail
 
 
 @patch("nlp_pillars.orchestrator.vectors")
@@ -268,16 +281,11 @@ def test_vector_store_failure_marks_the_stage_failed_not_completed(
     mock_discovery, mock_summ, mock_synth, mock_quiz, mock_db, mock_vectors,
     paper, parsed, note, lesson, cards,
 ):
-    """0 chunks written from non-empty text is a failure, and must say so.
-
-    An unconfigured local client returns 0. Reporting that as a completed stage
-    is how a dead vector store stayed invisible: the UI showed 'vectors ● 0 chunks'
-    and the paper silently never entered semantic search.
-    """
+    """A broken implementation returning zero for non-empty text still fails."""
     mock_summ.run.return_value = note
     mock_synth.run.return_value = lesson
     mock_quiz.run.return_value = cards
-    mock_vectors.upsert_text.return_value = 0  # what a dead Qdrant looks like
+    mock_vectors.upsert_text.return_value = 0
 
     recorder = StageRecorder()
     orch = _build(on_stage=recorder, parsed=parsed, paper=paper)
@@ -286,7 +294,7 @@ def test_vector_store_failure_marks_the_stage_failed_not_completed(
     assert StageName.VECTORS.value in recorder.failed()
     detail = next(d for n, s, d in recorder.events
                   if n == StageName.VECTORS.value and s == StageStatus.FAILED.value)
-    assert "vector store unavailable" in detail
+    assert "no chunks written for a non-empty paper" in detail
 
 
 @patch("nlp_pillars.orchestrator.vectors")
@@ -393,6 +401,7 @@ def test_a_failed_embedding_fails_persist_and_does_not_upsert(
     assert result.papers_processed == []
     assert result.errors
     assert "model weights missing" in result.errors[0]["message"]
+    assert "embedder failed" in result.errors[0]["message"]
     assert StageName.PERSIST.value in recorder.failed()
     mock_db.mark_processed.assert_not_called()
     mock_vectors.upsert_text.assert_not_called()

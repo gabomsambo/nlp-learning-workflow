@@ -298,13 +298,33 @@ def test_local_outage_still_projects_cloud_then_raises():
     with patched_store(cloud, [row_for(chunk)]) as (mark, _forget), \
          patch("nlp_pillars.vectors.get_client", return_value=local), \
          patch.dict(os.environ, {"QDRANT_CLOUD_URL": "http://cloud.example"}):
-        with pytest.raises(ProjectionError, match="suspended"):
+        with pytest.raises(ProjectionError, match="local vector index unreachable"):
             project_paper(PILLAR, PAPER)
 
     local.upsert.assert_not_called()
     cloud.upsert.assert_called_once()
     targets = [call.args[0] for call in mark.call_args_list]
     assert targets == ["cloud"]
+
+
+def test_cloud_outage_is_returned_as_a_nonfatal_projection_notice():
+    chunk = make_chunk()
+    local = make_client()
+    cloud = make_client()
+    cloud.get_collections.side_effect = unexpected_response(
+        404, b"404 page not found"
+    )
+
+    with patched_store(cloud, [row_for(chunk)]), \
+         patch("nlp_pillars.vectors.get_client", return_value=local), \
+         patch.dict(os.environ, {"QDRANT_CLOUD_URL": "http://cloud.example"}):
+        outcome = project_paper(PILLAR, PAPER)
+
+    assert outcome == 1
+    assert len(outcome.notices) == 1
+    assert "cloud vector index suspended or deleted" in outcome.notices[0]
+    local.upsert.assert_called_once()
+    cloud.upsert.assert_not_called()
 
 
 def test_migration_has_no_foreign_key_and_reloads_postgrest():

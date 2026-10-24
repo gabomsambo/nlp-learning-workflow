@@ -40,6 +40,8 @@ from ..agents.quiz_agent import QuizAgent
 from ..agents.summarizer_agent import SummarizerAgent
 from ..agents.synthesis_agent import SynthesisAgent
 from ..db import add_paper
+from ..embeddings import EmbeddingError
+
 # _first_line is imported rather than copied: it strips tenacity's RetryError
 # wrapper, httpx's ' for url …' tail and instructor's dangling tag, and a second
 # copy of that knowledge would drift. Same package, same purpose — putting an
@@ -58,6 +60,7 @@ from ..schemas import (
     UploadUrlRequest,
 )
 from ..tools.pdf_loader import download_pdf, extract_text
+from ..vector_health import EMBEDDER_FAILED, failure_detail
 from .paper_metadata import (
     enrich_from_arxiv,
     enrich_from_semantic_scholar,
@@ -855,8 +858,13 @@ class UploadService:
                     n_embedded = db.embed_paper_chunks(paper.id)
                 except Exception as e:
                     logger.error(f"Chunk embeddings failed for {paper.id}: {e}")
-                    errors.append(f"embeddings: {e}")
-                    stages.failed(StageName.PERSIST, _reason(e))
+                    detail = (
+                        failure_detail(EMBEDDER_FAILED, "embedder", str(e))
+                        if isinstance(e, EmbeddingError)
+                        else _reason(e)
+                    )
+                    errors.append(f"embeddings: {detail}")
+                    stages.failed(StageName.PERSIST, detail)
                 else:
                     stages.done(
                         StageName.PERSIST,
@@ -874,13 +882,14 @@ class UploadService:
             chunks = vectors.upsert_text(pillar_id, paper.id, parsed_paper.full_text)
             if chunks:
                 actions_triggered.append("vector_storage")
-                stages.done(StageName.VECTORS, f"{chunks} chunk(s) indexed")
+                detail = f"{chunks} chunk(s) indexed"
+                notices = getattr(chunks, "notices", ())
+                if notices:
+                    detail += f"; cloud copy behind: {'; '.join(notices)}"
+                stages.done(StageName.VECTORS, detail)
             elif parsed_paper.full_text and parsed_paper.full_text.strip():
-                # upsert_text returns 0 for an empty document and for a dead Qdrant
-                # alike, and it swallows its own exceptions to get there. Non-empty
-                # text in and nothing out is the second case. Same call the
-                # orchestrator makes and the same conclusion it draws — see
-                # Orchestrator._process_paper.
+                # Zero is valid only for empty input. Keep this guard for mocked
+                # or third-party vector implementations that violate the contract.
                 detail = (
                     "no chunks were written for a non-empty paper; it will not "
                     "appear in semantic search"

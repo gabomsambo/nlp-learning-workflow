@@ -265,8 +265,8 @@ def classify_qdrant(
                 check_id,
                 label,
                 "down",
-                "Suspended free-tier cluster.",
-                "Resume the cluster in the Qdrant Cloud console. A suspended cluster answers every path with plain text 404 page not found.",
+                "Cloud cluster suspended or deleted.",
+                "Check the Qdrant Cloud console. A suspended or deleted cluster can leave ingress answering every path with plain text 404 page not found.",
                 fatal=False,
             )
         return make_check(

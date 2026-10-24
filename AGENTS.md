@@ -306,7 +306,8 @@ behind". No `vector_index_state` rows are written for that attempt, so the
 next sync retries. Local failure raises `ProjectionError` and fails the
 VECTORS stage. `upsert_text` no longer calls OpenAI: persist has already
 written chunks and embeddings, and the vector stage projects them. Missing
-`QDRANT_URL` still returns 0 from `upsert_text` (the unconfigured path).
+`QDRANT_URL` raises a classified `ProjectionError`; a configured cloud
+failure stays non-fatal and is attached to the completed VECTORS stage detail.
 
 Qdrant's current docs say a free-tier cluster is **suspended after 1 week of
 inactivity and deleted after 4 weeks**

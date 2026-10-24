@@ -32,6 +32,8 @@ from .paper_ids import resolvable_pdf_url
 from . import db
 from . import vectors
 from .projector import ProjectionError
+from .embeddings import EmbeddingError
+from .vector_health import EMBEDDER_FAILED, failure_detail
 
 logger = logging.getLogger(__name__)
 
@@ -671,7 +673,13 @@ class Orchestrator:
         n_chunks = db.replace_paper_text(
             paper.id, parsed_paper.full_text, parsed_paper.extractor,
         )
-        n_embedded = db.embed_paper_chunks(paper.id)
+        try:
+            n_embedded = db.embed_paper_chunks(paper.id)
+        except EmbeddingError as exc:
+            raise EmbeddingError(
+                failure_detail(EMBEDDER_FAILED, "embedder", str(exc)),
+                written=exc.written,
+            ) from exc
         db.mark_processed(pillar_id, paper.id)
         self._stage(
             StageName.PERSIST, StageStatus.COMPLETED.value,
@@ -693,16 +701,24 @@ class Orchestrator:
         except ProjectionError as exc:
             self._stage(StageName.VECTORS, StageStatus.FAILED.value, str(exc))
         else:
-            # 0 from a missing local client is the same failure, with less detail.
+            # Zero is valid only for empty input. Keep this guard for mocked or
+            # third-party vector implementations that violate that contract.
             if chunks_upserted == 0 and parsed_paper.full_text.strip():
                 self._stage(
                     StageName.VECTORS, StageStatus.FAILED.value,
-                    "no chunks written — vector store unavailable or chunking failed; "
+                    "no chunks written for a non-empty paper; "
                     "this paper will not appear in semantic search",
                 )
             else:
-                self._stage(StageName.VECTORS, StageStatus.COMPLETED.value,
-                            f"{chunks_upserted} chunks")
+                detail = f"{chunks_upserted} chunks"
+                notices = getattr(chunks_upserted, "notices", ())
+                if notices:
+                    detail += f"; cloud copy behind: {'; '.join(notices)}"
+                self._stage(
+                    StageName.VECTORS,
+                    StageStatus.COMPLETED.value,
+                    detail,
+                )
 
         logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
         return lesson, quiz_cards

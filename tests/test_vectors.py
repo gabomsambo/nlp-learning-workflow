@@ -264,13 +264,13 @@ class TestUpsertText:
     """upsert_text projects stored embeddings. It does not call an embedder."""
 
     def test_upsert_text_no_client(self):
-        """Test upsert_text when client is not available."""
-        with no_qdrant_client(), patch('nlp_pillars.vectors.logger') as mock_logger:
-            result = upsert_text("linguistic-cognitive-foundations", "test.123", "test text")
-
-            assert result == 0
-            warning_calls = [call for call in mock_logger.warning.call_args_list]
-            assert any("Cannot upsert text" in str(call) for call in warning_calls)
+        """A missing local target is explicit, never an ambiguous zero."""
+        with no_qdrant_client(), pytest.raises(
+            ProjectionError, match="local vector index unreachable"
+        ):
+            upsert_text(
+                "linguistic-cognitive-foundations", "test.123", "test text"
+            )
 
     def test_upsert_text_empty_text(self, mock_qdrant_client):
         """Test upsert_text with empty text."""
