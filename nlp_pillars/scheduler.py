@@ -17,6 +17,10 @@ It runs two things on one APScheduler instance:
    `services/background_jobs.py`. Those were written long ago but
    `start_background_jobs()` had no callers, so they had never actually run.
 
+After that daily run, and only when VAULT_EXPORT_ENABLED is true, it refreshes
+the Obsidian vault at VAULT_DIR. The flag defaults off. A vault failure is
+logged and does not fail the run.
+
 KNOWN AND ACCEPTED LIMITATION: this only runs while the machine is on and the
 stack is up. The jobstore is APScheduler's default in-memory one, so a run
 missed while the stack was down is *skipped, not caught up* — on start the cron
@@ -37,6 +41,7 @@ from . import db
 from .config import get_settings
 from .orchestrator import Orchestrator
 from .services.background_jobs import get_background_jobs_service
+from .vault import resolve_vault_dir
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +155,32 @@ def run_all_pillars() -> None:
             logger.error(f"Daily run: pillar {pillar.id} raised: {e}")
 
     logger.info(f"Daily run finished: {succeeded}/{len(pillars)} pillars succeeded")
+    _refresh_vault()
+
+
+def _refresh_vault() -> None:
+    """Rewrite the Obsidian vault after a daily run, when that job is enabled.
+
+    ``vault_export_enabled is True`` is deliberate. Anything else — unset,
+    false, or a stand-in that is merely truthy — leaves the vault alone.
+    The export reads Postgres and writes files; it does not call a model.
+    A failure here is logged. The daily run has already finished.
+    """
+    try:
+        settings = get_settings()
+        if settings.vault_export_enabled is not True:
+            logger.info(
+                "VAULT_EXPORT_ENABLED is not true — skipping vault export"
+            )
+            return
+        out = resolve_vault_dir(str(settings.vault_dir or ""))
+        from .vault_store import export_library
+
+        report = export_library(out, dry_run=False)
+    except Exception:
+        logger.exception("Vault export after the daily run failed")
+        return
+    logger.info("%s", report.render())
 
 
 def _handle_signal(signum: int, _frame: Optional[FrameType]) -> None:

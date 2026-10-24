@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # one knob controls the whole run's API spend.
     papers_per_day: int = Field(1, env="PAPERS_PER_DAY", ge=1)
 
+    # Obsidian vault. Off unless VAULT_EXPORT_ENABLED is true: the scheduler
+    # then rewrites VAULT_DIR after the daily run. The CLI writes that
+    # directory on demand either way. Blank VAULT_DIR means ~/NLP-Vault.
+    # Compose sets VAULT_DIR=/vault and bind-mounts the host folder there.
+    vault_export_enabled: bool = Field(False, env="VAULT_EXPORT_ENABLED")
+    vault_dir: str = Field("~/NLP-Vault", env="VAULT_DIR")
+
     # IndexTTS on the host GPU — see nlp_pillars/tts/indextts_client.py
     indextts_url: str = Field(
         "http://host.docker.internal:7860",

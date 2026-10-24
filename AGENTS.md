@@ -383,7 +383,15 @@ a second build does not duplicate an edge. Semantic Scholar citations for
 library papers are fetched on that build (the tool's own rate limit; cited
 papers that are not in the library are not queried) and also when a paper is
 processed by the daily run, by select, or by upload. `GET /api/graph` reads
-the stored edges. The Obsidian export is not built.
+the stored edges. `python -m nlp_pillars.cli vault export --out DIR` writes
+one Markdown note per paper, concept, pillar, author and episode, with
+wikilinks for those edges. A second run rewrites a file only when its bytes
+change. Text after `<!-- /nlp:generated -->` is left in place. A managed
+note the export no longer produces, including a deleted paper, moves to
+`_archive/`. The scheduler
+runs that export after the daily run only when `VAULT_EXPORT_ENABLED=true`,
+into `VAULT_DIR` (compose bind-mounts `${VAULT_HOST_DIR:-$HOME/NLP-Vault}` at
+`/vault` on `webui` and `scheduler`).
 
 ## The discovery candidate payload is the paper's permanent record
 

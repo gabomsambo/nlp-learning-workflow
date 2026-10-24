@@ -5,6 +5,7 @@ Provides commands for running the pipeline, checking status, and managing pillar
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -1516,6 +1517,58 @@ def graph_build(
     except Exception as e:
         console.print(f"[bold red]{e}[/bold red]")
         logging.error("graph build failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
+vault_app = typer.Typer(
+    help="Obsidian vault projected from Postgres",
+    add_completion=False,
+)
+app.add_typer(vault_app, name="vault")
+
+
+@vault_app.command("export")
+def vault_export(
+    out: Path = typer.Option(
+        ...,
+        "--out",
+        help=(
+            "Directory to write the vault into. Created if missing. "
+            "A second run rewrites a file only when its bytes changed."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print counts only. Do not write or archive.",
+    ),
+):
+    """Write one Markdown note per paper, concept, pillar, author and episode.
+
+    Wikilinks follow graph edges (cites, covers, related-by-embedding, pillar,
+    author). Run ``graph build`` first so those edges exist. Text after
+    ``<!-- /nlp:generated -->`` is kept. A note for a paper that has left the
+    library moves to ``_archive/``. ``--dry-run`` does not create the
+    directory and does not call a model.
+    """
+    from .vault_store import VaultStoreError, export_library
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = export_library(out, dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except VaultStoreError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("vault export failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("vault export failed: %s", exc, exc_info=True)
         raise typer.Exit(1)
 
     console.print(report.render(), markup=False)
