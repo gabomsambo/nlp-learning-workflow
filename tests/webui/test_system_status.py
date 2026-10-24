@@ -37,15 +37,33 @@ def test_public_summary_matches_the_today_chip_contract():
     ]) == "2 services need attention"
 
 
-def test_qdrant_plain_text_404_is_a_suspended_cluster():
+def test_local_qdrant_plain_text_404_is_not_the_cloud_cluster():
     check = status.classify_qdrant(404, "404 page not found\n", None)
+    assert check["id"] == "qdrant"
+    assert check["label"] == "Qdrant (local)"
     assert check["state"] == "down"
-    assert "Suspended free-tier cluster" in check["summary"]
-    assert "Qdrant Cloud console" in check["fix"]
+    assert "plain text 404" in check["summary"]
+    assert "./workstation up" in check["fix"]
+    assert "fatal" not in check
+
+
+def test_cloud_suspension_is_shown_and_does_not_fail_the_page():
+    cloud = status.classify_qdrant(404, "404 page not found\n", None, target="cloud")
+    local = status.classify_qdrant(200, '{"title":"qdrant","version":"1.19.2"}', None)
+    assert cloud["id"] == "qdrant-cloud"
+    assert cloud["label"] == "Qdrant Cloud"
+    assert cloud["state"] == "down"
+    assert cloud["fatal"] is False
+    assert "Suspended free-tier cluster" in cloud["summary"]
+    assert "Qdrant Cloud console" in cloud["fix"]
+    assert local["label"] == "Qdrant (local)"
+    assert status.counts_as_down(cloud) is False
+    assert status.public_summary([local, cloud]) == "All services up"
 
 
 def test_qdrant_json_banner_is_up():
     check = status.classify_qdrant(200, '{"title":"qdrant","version":"1.15"}', None)
+    assert check["label"] == "Qdrant (local)"
     assert check["state"] == "ok"
     assert check["fix"] is None
 
@@ -211,8 +229,13 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert by_id["migration-014"]["state"] == "ok"
     assert by_id["migration-015"]["state"] == "ok"
     assert by_id["migration-016"]["state"] == "down"
+    assert by_id["qdrant"]["label"] == "Qdrant (local)"
     assert by_id["qdrant"]["state"] == "down"
-    assert "Suspended" in by_id["qdrant"]["summary"]
+    assert "plain text 404" in by_id["qdrant"]["summary"]
+    assert by_id["qdrant-cloud"]["label"] == "Qdrant Cloud"
+    assert by_id["qdrant-cloud"]["state"] == "ok"
+    assert by_id["qdrant-cloud"]["summary"] == "Not configured."
+    assert by_id["qdrant-cloud"]["fatal"] is False
     assert by_id["searxng"]["state"] == "ok"
     assert by_id["indextts"]["state"] == "down"
     assert "super-secret" not in by_id["indextts"]["summary"]

@@ -667,7 +667,7 @@ class Orchestrator:
         # Stored text is the source of truth. Embeddings for the new chunks
         # are the next write. Either failure raises, the in-flight PERSIST
         # stage is marked failed, and the queue row stays unprocessed.
-        # upsert_text below is unchanged.
+        # Projection of those rows is the VECTORS stage below.
         n_chunks = db.replace_paper_text(
             paper.id, parsed_paper.full_text, parsed_paper.extractor,
         )

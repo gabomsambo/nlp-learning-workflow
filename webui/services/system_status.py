@@ -115,14 +115,29 @@ def make_check(
     state: str,
     summary: str,
     fix: Optional[str] = None,
+    *,
+    fatal: bool = True,
 ) -> Dict[str, Any]:
-    return {
+    row = {
         "id": check_id,
         "label": label,
         "state": state,
         "summary": summary,
         "fix": fix,
     }
+    # A non-fatal down is shown on Activity and does not flip the chip or `ok`.
+    if not fatal:
+        row["fatal"] = False
+    return row
+
+
+def counts_as_down(check: Dict[str, Any]) -> bool:
+    """True when a check should fail the page summary.
+
+    Qdrant Cloud is reported and is not one of these: a suspended or deleted
+    cluster leaves the local index in use.
+    """
+    return check.get("state") != "ok" and check.get("fatal", True) is not False
 
 
 def public_line(text: str, limit: int = 180) -> str:
@@ -149,32 +164,76 @@ def human_bytes(size: int) -> str:
     return f"{int(size)} B"
 
 
-def classify_qdrant(status_code: Optional[int], body: str, error: Optional[str]) -> Dict[str, Any]:
+def classify_qdrant(
+    status_code: Optional[int],
+    body: str,
+    error: Optional[str],
+    *,
+    target: str = "local",
+) -> Dict[str, Any]:
+    """Classify one Qdrant probe.
+
+    ``target="local"`` is ``QDRANT_URL`` (the compose server search reads).
+    ``target="cloud"`` is optional ``QDRANT_CLOUD_URL``. A cloud failure is
+    ``fatal=False``: Activity still shows the row, and the page stays up.
+    """
+    cloud = target == "cloud"
+    check_id = "qdrant-cloud" if cloud else "qdrant"
+    label = "Qdrant Cloud" if cloud else "Qdrant (local)"
+    fatal = not cloud
     if error:
+        if cloud:
+            return make_check(
+                check_id,
+                label,
+                "down",
+                "Could not reach Qdrant Cloud.",
+                "Check QDRANT_CLOUD_URL in .env.",
+                fatal=False,
+            )
         return make_check(
-            "qdrant",
-            "Qdrant Cloud",
+            check_id,
+            label,
             "down",
-            "Could not reach Qdrant Cloud.",
-            "Check QDRANT_URL in .env, then ./workstation status",
+            "Could not reach the local Qdrant.",
+            "./workstation up",
+            fatal=fatal,
         )
     text = body or ""
     if status_code == 200 and text.lstrip().startswith("{"):
-        return make_check("qdrant", "Qdrant Cloud", "ok", "Reachable.", None)
+        return make_check(check_id, label, "ok", "Reachable.", None, fatal=fatal)
     if SUSPENDED_QDRANT in text:
+        if cloud:
+            return make_check(
+                check_id,
+                label,
+                "down",
+                "Suspended free-tier cluster.",
+                "Resume the cluster in the Qdrant Cloud console. A suspended cluster answers every path with plain text 404 page not found.",
+                fatal=False,
+            )
         return make_check(
-            "qdrant",
-            "Qdrant Cloud",
+            check_id,
+            label,
             "down",
-            "Suspended free-tier cluster.",
-            "Resume the cluster in the Qdrant Cloud console. A suspended cluster answers every path with plain text 404 page not found.",
+            "The local Qdrant answered plain text 404.",
+            "./workstation up",
+        )
+    if cloud:
+        return make_check(
+            check_id,
+            label,
+            "down",
+            "Could not reach Qdrant Cloud.",
+            "Check QDRANT_CLOUD_URL in .env.",
+            fatal=False,
         )
     return make_check(
-        "qdrant",
-        "Qdrant Cloud",
+        check_id,
+        label,
         "down",
-        "Could not reach Qdrant Cloud.",
-        "Check QDRANT_URL in .env, then ./workstation status",
+        "Could not reach the local Qdrant.",
+        "./workstation up",
     )
 
 
@@ -494,13 +553,15 @@ async def _guard(
     label: str,
     factory: Callable[[], Any],
     secrets: Sequence[Optional[str]],
+    *,
+    fatal: bool = True,
 ) -> Dict[str, Any]:
     try:
         return await asyncio.wait_for(factory(), timeout=OVERALL_TIMEOUT_SECONDS)
     except Exception as exc:
         logger.warning("status check %s failed: %s", check_id, type(exc).__name__)
         summary = public_line(redact(str(exc), secrets)) or "Check failed."
-        return make_check(check_id, label, "down", summary, None)
+        return make_check(check_id, label, "down", summary, None, fatal=fatal)
 
 
 def _unchecked(spec: Dict[str, str]) -> Dict[str, Any]:
@@ -618,25 +679,64 @@ async def _migration_checks(
     return [*columns, *kinds]
 
 
+def _qdrant_headers(api_key: Any) -> Dict[str, str]:
+    if api_key:
+        return {"api-key": str(api_key)}
+    return {}
+
+
+async def _probe_qdrant(
+    client: httpx.AsyncClient,
+    url: str,
+    api_key: Any,
+    *,
+    target: str,
+) -> Dict[str, Any]:
+    try:
+        response = await client.get(str(url).rstrip("/") + "/", headers=_qdrant_headers(api_key))
+    except httpx.HTTPError as exc:
+        return classify_qdrant(
+            None, "", public_line(str(exc)) or "request failed", target=target,
+        )
+    return classify_qdrant(response.status_code, response.text, None, target=target)
+
+
 async def _check_qdrant(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
     url = getattr(settings, "qdrant_url", None)
     if not url or not str(url).startswith(("http://", "https://")):
         return make_check(
             "qdrant",
-            "Qdrant Cloud",
+            "Qdrant (local)",
             "down",
             "QDRANT_URL is not set.",
             "Set QDRANT_URL in .env.",
         )
-    headers = {}
-    api_key = getattr(settings, "qdrant_api_key", None)
-    if api_key:
-        headers["api-key"] = api_key
-    try:
-        response = await client.get(str(url).rstrip("/") + "/", headers=headers)
-    except httpx.HTTPError as exc:
-        return classify_qdrant(None, "", public_line(str(exc)) or "request failed")
-    return classify_qdrant(response.status_code, response.text, None)
+    return await _probe_qdrant(
+        client,
+        str(url),
+        getattr(settings, "qdrant_api_key", None),
+        target="local",
+    )
+
+
+async def _check_qdrant_cloud(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
+    """Optional cloud copy. Missing URL is not a check. A failure is non-fatal."""
+    url = getattr(settings, "qdrant_cloud_url", None)
+    if not url or not str(url).startswith(("http://", "https://")):
+        return make_check(
+            "qdrant-cloud",
+            "Qdrant Cloud",
+            "ok",
+            "Not configured.",
+            None,
+            fatal=False,
+        )
+    return await _probe_qdrant(
+        client,
+        str(url),
+        getattr(settings, "qdrant_cloud_api_key", None),
+        target="cloud",
+    )
 
 
 async def _check_searxng(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
@@ -723,6 +823,7 @@ async def collect_status(
     secrets = [
         auth_token,
         getattr(settings, "qdrant_api_key", None),
+        getattr(settings, "qdrant_cloud_api_key", None),
         getattr(settings, "openai_api_key", None),
         getattr(settings, "anthropic_api_key", None),
         getattr(settings, "deepseek_api_key", None),
@@ -792,9 +893,16 @@ async def collect_status(
             return payload
         raise TypeError("storage check was not a status row")
 
-    migration_rows, qdrant, searxng, indextts, voice_check, key_check, schedule, disk = await asyncio.gather(
+    migration_rows, qdrant, qdrant_cloud, searxng, indextts, voice_check, key_check, schedule, disk = await asyncio.gather(
         safe_migrations(),
-        _guard("qdrant", "Qdrant Cloud", lambda: _check_qdrant(client, settings), secrets),
+        _guard("qdrant", "Qdrant (local)", lambda: _check_qdrant(client, settings), secrets),
+        _guard(
+            "qdrant-cloud",
+            "Qdrant Cloud",
+            lambda: _check_qdrant_cloud(client, settings),
+            secrets,
+            fatal=False,
+        ),
         _guard("searxng", "SearXNG", lambda: _check_searxng(client, settings), secrets),
         _guard("indextts", "IndexTTS", tts, secrets),
         _guard("voices", "Voices", voices, secrets),
@@ -807,6 +915,7 @@ async def collect_status(
         database,
         *migration_rows,
         qdrant,
+        qdrant_cloud,
         searxng,
         indextts,
         voice_check,
@@ -814,7 +923,7 @@ async def collect_status(
         schedule,
         disk,
     ]
-    down = sum(1 for check in checks if check["state"] != "ok")
+    down = sum(1 for check in checks if counts_as_down(check))
     return {
         "ok": down == 0,
         "down_count": down,
@@ -837,7 +946,7 @@ def _default_voices() -> Dict[str, Any]:
 
 def public_summary(checks: List[Dict[str, Any]]) -> str:
     """One line for Today's date-row chip. That page prefers body.summary."""
-    down = [check for check in checks if check.get("state") != "ok"]
+    down = [check for check in checks if counts_as_down(check)]
     if not down:
         return "All services up"
     if len(down) == 1:

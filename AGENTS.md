@@ -273,9 +273,10 @@ Both services `depends_on` qdrant `service_healthy`. The volume is still
 `nlp_qdrant_data`.
 
 The image is pinned to `qdrant/qdrant:v1.19.2`. On 2026-10-24 the Cloud
-management API returned a cluster list with `totalSize` 0, and the configured
+management API listed zero clusters (`totalSize` 0) and the configured
 data-plane URL reset the connection instead of answering with a JSON version
-banner, so there was no live server version to copy. The pinned client is
+banner, so the old free-tier cluster appears deleted, not merely suspended,
+and there was no live server version to copy. The pinned client is
 `qdrant-client==1.19.0`. Qdrant wants the client within one minor of the
 server. v1.19 is the minor a cluster created in the 2026-08 window would have
 been running; v1.19.2 (2026-10-05) is the latest patch. v1.20.0 is what Cloud
@@ -313,8 +314,11 @@ naming the version. Read that 404 as "no cluster routed behind this UUID".
 
 `GET /api/pillars/{id}/search` still drops a hit whose `paper_id` is missing
 from `papers`. The old `nlp_pillars` collection (1536-d, OpenAI) is not what
-search reads now. `/health` still labels its `QDRANT_URL` probe "Qdrant Cloud";
-that probe is the local server. The chip is left for the health work.
+search reads now. `/api/system/status` labels the `QDRANT_URL` probe
+"Qdrant (local)". When `QDRANT_CLOUD_URL` is set it adds a "Qdrant Cloud" row
+with `fatal: false`: Activity shows it, and it does not by itself turn `ok`
+or the shell chip false. An unset cloud URL is "Not configured." and is also
+non-fatal.
 
 `ensure_collections()` creates the active model's collection, both payload
 indexes, and the alias. It runs from `VectorSearchTool.__init__`. It does not

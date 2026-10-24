@@ -11,11 +11,15 @@
   var TTL_MS = 60000;
   var inflight = null;
 
+  function countsAsDown(check) {
+    return !!(check && check.state !== 'ok' && check.fatal !== false);
+  }
+
   function chipLabel(payload) {
     if (!payload || !Array.isArray(payload.checks)) return 'Status';
     var down = 0;
     for (var i = 0; i < payload.checks.length; i++) {
-      if (payload.checks[i] && payload.checks[i].state !== 'ok') down += 1;
+      if (countsAsDown(payload.checks[i])) down += 1;
     }
     if (!down) return 'All up';
     return down === 1 ? '1 down' : down + ' down';
@@ -24,7 +28,7 @@
   function chipState(payload) {
     if (!payload || !Array.isArray(payload.checks)) return 'unknown';
     for (var i = 0; i < payload.checks.length; i++) {
-      if (payload.checks[i] && payload.checks[i].state !== 'ok') return 'down';
+      if (countsAsDown(payload.checks[i])) return 'down';
     }
     return payload.checks.length ? 'ok' : 'unknown';
   }
