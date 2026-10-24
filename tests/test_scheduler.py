@@ -157,3 +157,62 @@ class TestMain:
         # start() also brings up the FSRS jobs, which nothing else ever started.
         service.start.assert_called_once()
         service.stop.assert_called_once()
+
+
+class TestVaultRefresh:
+    """The vault job is off unless VAULT_EXPORT_ENABLED is exactly true."""
+
+    def test_default_settings_do_not_export(self):
+        pillars = [MagicMock(id="pillar-a")]
+        with patch("nlp_pillars.scheduler.get_settings", return_value=MagicMock(papers_per_day=1)), \
+             patch("nlp_pillars.scheduler.db.get_pillars", return_value=pillars), \
+             patch("nlp_pillars.scheduler.Orchestrator"), \
+             patch("nlp_pillars.vault_store.export_library") as export:
+            run_all_pillars()
+        export.assert_not_called()
+
+    def test_enabled_exports_the_configured_directory_after_the_run(self, tmp_path):
+        settings = MagicMock(
+            papers_per_day=1,
+            vault_export_enabled=True,
+            vault_dir=str(tmp_path),
+        )
+        pillars = [MagicMock(id="pillar-a")]
+        with patch("nlp_pillars.scheduler.get_settings", return_value=settings), \
+             patch("nlp_pillars.scheduler.db.get_pillars", return_value=pillars), \
+             patch("nlp_pillars.scheduler.Orchestrator"), \
+             patch("nlp_pillars.vault_store.export_library") as export:
+            run_all_pillars()
+        export.assert_called_once()
+        assert export.call_args.args[0] == tmp_path
+        assert export.call_args.kwargs["dry_run"] is False
+
+    def test_an_export_failure_does_not_fail_the_daily_run(self, tmp_path):
+        settings = MagicMock(
+            papers_per_day=1,
+            vault_export_enabled=True,
+            vault_dir=str(tmp_path),
+        )
+        pillars = [MagicMock(id="pillar-a")]
+        with patch("nlp_pillars.scheduler.get_settings", return_value=settings), \
+             patch("nlp_pillars.scheduler.db.get_pillars", return_value=pillars), \
+             patch("nlp_pillars.scheduler.Orchestrator"), \
+             patch(
+                 "nlp_pillars.vault_store.export_library",
+                 side_effect=RuntimeError("disk full"),
+             ):
+            run_all_pillars()
+
+    def test_no_pillars_does_not_export_even_when_enabled(self, tmp_path):
+        settings = MagicMock(
+            papers_per_day=1,
+            vault_export_enabled=True,
+            vault_dir=str(tmp_path),
+        )
+        with patch("nlp_pillars.scheduler.get_settings", return_value=settings), \
+             patch("nlp_pillars.scheduler.db.get_pillars", return_value=[]), \
+             patch("nlp_pillars.scheduler.Orchestrator") as orch, \
+             patch("nlp_pillars.vault_store.export_library") as export:
+            run_all_pillars()
+        orch.assert_not_called()
+        export.assert_not_called()
