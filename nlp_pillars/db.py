@@ -5,13 +5,17 @@ Modified to work with vanilla PostgREST (without /rest/v1/ prefix).
 
 import logging
 import os
+import uuid
 import httpx
 import json
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 from .embeddings import EmbeddingError, MIGRATION as EMBEDDINGS_MIGRATION
-from .factcheck.constants import MIGRATION as FACTCHECK_MIGRATION
+from .factcheck.constants import (
+    KIND as FACTCHECK_RUN_KIND,
+    MIGRATION as FACTCHECK_MIGRATION,
+)
 from .paper_vectors import MIGRATION as PAPER_VECTORS_MIGRATION
 from .paper_ids import is_arxiv_id, resolvable_pdf_url
 from .schemas import (
@@ -624,6 +628,33 @@ def get_papers(pillar_id: str, limit: int = 10) -> List[PaperRef]:
 
     except Exception as e:
         logger.error(f"Failed to get papers for pillar {pillar_id}: {e}")
+        return []
+
+
+def get_papers_by_ids(paper_ids: List[str]) -> List[PaperRef]:
+    """Fetch a specific set of papers in one PostgREST request.
+
+    Search already knows the ids it needs. Reading an arbitrary first 1000
+    rows from a pillar was both wasteful and capable of dropping a real hit.
+    Values are JSON-quoted because PostgREST's ``in`` grammar reserves commas,
+    parentheses, and colons, all of which may occur in paper identifiers.
+    """
+    unique = list(dict.fromkeys(str(item) for item in paper_ids if item))
+    if not unique:
+        return []
+    try:
+        client = get_client()
+        query = client.table('papers').select('*')
+        encoded = ','.join(json.dumps(item) for item in unique)
+        query.params['id'] = f'in.({encoded})'
+        query.params['limit'] = str(len(unique))
+        response = query.execute()
+        if response['error']:
+            logger.error("Failed to get matched papers: %s", response['error'])
+            return []
+        return [_dict_to_paper_ref(row) for row in response['data'] or []]
+    except Exception as e:
+        logger.error("Failed to get matched papers: %s", e)
         return []
 
 
@@ -1376,6 +1407,46 @@ def list_projection_state(target: str, model_id: str) -> List[str]:
         offset += len(page)
 
 
+def list_embedding_chunk_ids(model_id: str) -> List[str]:
+    """Chunk ids with a stored embedding for model_id, without vectors."""
+    rows: List[str] = []
+    offset = 0
+    previous_first = None
+    while True:
+        try:
+            client = get_client()
+            response = (
+                client.table('chunk_embeddings')
+                .select('chunk_id')
+                .eq('model_id', model_id)
+                .order('chunk_id')
+                .limit(_PAGE_SIZE)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as e:
+            raise EmbeddingError(
+                f"Could not read stored embedding ids for {model_id}: {e}"
+            ) from e
+        if response['error']:
+            raise EmbeddingError(
+                f"Could not read stored embedding ids for {model_id}: {response['error']}"
+            )
+        page = response['data'] or []
+        if not page:
+            return rows
+        marker = page[0].get('chunk_id')
+        if marker is not None and marker == previous_first:
+            raise EmbeddingError(
+                f"Reading embedding ids for {model_id} did not advance past offset {offset}"
+            )
+        previous_first = marker
+        rows.extend(str(row['chunk_id']) for row in page if row.get('chunk_id'))
+        if len(page) < _PAGE_SIZE:
+            return rows
+        offset += len(page)
+
+
 def list_projection_stale(target: str, model_id: str) -> List[str]:
     """Projected chunk ids whose ``paper_chunks`` row is gone.
 
@@ -1715,6 +1786,15 @@ class FactcheckSaveError(Exception):
     """
 
 
+class FactcheckLookupError(Exception):
+    """Fact-check rows could not be read.
+
+    A missing table names ``docs/migrations/022_podcast_fact_checks.sql``.
+    ``None`` from ``get_latest_podcast_fact_check`` means this script has no
+    stored check, which is a different fact.
+    """
+
+
 class PodcastScriptLookupError(Exception):
     """Podcast scripts could not be read from the database.
 
@@ -1960,6 +2040,193 @@ def insert_podcast_fact_check(
             f"Apply {FACTCHECK_MIGRATION} by hand."
         )
     return data
+
+
+def _factcheck_read_error(error: Any, action: str) -> FactcheckLookupError:
+    return FactcheckLookupError(str(_factcheck_store_error(error, action)))
+
+
+def _require_factcheck_script_id(script_id: str) -> str:
+    try:
+        return str(uuid.UUID(str(script_id)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise FactcheckLookupError(
+            f"script id {script_id!r} is not a uuid"
+        ) from exc
+
+
+def get_latest_podcast_fact_check(script_id: str) -> Optional[Dict[str, Any]]:
+    """Latest fact-check for a script, with its claims.
+
+    Returns None when this script has no stored check. A missing table raises
+    ``FactcheckLookupError`` and names migration 022.
+    """
+    script_id = _require_factcheck_script_id(script_id)
+    try:
+        client = get_client()
+        response = (
+            client.table('podcast_fact_checks')
+            .select('*')
+            .eq('script_id', script_id)
+            .order('created_at', desc=True)
+            .limit(1)
+            .execute()
+        )
+    except FactcheckLookupError:
+        raise
+    except Exception as exc:
+        raise _factcheck_read_error(exc, "Could not read the fact check") from exc
+    if response['error']:
+        raise _factcheck_read_error(
+            response['error'], "Could not read the fact check",
+        )
+    if not response['data']:
+        return None
+    header = dict(response['data'][0])
+    header['claims'] = _claims_for_fact_check(client, header['id'])
+    return header
+
+
+def _claims_for_fact_check(client, fact_check_id: str) -> List[Dict[str, Any]]:
+    claims: List[Dict[str, Any]] = []
+    offset = 0
+    page = 500
+    while True:
+        try:
+            response = (
+                client.table('podcast_claims')
+                .select('*')
+                .eq('fact_check_id', fact_check_id)
+                .order('line_index')
+                .limit(page)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as exc:
+            raise _factcheck_read_error(
+                exc, "Could not read the fact-check claims",
+            ) from exc
+        if response['error']:
+            raise _factcheck_read_error(
+                response['error'], "Could not read the fact-check claims",
+            )
+        rows = list(response['data'] or [])
+        claims.extend(rows)
+        if len(rows) < page:
+            break
+        offset += page
+    claims.sort(key=lambda row: (
+        row.get('line_index') or 0,
+        row.get('span_start') or 0,
+        str(row.get('id') or ''),
+    ))
+    return claims
+
+
+def list_scripts_missing_factcheck(page_size: int = 200) -> List[Dict[str, Any]]:
+    """Scripts that have no row in podcast_fact_checks, oldest first.
+
+    Raises FactcheckLookupError when migration 022 is missing, and
+    PodcastScriptLookupError when the scripts themselves cannot be read.
+    """
+    checked = _factchecked_script_ids()
+    client = get_client()
+    missing: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        try:
+            response = (
+                client.table('podcast_scripts')
+                .select('id,title,paper_id,pillar_id')
+                .order('created_at')
+                .limit(page_size)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as exc:
+            raise PodcastScriptLookupError(
+                f"Could not list podcast scripts for fact-check backfill: {exc}"
+            ) from exc
+        if response['error']:
+            raise PodcastScriptLookupError(
+                "Could not list podcast scripts for fact-check backfill: "
+                f"{response['error']}"
+            )
+        rows = list(response['data'] or [])
+        for row in rows:
+            if row.get('id') not in checked:
+                missing.append(row)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return missing
+
+
+def _factchecked_script_ids() -> set:
+    client = get_client()
+    found: set = set()
+    offset = 0
+    page = 500
+    while True:
+        try:
+            response = (
+                client.table('podcast_fact_checks')
+                .select('script_id')
+                .order('created_at')
+                .limit(page)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as exc:
+            raise _factcheck_read_error(
+                exc, "Could not list fact checks",
+            ) from exc
+        if response['error']:
+            raise _factcheck_read_error(
+                response['error'], "Could not list fact checks",
+            )
+        rows = list(response['data'] or [])
+        for row in rows:
+            if row.get('script_id'):
+                found.add(row['script_id'])
+        if len(rows) < page:
+            break
+        offset += page
+    return found
+
+
+def get_active_factcheck_run(script_id: str) -> Optional[PipelineRun]:
+    """Pending or running fact-check whose result.script_id is this script.
+
+    None means there is not one. A read failure raises FactcheckLookupError
+    so the caller does not start a second check it cannot see.
+    """
+    script_id = _require_factcheck_script_id(script_id)
+    try:
+        client = get_client()
+        query = client.table('pipeline_runs').select(
+            'id,pillar_id,trigger_source,kind,status,result,created_at'
+        )
+        query.params['kind'] = f'eq.{FACTCHECK_RUN_KIND}'
+        query.params['status'] = 'in.(pending,running)'
+        query.params['result->>script_id'] = f'eq.{script_id}'
+        query.params['order'] = 'created_at.desc'
+        query.params['limit'] = '1'
+        response = query.execute()
+    except FactcheckLookupError:
+        raise
+    except Exception as exc:
+        raise FactcheckLookupError(
+            f"Could not see whether a fact check is already running: {exc}"
+        ) from exc
+    if response['error']:
+        raise FactcheckLookupError(
+            "Could not see whether a fact check is already running: "
+            f"{response['error']}"
+        )
+    if not response['data']:
+        return None
+    return _dict_to_pipeline_run(response['data'][0])
 
 
 # =====================================
@@ -3477,13 +3744,18 @@ def create_pipeline_run(
     trigger_source: str,
     kind: str,
     stage_names: List[str],
+    result: Optional[Dict[str, Any]] = None,
 ) -> Optional[PipelineRun]:
     """Create a run row plus its seeded stage rows.
 
-    Returns None — rather than raising — when a run is already active for this
-    pillar. That case is not an error: it is the `pipeline_runs_one_active_per_pillar`
-    partial unique index doing its job, and PostgREST reports it as HTTP 409 with
+    Returns None — rather than raising — when a unique index refuses the insert.
+    That is the `pipeline_runs_one_active_per_pillar` guard, or the one-active
+    fact-check-per-script index. PostgREST reports either as HTTP 409 with
     Postgres code 23505. The caller turns None into a 409 response.
+
+    ``result`` is stored on insert. A fact-check run puts ``script_id`` there
+    so the per-script index can see it. Other kinds leave it unset and write
+    a payload at the end, if they have one.
 
     Args:
         pillar_id: Target pillar slug.
@@ -3505,12 +3777,15 @@ def create_pipeline_run(
     """
     try:
         client = get_client()
-        response = client.table('pipeline_runs').insert({
+        row: Dict[str, Any] = {
             'pillar_id': pillar_id,
             'trigger_source': trigger_source,
             'kind': kind,
             'status': RunStatus.PENDING.value,
-        })
+        }
+        if result is not None:
+            row['result'] = result
+        response = client.table('pipeline_runs').insert(row)
 
         if response['error']:
             error_info = response['error']
@@ -3695,11 +3970,14 @@ def finish_pipeline_run(
         papers_processed: Count for the run row.
         papers_failed: Count for the run row.
         error: Optional message, truncated to 2000 chars on the row.
-        result: Optional terminal payload for run kinds that produce one — today only
-            a `discover` run, which stores the candidate list the user has to choose
-            from. Written once here rather than incrementally, which is why it can be
-            a JSONB column when the stage list could not be (PostgREST cannot
-            partially update JSONB; see migration 009).
+        result: Optional terminal payload for run kinds that produce one.
+            Discover stores the candidate list. A fact-check stores counts
+            (claims stay in podcast_claims). Written once here rather than
+            incrementally, which is why it can be a JSONB column when the
+            stage list could not be (PostgREST cannot partially update JSONB;
+            see migration 009). A fact-check also writes ``script_id`` at
+            insert, so this terminal payload replaces that seed and must
+            keep ``script_id``.
 
     """
     patch: Dict[str, Any] = {

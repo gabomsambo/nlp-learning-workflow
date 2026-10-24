@@ -55,7 +55,7 @@ def test_cloud_suspension_is_shown_and_does_not_fail_the_page():
     assert cloud["label"] == "Qdrant Cloud"
     assert cloud["state"] == "down"
     assert cloud["fatal"] is False
-    assert "Suspended free-tier cluster" in cloud["summary"]
+    assert "suspended or deleted" in cloud["summary"]
     assert "Qdrant Cloud console" in cloud["fix"]
     assert local["label"] == "Qdrant (local)"
     assert status.counts_as_down(cloud) is False
@@ -261,6 +261,7 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert by_id["semantic-scholar"]["state"] == "ok"
     assert by_id["semantic-scholar"]["fatal"] is False
     assert "No API key" in by_id["semantic-scholar"]["summary"]
+    assert by_id["migration-023"]["state"] == "ok"
     assert by_id["qdrant"]["label"] == "Qdrant (local)"
     assert by_id["qdrant"]["state"] == "down"
     assert "plain text 404" in by_id["qdrant"]["summary"]
@@ -281,7 +282,7 @@ async def test_collection_survives_a_failing_check_and_hides_secrets():
     assert payload["summary"].endswith("services need attention")
     assert seen["qdrant_key"] == "super-secret-qdrant"
     assert seen["deleted"] is True
-    assert seen["kinds"] == ["upload", "podcast_script"]
+    assert seen["kinds"] == ["upload", "podcast_script", "podcast_factcheck"]
     assert seen["searxng_engines"] == ["arxiv"]
 
 

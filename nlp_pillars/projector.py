@@ -29,6 +29,15 @@ from typing import AbstractSet, Callable, Iterable, List, Optional, Sequence
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .vector_health import (
+    CLOUD_SUSPENDED_OR_DELETED,
+    COLLECTION_OR_ALIAS_MISSING,
+    INDEX_UNREACHABLE,
+    PROJECTION_STATE_UNAVAILABLE,
+    ProjectionOutcome,
+    failure_detail,
+)
+
 logger = logging.getLogger(__name__)
 
 MIGRATION = "docs/migrations/019_vector_index_state.sql"
@@ -39,6 +48,8 @@ _POINT_NAMESPACE_NAME = "https://nlp-learning-workflow.local/chunk-point"
 POINT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, _POINT_NAMESPACE_NAME)
 
 READ_ALIAS = "nlp_chunks"
+BM25_VECTOR = "bm25"
+BM25_MODEL = "Qdrant/bm25"
 PILLAR_ID_FIELD = "pillar_id"
 PAPER_ID_FIELD = "paper_id"
 PAYLOAD_INDEX_FIELDS = (PILLAR_ID_FIELD, PAPER_ID_FIELD)
@@ -49,6 +60,7 @@ SCROLL_PAGE = 128
 _STATE_BATCH = 200
 
 _UNHEALTHY_404 = "404 page not found"
+_sparse_embedder = None
 
 
 class ProjectionError(Exception):
@@ -121,6 +133,7 @@ class SyncResult:
     deleted_ids: List[str] = field(default_factory=list)
     dry_run: bool = False
     unhealthy: bool = False
+    failure: Optional[str] = None
     error: Optional[str] = None
 
     def render(self) -> str:
@@ -142,6 +155,8 @@ class SyncResult:
             lines.append(f"deleted: {len(self.deleted_ids)}")
         if self.unhealthy:
             lines.append("unhealthy: true")
+        if self.failure:
+            lines.append(f"failure: {self.failure}")
         if self.error:
             lines.append(f"error: {self.error}")
         return "\n".join(lines)
@@ -160,12 +175,13 @@ def collection_name(model_id: str, dims: int) -> str:
     return f"chunks__{safe}__{int(dims)}"
 
 
-def probe(client: QdrantClient) -> Optional[str]:
-    """``None`` when the server answers. A reason string when it does not.
+def probe(client: QdrantClient, target: str) -> Optional[tuple[str, str]]:
+    """Return a classified failure when the server does not answer.
 
     A suspended Qdrant Cloud cluster returns plain text ``404 page not found``
-    on every path, including collection listing. That is "behind", not a
-    wrong URL and not proof the cluster was deleted.
+    on every path, including collection listing. The same ingress shape is
+    observed after deletion, so the app deliberately does not claim which
+    lifecycle state applies.
     """
     try:
         client.get_collections()
@@ -174,14 +190,24 @@ def probe(client: QdrantClient) -> Optional[str]:
         if isinstance(body, (bytes, bytearray)):
             body = body.decode("utf-8", "replace")
         text = body or ""
-        if exc.status_code == 404 and _UNHEALTHY_404 in text:
-            return (
-                "suspended (plain-text 404); this target stays behind "
-                "until the cluster answers"
+        if (
+            target == "cloud"
+            and exc.status_code == 404
+            and _UNHEALTHY_404 in text
+        ):
+            kind = CLOUD_SUSPENDED_OR_DELETED
+            return kind, failure_detail(
+                kind,
+                target,
+                "this target stays behind until a cloud cluster answers",
             )
-        return f"Qdrant answered HTTP {exc.status_code}"
+        kind = INDEX_UNREACHABLE
+        return kind, failure_detail(
+            kind, target, f"Qdrant answered HTTP {exc.status_code}"
+        )
     except Exception as exc:
-        return f"unreachable: {exc}"
+        kind = INDEX_UNREACHABLE
+        return kind, failure_detail(kind, target, str(exc))
     return None
 
 
@@ -196,7 +222,8 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
     """
     name = collection_name(model_id, dims)
     names = _collection_names(client)
-    if name in names:
+    existed = name in names
+    if existed:
         logger.info("Collection '%s' already exists", name)
     else:
         try:
@@ -206,6 +233,11 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
                     size=int(dims),
                     distance=models.Distance.COSINE,
                 ),
+                sparse_vectors_config={
+                    BM25_VECTOR: models.SparseVectorParams(
+                        modifier=models.Modifier.IDF,
+                    )
+                },
             )
         except Exception as exc:
             if "already exists" not in str(exc).lower():
@@ -219,6 +251,8 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
                 name,
                 dims,
             )
+    if existed:
+        _ensure_sparse_vector(client, name)
     _ensure_payload_indexes(client, name)
     _ensure_alias(client, name)
     return name
@@ -269,9 +303,11 @@ def apply_projection(
         dry_run=dry_run,
     )
 
-    reason = probe(client)
-    if reason:
+    failed = probe(client, target)
+    if failed:
+        kind, reason = failed
         result.unhealthy = True
+        result.failure = kind
         result.error = reason
         return result
 
@@ -289,16 +325,27 @@ def apply_projection(
     try:
         result.collection = ensure_index(client, model_id, dims)
     except ProjectionError as exc:
-        result.error = str(exc)
+        result.failure = COLLECTION_OR_ALIAS_MISSING
+        result.error = failure_detail(result.failure, target, str(exc))
         return result
     except Exception as exc:
-        result.error = f"could not prepare collection {result.collection}: {exc}"
+        result.failure = COLLECTION_OR_ALIAS_MISSING
+        result.error = failure_detail(
+            result.failure,
+            target,
+            f"could not prepare collection {result.collection}: {exc}",
+        )
         return result
 
     try:
         result.upserted_ids = _upsert_chunks(client, result.collection, pending)
     except Exception as exc:
-        result.error = f"upsert failed after {len(result.upserted_ids)} point(s): {exc}"
+        result.failure = INDEX_UNREACHABLE
+        result.error = failure_detail(
+            result.failure,
+            target,
+            f"upsert failed after {len(result.upserted_ids)} point(s): {exc}",
+        )
         return result
 
     try:
@@ -311,7 +358,10 @@ def apply_projection(
             scope_complete=scope_complete,
         )
     except Exception as exc:
-        result.error = f"delete of stale points failed: {exc}"
+        result.failure = INDEX_UNREACHABLE
+        result.error = failure_detail(
+            result.failure, target, f"delete of stale points failed: {exc}"
+        )
         return result
     result.deleted_ids = sorted(deleted)
     return result
@@ -350,7 +400,7 @@ def open_client(target: str) -> Optional[QdrantClient]:
     return QdrantClient(url=url, timeout=30)
 
 
-def project_paper(pillar_id: str, paper_id: str) -> int:
+def project_paper(pillar_id: str, paper_id: str) -> ProjectionOutcome:
     """Project one paper's stored embeddings to local, then cloud if configured.
 
     Returns how many of the paper's chunks the local index now represents
@@ -383,12 +433,16 @@ def project_paper(pillar_id: str, paper_id: str) -> int:
 
     local = vectors.get_client()
     if local is None:
+        kind = INDEX_UNREACHABLE
         local_result = SyncResult(
             target="local",
             model_id=model_id,
             dims=dims,
             collection=collection_name(model_id, dims),
-            error="local vector index is not configured (QDRANT_URL)",
+            failure=kind,
+            error=failure_detail(
+                kind, "local", "QDRANT_URL is not configured"
+            ),
         )
     else:
         # loud=False so a local failure still lets the cloud copy catch up.
@@ -406,10 +460,11 @@ def project_paper(pillar_id: str, paper_id: str) -> int:
             loud=False,
         )
 
+    notices: List[str] = []
     if _cloud_configured():
-        cloud = open_client("cloud")
         try:
-            _sync_loaded(
+            cloud = open_client("cloud")
+            cloud_result = _sync_loaded(
                 "cloud",
                 cloud,
                 chunks,
@@ -421,14 +476,25 @@ def project_paper(pillar_id: str, paper_id: str) -> int:
                 scroll_paper_ids={paper_id},
                 loud=False,
             )
-        except ProjectionError as exc:
-            logger.warning("cloud projection left behind for %s: %s", paper_id, exc)
+        except Exception as exc:
+            notice = failure_detail(INDEX_UNREACHABLE, "cloud", str(exc))
+            notices.append(notice)
+            logger.warning(
+                "cloud projection left behind for %s: %s", paper_id, notice
+            )
+        else:
+            if cloud_result.unhealthy or cloud_result.error:
+                notice = cloud_result.error or "cloud vector projection is behind"
+                notices.append(notice)
+                logger.warning(
+                    "cloud projection left behind for %s: %s", paper_id, notice
+                )
 
     if local is None or local_result.unhealthy or local_result.error:
         raise ProjectionError(
             local_result.error or "local vector index failed"
         )
-    return len(chunks)
+    return ProjectionOutcome(len(chunks), notices)
 
 
 def sync_targets(
@@ -473,6 +539,7 @@ def sync_targets(
                 collection=collection_name(model_id, provider.dims),
                 pending=pending,
                 dry_run=dry_run,
+                failure=INDEX_UNREACHABLE,
                 error=message,
             ))
             continue
@@ -507,21 +574,39 @@ def _sync_loaded(
     from . import db
 
     if client is None:
+        kind = INDEX_UNREACHABLE
         result = SyncResult(
             target=target,
             model_id=model_id,
             dims=dims,
             collection=collection_name(model_id, dims),
             dry_run=dry_run,
-            error="not configured",
+            failure=kind,
+            error=failure_detail(kind, target, "not configured"),
         )
         if loud and not dry_run:
             raise ProjectionError(f"{target} vector index is not configured")
         logger.warning("%s projection left behind: not configured", target)
         return result
 
-    indexed = set(db.list_projection_state(target, model_id))
-    stale = set(db.list_projection_stale(target, model_id))
+    try:
+        indexed = set(db.list_projection_state(target, model_id))
+        stale = set(db.list_projection_stale(target, model_id))
+    except ProjectionError as exc:
+        kind = PROJECTION_STATE_UNAVAILABLE
+        result = SyncResult(
+            target=target,
+            model_id=model_id,
+            dims=dims,
+            collection=collection_name(model_id, dims),
+            dry_run=dry_run,
+            failure=kind,
+            error=failure_detail(kind, target, str(exc)),
+        )
+        if loud and not dry_run:
+            raise ProjectionError(result.error) from exc
+        logger.warning("%s projection left behind: %s", target, result.error)
+        return result
     result = apply_projection(
         client,
         target=target,
@@ -542,6 +627,7 @@ def _sync_loaded(
             db.forget_projection_state,
         )
     except ProjectionError as exc:
+        result.failure = result.failure or PROJECTION_STATE_UNAVAILABLE
         result.error = result.error or str(exc)
         if loud and not dry_run:
             raise
@@ -609,6 +695,42 @@ def _collection_names(client: QdrantClient) -> List[str]:
     listed = client.get_collections()
     collections = getattr(listed, "collections", None) or []
     return [col.name for col in collections]
+
+
+def _ensure_sparse_vector(client: QdrantClient, name: str) -> None:
+    """Add the BM25 sparse vector config to a pre-hybrid collection.
+
+    Qdrant 1.19 can update sparse vector configuration in place. This is what
+    lets ``vectors sync --rebuild`` backfill the collection created by the
+    previous projector release instead of requiring a destructive rebuild.
+    """
+    try:
+        info = client.get_collection(name)
+        config = getattr(info, "config", None)
+        params = getattr(config, "params", None)
+        sparse = getattr(params, "sparse_vectors", None) or {}
+        if not isinstance(sparse, dict):
+            sparse = {}
+    except Exception as exc:
+        raise ProjectionError(
+            f"could not read sparse vector config for {name}: {exc}"
+        ) from exc
+    if BM25_VECTOR in sparse:
+        return
+    try:
+        client.update_collection(
+            collection_name=name,
+            sparse_vectors_config={
+                BM25_VECTOR: models.SparseVectorParams(
+                    modifier=models.Modifier.IDF,
+                )
+            },
+        )
+    except Exception as exc:
+        raise ProjectionError(
+            f"could not add {BM25_VECTOR} sparse vectors to {name}: {exc}"
+        ) from exc
+    logger.info("Added '%s' sparse vector config to '%s'", BM25_VECTOR, name)
 
 
 def _ensure_payload_indexes(client: QdrantClient, name: str) -> None:
@@ -679,9 +801,10 @@ def _upsert_chunks(
 
 
 def _point(chunk: ChunkVector) -> models.PointStruct:
+    sparse = bm25_passage(chunk.text)
     return models.PointStruct(
         id=point_id(chunk.chunk_id),
-        vector=chunk.embedding,
+        vector={"": chunk.embedding, BM25_VECTOR: sparse},
         payload={
             "pillar_id": chunk.pillar_id,
             "paper_id": chunk.paper_id,
@@ -690,6 +813,44 @@ def _point(chunk: ChunkVector) -> models.PointStruct:
             "text": chunk.text,
         },
     )
+
+
+def _get_sparse_embedder():
+    """Return the lazy FastEmbed BM25 encoder.
+
+    Import and construction stay lazy so module imports, dry runs, and tests do
+    not download model files. The BM25 package is tiny, but it follows the same
+    cache location as the dense embedding model.
+    """
+    global _sparse_embedder
+    if _sparse_embedder is None:
+        from fastembed import SparseTextEmbedding
+
+        cache_dir = os.getenv("EMBEDDING_CACHE_DIR") or None
+        _sparse_embedder = SparseTextEmbedding(
+            model_name=BM25_MODEL,
+            cache_dir=cache_dir,
+        )
+    return _sparse_embedder
+
+
+def _as_sparse_vector(embedding) -> models.SparseVector:
+    return models.SparseVector(
+        indices=[int(item) for item in embedding.indices.tolist()],
+        values=[float(item) for item in embedding.values.tolist()],
+    )
+
+
+def bm25_passage(text: str) -> models.SparseVector:
+    """Encode one stored chunk with FastEmbed's BM25 document weights."""
+    embedding = next(iter(_get_sparse_embedder().passage_embed([text])))
+    return _as_sparse_vector(embedding)
+
+
+def bm25_query(text: str) -> models.SparseVector:
+    """Encode one search query for the BM25 sparse-vector leg."""
+    embedding = next(iter(_get_sparse_embedder().query_embed(text)))
+    return _as_sparse_vector(embedding)
 
 
 def _delete_stale(

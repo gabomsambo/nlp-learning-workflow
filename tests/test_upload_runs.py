@@ -25,6 +25,7 @@ from nlp_pillars.orchestrator import RunCancelledError
 from nlp_pillars.schemas import UPLOAD_STAGES, RunStatus, StageName, StageStatus
 from nlp_pillars.services import upload_service as upload_service_module
 from nlp_pillars.services.upload_service import PipelineOutcome, UploadJobResult
+from nlp_pillars.vector_health import ProjectionOutcome
 from webui.services import run_service
 from webui.services.run_service import (
     KIND_DISCOVER,
@@ -154,7 +155,9 @@ def test_dispatch_does_not_refuse_an_upload_behind_a_live_discovery_run():
     conn = _guarded_table()
     scheduler = MagicMock()
 
-    def fake_create(pillar_id, trigger_source, kind, stage_names):
+    def fake_create(pillar_id, trigger_source, kind, stage_names, result=None):
+        # ``result`` matches create_pipeline_run. This index does not read it;
+        # a fact-check stores script_id there so a different index can.
         try:
             _insert(conn, kind, status="pending", pillar=pillar_id)
         except sqlite3.IntegrityError:
@@ -401,7 +404,10 @@ def test_turning_the_summarizer_off_skips_three_stages_rather_than_hiding_them(
         patch("nlp_pillars.services.upload_service.db"),
         patch("nlp_pillars.services.upload_service.vectors") as mock_vectors,
     ):
-        mock_vectors.upsert_text.return_value = 7
+        mock_vectors.upsert_text.return_value = ProjectionOutcome(
+            7,
+            ["cloud vector index unreachable: timed out"],
+        )
         service._run_full_pipeline(
             paper=paper, pillar_id="nlp-fundamentals",
             run_summarizer=False, generate_quiz=False, on_stage=on_stage,
@@ -410,10 +416,19 @@ def test_turning_the_summarizer_off_skips_three_stages_rather_than_hiding_them(
     for stage in (StageName.SUMMARIZE, StageName.SYNTHESIZE, StageName.QUIZ):
         assert on_stage.status_of(stage) == StageStatus.SKIPPED.value
     assert on_stage.status_of(StageName.VECTORS) == StageStatus.COMPLETED.value
+    detail = next(
+        detail
+        for name, state, detail in on_stage.events
+        if name == StageName.VECTORS.value
+        and state == StageStatus.COMPLETED.value
+    )
+    assert "7 chunk(s) indexed" in detail
+    assert "cloud copy behind" in detail
+    assert "timed out" in detail
 
 
 def test_zero_vectors_from_a_non_empty_paper_marks_the_stage_failed(service, paper):
-    """upsert_text returns 0 for an empty document and a dead Qdrant alike."""
+    """A broken vector implementation returning zero still fails the stage."""
     on_stage = _Recorder()
     with (
         patch.object(service.ingest_agent, "ingest", return_value=_parsed()),

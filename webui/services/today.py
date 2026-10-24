@@ -35,6 +35,7 @@ _KIND_NOUN = {
     "run_daily": "Daily run",
     "podcast_script": "Script",
     "podcast_audio": "Episode audio",
+    "podcast_factcheck": "Fact check",
 }
 
 
@@ -428,6 +429,10 @@ def run_sentence(run: dict, names: dict[str, str]) -> str:
         return f"Discovery finished for {pillar}"
     if kind == "discover" and status == "failed":
         return f"Discovery did not finish for {pillar}" + (f" — {error}" if error else "")
+    if kind == "podcast_factcheck" and status == "succeeded":
+        return "Fact check finished"
+    if kind == "podcast_factcheck" and status == "failed":
+        return "Fact check did not finish" + (f" — {error}" if error else "")
     if kind == "podcast_script" and status == "succeeded" and saved is False:
         return "A script was generated but not saved"
     if kind == "podcast_script" and status == "succeeded":
@@ -467,7 +472,7 @@ def run_href(run: dict) -> Optional[str]:
         if paper_id and _tri(run.get("result_added")):
             return paper_href(str(paper_id))
         return "/pipeline/"
-    if kind in {"podcast_script", "podcast_audio"}:
+    if kind in {"podcast_script", "podcast_audio", "podcast_factcheck"}:
         script_id = run.get("result_script_id")
         if isinstance(script_id, str) and script_id and all(ch.isalnum() or ch == "-" for ch in script_id):
             return "/podcast/?script=" + quote(script_id, safe="")

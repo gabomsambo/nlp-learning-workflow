@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from nlp_pillars.cli import app
 from nlp_pillars.projector import (
+    BM25_VECTOR,
     MIGRATION,
     POINT_NAMESPACE,
     READ_ALIAS,
@@ -87,11 +88,22 @@ def make_client(existing=False):
         found.name = collection_name(MODEL, DIMS)
         names.append(found)
     client.get_collections.return_value.collections = names
-    client.get_collection.return_value.payload_schema = {}
+    info = client.get_collection.return_value
+    info.payload_schema = {}
+    info.config.params.sparse_vectors = {
+        BM25_VECTOR: models.SparseVectorParams(modifier=models.Modifier.IDF)
+    }
     # A Mock here is iterable forever. The alias walk must see a real list.
     client.get_aliases.return_value.aliases = []
     client.scroll.return_value = ([], None)
     return client
+
+
+@pytest.fixture(autouse=True)
+def stub_bm25_passage():
+    sparse = models.SparseVector(indices=[7, 11], values=[0.5, 1.5])
+    with patch("nlp_pillars.projector.bm25_passage", return_value=sparse):
+        yield
 
 
 def _apply(client, chunks, **kwargs):
@@ -138,9 +150,14 @@ def test_qdrant_client_exposes_the_projection_surface():
         "update_collection_aliases",
         "create_payload_index",
         "get_aliases",
+        "update_collection",
     ):
         assert hasattr(QdrantClient, name), name
     assert not hasattr(QdrantClient, "search")
+    assert (
+        "sparse_vectors_config" in QdrantClient.create_collection.__annotations__
+    )
+    assert "prefetch" in QdrantClient.query_points.__annotations__
 
 
 def test_point_id_is_uuid5_of_the_chunk_and_stable():
@@ -166,12 +183,16 @@ def test_upsert_writes_text_and_both_payload_indexes():
     assert result.error is None
     points = client.upsert.call_args.kwargs["points"]
     assert points[0].id == point_id(CHUNK)
+    assert points[0].vector[""] == chunk.embedding
+    assert points[0].vector[BM25_VECTOR].indices == [7, 11]
     assert points[0].payload["text"] == "hello chunk"
     assert points[0].payload["pillar_id"] == PILLAR
     assert points[0].payload["paper_id"] == PAPER
     assert points[0].payload["chunk_id"] == CHUNK
     assert points[0].payload["chunk_index"] == 0
-    assert client.upsert.call_args.kwargs["collection_name"] == collection_name(MODEL, DIMS)
+    assert client.upsert.call_args.kwargs["collection_name"] == collection_name(
+        MODEL, DIMS
+    )
 
     fields = [
         call.kwargs["field_name"]
@@ -181,9 +202,26 @@ def test_upsert_writes_text_and_both_payload_indexes():
     for call in client.create_payload_index.call_args_list:
         assert call.kwargs["field_schema"] == models.PayloadSchemaType.KEYWORD
 
-    op = client.update_collection_aliases.call_args.kwargs["change_aliases_operations"][0]
+    operations = client.update_collection_aliases.call_args.kwargs[
+        "change_aliases_operations"
+    ]
+    op = operations[0]
     assert op.create_alias.alias_name == READ_ALIAS
     assert op.create_alias.collection_name == collection_name(MODEL, DIMS)
+
+    create = client.create_collection.call_args.kwargs
+    sparse_config = create["sparse_vectors_config"][BM25_VECTOR]
+    assert sparse_config.modifier == models.Modifier.IDF
+
+
+def test_existing_dense_collection_gets_bm25_config():
+    client = make_client(existing=True)
+    client.get_collection.return_value.config.params.sparse_vectors = {}
+
+    _apply(client, [make_chunk()], indexed_ids={CHUNK})
+
+    config = client.update_collection.call_args.kwargs["sparse_vectors_config"]
+    assert config[BM25_VECTOR].modifier == models.Modifier.IDF
 
 
 def test_second_sync_is_a_no_op():
@@ -298,13 +336,33 @@ def test_local_outage_still_projects_cloud_then_raises():
     with patched_store(cloud, [row_for(chunk)]) as (mark, _forget), \
          patch("nlp_pillars.vectors.get_client", return_value=local), \
          patch.dict(os.environ, {"QDRANT_CLOUD_URL": "http://cloud.example"}):
-        with pytest.raises(ProjectionError, match="suspended"):
+        with pytest.raises(ProjectionError, match="local vector index unreachable"):
             project_paper(PILLAR, PAPER)
 
     local.upsert.assert_not_called()
     cloud.upsert.assert_called_once()
     targets = [call.args[0] for call in mark.call_args_list]
     assert targets == ["cloud"]
+
+
+def test_cloud_outage_is_returned_as_a_nonfatal_projection_notice():
+    chunk = make_chunk()
+    local = make_client()
+    cloud = make_client()
+    cloud.get_collections.side_effect = unexpected_response(
+        404, b"404 page not found"
+    )
+
+    with patched_store(cloud, [row_for(chunk)]), \
+         patch("nlp_pillars.vectors.get_client", return_value=local), \
+         patch.dict(os.environ, {"QDRANT_CLOUD_URL": "http://cloud.example"}):
+        outcome = project_paper(PILLAR, PAPER)
+
+    assert outcome == 1
+    assert len(outcome.notices) == 1
+    assert "cloud vector index suspended or deleted" in outcome.notices[0]
+    local.upsert.assert_called_once()
+    cloud.upsert.assert_not_called()
 
 
 def test_migration_has_no_foreign_key_and_reloads_postgrest():

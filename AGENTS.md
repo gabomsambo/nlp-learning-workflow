@@ -155,6 +155,12 @@ Applied on the captain's volume on 2026-10-24.
 before `python -m nlp_pillars.cli factcheck run` can save. Until it is, the
 command names `docs/migrations/022_podcast_fact_checks.sql`. `--dry-run` only
 reads the script and `paper_texts`.
+**023 (`podcast_factcheck` / `ui_podcast_factcheck` / `auto_podcast_factcheck`)
+must be applied by hand** before `POST /api/podcast/{id}/factcheck` or the
+automatic check after a saved script can start. Until it is, that route
+answers 503 naming `docs/migrations/023_podcast_factcheck_runs.sql`. The kind
+is exempt from the one-active-per-pillar guard. One script still has at most
+one active fact-check.
 **011 (`podcast_scripts.source_material`) has been applied** on the captain's volume
 (verified 2026-10-24; the 2026-08-29 note that PostgREST answered `PGRST204` for
 this column is stale). `add_podcast_script()` still detects a missing column and
@@ -294,12 +300,15 @@ stored embeddings into a per-model collection
 (`chunks__<sanitized model id>__<dims>`) and points the `nlp_chunks` alias at
 it. Search reads the alias. Point id is `uuid5(chunk_id)` (namespace frozen
 in `nlp_pillars/projector.py`). Payload is `pillar_id`, `paper_id`,
-`chunk_id`, `chunk_index`, and the chunk text. Keyword payload indexes on
-`pillar_id` and `paper_id`. `vector_index_state`
+`chunk_id`, `chunk_index`, and the chunk text. Each point has the unnamed dense
+vector plus a FastEmbed `Qdrant/bm25` sparse vector; the sparse collection config
+uses Qdrant's `Modifier.IDF`. Keyword payload indexes on `pillar_id` and
+`paper_id`. `vector_index_state`
 (`docs/migrations/019_vector_index_state.sql`, hand-applied, no foreign key
 to `paper_chunks`) records which chunks each target has. A second sync with
 nothing new writes nothing. Chunks deleted by re-ingest leave a state row;
-the next sync deletes those points. `--rebuild` upserts every stored chunk.
+the next sync deletes those points. `--rebuild` upserts every stored chunk and
+is how an index created before hybrid search gets its BM25 vectors.
 `--dry-run` prints counts and writes nothing.
 
 A dead or suspended cloud does not fail the run. The projector probes, and a
@@ -308,7 +317,8 @@ behind". No `vector_index_state` rows are written for that attempt, so the
 next sync retries. Local failure raises `ProjectionError` and fails the
 VECTORS stage. `upsert_text` no longer calls OpenAI: persist has already
 written chunks and embeddings, and the vector stage projects them. Missing
-`QDRANT_URL` still returns 0 from `upsert_text` (the unconfigured path).
+`QDRANT_URL` raises a classified `ProjectionError`; a configured cloud
+failure stays non-fatal and is attached to the completed VECTORS stage detail.
 
 Qdrant's current docs say a free-tier cluster is **suspended after 1 week of
 inactivity and deleted after 4 weeks**
@@ -333,8 +343,9 @@ download the embedding weights: dims are known without loading ONNX.
 Both indexes are required under Qdrant **strict mode**
 (`unindexed_filtering_retrieve: false`), which answers a filtered query on an
 unindexed payload key with `400 Bad Request: Index required but not found`.
-Search filters by `pillar_id`. Deleting one paper's stale points filters by
-`paper_id`. Without that index the delete 400s on Cloud.
+Search filters by `pillar_id` unless the route requests `scope=all`. Deleting
+one paper's stale points filters by `paper_id`. Without that index the delete
+400s on Cloud.
 
 Read the collection with `client.query_points()`. `search()`, `search_batch()`,
 `search_groups()`, `recommend()` and `discover()` were all removed in qdrant-client 1.19
@@ -360,9 +371,14 @@ were already projected. 0 means the local client is not configured, or the
 text was empty.
 
 `search_similar()` embeds the query with the same provider that stored
-`chunk_embeddings` (`embed_query`, so the bge query prefix is applied) and
-reads the `nlp_chunks` alias. It is still a paper-level discovery API: the
-payload now carries chunk text, and the route still returns papers. Postgres
+`chunk_embeddings` (`embed_query`, so the bge query prefix is applied), makes a
+FastEmbed `Qdrant/bm25` sparse query, and fuses both prefetch legs server-side
+with RRF in one `query_points()` call. Qdrant 1.20's text-index BM25 is not used:
+the pinned 1.19 server supports sparse BM25 plus the IDF modifier. It reads the
+`nlp_chunks` alias and still returns papers, now with the winning chunk text and
+identity for snippets. The route fetches those paper ids in one PostgREST `in`
+query; `scope=all` omits the pillar filter. `scripts/eval_search.py` is the local,
+non-CI SciFact-subset dense-vs-hybrid nDCG@10 check. Postgres
 is the source of truth for that text: `paper_texts` and `paper_chunks`
 (`docs/migrations/017_paper_text.sql`, hand-applied). Ingest, daily processing
 and upload replace a paper's chunks in one transaction on re-ingest. Vectors
@@ -982,7 +998,16 @@ Verdicts are not shown in the UI yet. Routes are `FACTCHECK_EXTRACT`,
 `FACTCHECK_REJUDGE_MODEL`; defaults Haiku 5.5 / Haiku 5.5 / Sonnet 5.5).
 `python -m nlp_pillars.cli factcheck run --script <id>` records `cost_usd`
 per call and in total. Apply `docs/migrations/022_podcast_fact_checks.sql`
-by hand before it can save.
+by hand before it can save. A check is also a pipeline run
+(`kind=podcast_factcheck`, migration 023, five stages in `run-progress.js`).
+After a script is saved, webui starts that run when `FACTCHECK_AUTO_DISPATCH`
+is true (the default). A fact-check failure does not fail the script run and
+does not change the script. `POST /api/podcast/{id}/factcheck` starts one
+and answers 409 with the active `run_id` when one is already running.
+`GET /api/podcast/{id}/factcheck` returns the latest claims, verdicts,
+evidence quotes and anchors. `python -m nlp_pillars.cli factcheck backfill`
+checks scripts that have none yet. The 7 existing scripts are about
+$0.6–1.3. Do not run that backfill unless you mean to spend it.
 
 The script body is built with `textContent` and cue elements (`listen.js`);
 the old `innerHTML` highlight sink is gone. Script **generation progress** is real now (`kind=podcast_script`,

@@ -3,6 +3,7 @@ API Router for podcast script generation and management.
 """
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -14,9 +15,19 @@ from nlp_pillars.config import get_settings
 from nlp_pillars.podcast_options import PodcastOptionError, resolve
 from nlp_pillars.db import (
     get_podcast_scripts, get_podcast_script_by_id,
-    PipelineRunCreateError, PodcastScriptLookupError,
+    get_active_factcheck_run, get_latest_podcast_fact_check,
+    FactcheckLookupError, PipelineRunCreateError, PodcastScriptLookupError,
 )
-from webui.services import podcast_audio_service, podcast_script_service, run_service
+from webui.services import (
+    podcast_audio_service,
+    podcast_factcheck_service,
+    podcast_script_service,
+    run_service,
+)
+from webui.services.podcast_factcheck_service import (
+    FactcheckAlreadyRunning,
+    public_factcheck,
+)
 from webui.services.run_service import RunAlreadyActiveError
 
 logger = logging.getLogger(__name__)
@@ -274,6 +285,94 @@ async def list_podcasts(pillar: Optional[str] = None, limit: int = 20):
             status_code=500,
             detail=f"Failed to list podcast scripts: {str(e)}"
         )
+
+
+def _script_id_or_404(script_id: str) -> str:
+    try:
+        return str(uuid.UUID(script_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Script not found")
+
+
+def _factcheck_conflict(script_id: str) -> JSONResponse:
+    """409 with the run the client should attach to, when one is active."""
+    try:
+        existing = get_active_factcheck_run(script_id)
+    except FactcheckLookupError:
+        existing = None
+    body: Dict[str, Any] = {
+        "detail": "A fact check is already running for this script",
+    }
+    if existing is not None:
+        body["run_id"] = existing.id
+    return JSONResponse(status_code=409, content=body)
+
+
+@router.post("/{script_id}/factcheck", status_code=202)
+async def start_factcheck(script_id: str, http_request: Request):
+    """Queue a fact-check of one stored script.
+
+    202 returns the new run id. 409 returns the run id of the check already
+    going for this script, so the client can attach to it. 503 names
+    migration 023 when the kind is not allowed yet, and 022 when the
+    fact-check tables cannot be read.
+    """
+    script_id = _script_id_or_404(script_id)
+    try:
+        script = get_podcast_script_by_id(script_id)
+    except PodcastScriptLookupError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if script is None:
+        raise HTTPException(status_code=404, detail="Script not found")
+    try:
+        run_id = podcast_factcheck_service.dispatch_factcheck(
+            http_request.app.state.scheduler,
+            http_request.app.state.cancel_events,
+            script=script,
+            trigger_source=podcast_factcheck_service.TRIGGER_UI_PODCAST_FACTCHECK,
+        )
+    except FactcheckAlreadyRunning as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "A fact check is already running for this script",
+                "run_id": exc.run_id,
+            },
+        )
+    except RunAlreadyActiveError:
+        return _factcheck_conflict(script_id)
+    except PipelineRunCreateError as exc:
+        logger.error("Could not create podcast_factcheck run: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"{exc}. {podcast_factcheck_service.MIGRATION_HINT}",
+        )
+    except FactcheckLookupError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {"run_id": run_id, "message": "Fact check started"}
+
+
+@router.get("/{script_id}/factcheck")
+async def get_factcheck(script_id: str):
+    """Latest stored fact-check: claims, verdicts, quotes, anchors, counts.
+
+    404 when the script or the check is absent. 503 names migration 022
+    when the fact-check tables are missing.
+    """
+    script_id = _script_id_or_404(script_id)
+    try:
+        row = get_latest_podcast_fact_check(script_id)
+    except FactcheckLookupError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if row is None:
+        try:
+            script = get_podcast_script_by_id(script_id)
+        except PodcastScriptLookupError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        if script is None:
+            raise HTTPException(status_code=404, detail="Script not found")
+        raise HTTPException(status_code=404, detail="No fact check for this script")
+    return public_factcheck(row)
 
 
 @router.get("/{script_id}")

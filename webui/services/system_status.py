@@ -82,6 +82,14 @@ KIND_PROBES = (
         "file": "docs/migrations/016_podcast_script_runs.sql",
         "missing": "pipeline_runs does not accept a podcast script run yet.",
     },
+    {
+        "id": "migration-023",
+        "label": "Fact-check runs",
+        "kind": "podcast_factcheck",
+        "trigger": "ui_podcast_factcheck",
+        "file": "docs/migrations/023_podcast_factcheck_runs.sql",
+        "missing": "pipeline_runs does not accept a fact-check run yet.",
+    },
 )
 
 # Migrations 017 onward add tables. A new file under docs/migrations whose
@@ -281,8 +289,8 @@ def classify_qdrant(
                 check_id,
                 label,
                 "down",
-                "Suspended free-tier cluster.",
-                "Resume the cluster in the Qdrant Cloud console. A suspended cluster answers every path with plain text 404 page not found.",
+                "Cloud cluster suspended or deleted.",
+                "Check the Qdrant Cloud console. A suspended or deleted cluster can leave ingress answering every path with plain text 404 page not found.",
                 fatal=False,
             )
         return make_check(

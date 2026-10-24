@@ -382,11 +382,13 @@ CREATE TABLE pipeline_runs (
         CONSTRAINT pipeline_runs_trigger_source_check
         CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'ui_discover',
                                   'scheduler', 'ui_podcast_audio', 'ui_upload',
-                                  'ui_podcast_script')),
+                                  'ui_podcast_script', 'ui_podcast_factcheck',
+                                  'auto_podcast_factcheck')),
     kind             TEXT NOT NULL
         CONSTRAINT pipeline_runs_kind_check
         CHECK (kind IN ('run_daily', 'process_selected', 'discover',
-                        'podcast_audio', 'upload', 'podcast_script')),
+                        'podcast_audio', 'upload', 'podcast_script',
+                        'podcast_factcheck')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".
@@ -405,9 +407,11 @@ CREATE TABLE pipeline_runs (
     -- candidate list the user chooses from, 'podcast_audio' the generated episode,
     -- 'upload' the paper it added and what the post-upload steps did,
     -- 'podcast_script' the generated script metadata (and the full text when
-    -- saved=false); the rest leave it NULL. Written once, at the end, in a single
-    -- PATCH — so unlike the stage list it has no read-modify-write problem and does
-    -- not need a child table.
+    -- saved=false). 'podcast_factcheck' stores script_id at insert so the
+    -- one-active-per-script index can see it, then replaces that object with
+    -- counts when the run finishes. The rest leave it NULL. Written in a
+    -- single PATCH — so unlike the stage list it has no read-modify-write
+    -- problem and does not need a child table.
     result           JSONB
 );
 
@@ -1135,14 +1139,20 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 -- correctness constraint, not a performance index: a check-then-insert in Python
 -- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
 --
--- Uploads and podcast_script runs are exempt (migrations 015 / 016). The guard is
--- about two writers driving one pillar's queue at once; both exempted kinds are
--- scoped to one paper the user handed over, so refusing them because a discovery
--- run is in flight would refuse work for a conflict that does not exist.
+-- Uploads, podcast_script runs, and podcast_factcheck runs are exempt
+-- (migrations 015 / 016 / 023). The guard is about two writers driving one
+-- pillar's queue at once. Those three kinds are scoped to one paper or one
+-- script, so refusing them because a discovery run is in flight would refuse
+-- work for a conflict that does not exist. One script still has at most one
+-- active fact-check: pipeline_runs_one_active_factcheck_per_script.
 CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
     ON pipeline_runs (pillar_id)
     WHERE status IN ('pending', 'running')
-      AND kind NOT IN ('upload', 'podcast_script');
+      AND kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck');
+CREATE UNIQUE INDEX pipeline_runs_one_active_factcheck_per_script
+    ON pipeline_runs ((result->>'script_id'))
+    WHERE kind = 'podcast_factcheck'
+      AND status IN ('pending', 'running');
 CREATE INDEX idx_pipeline_runs_pillar ON pipeline_runs(pillar_id, created_at DESC);
 CREATE INDEX idx_pipeline_runs_active ON pipeline_runs(status)
     WHERE status IN ('pending', 'running');

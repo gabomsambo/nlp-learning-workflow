@@ -538,7 +538,7 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
         ]
 
     def test_zero_vectors_from_a_non_empty_paper_is_a_failure(self, service, paper):
-        """upsert_text returns 0 for an empty document and a dead Qdrant alike."""
+        """A broken vector implementation returning zero still fails the stage."""
         with patch.object(service.ingest_agent, 'ingest', return_value=self._parsed()), \
              patch('nlp_pillars.services.upload_service.db'), \
              patch('nlp_pillars.services.upload_service.vectors') as mock_vectors:
