@@ -1575,5 +1575,84 @@ def vault_export(
     raise typer.Exit(0)
 
 
+vectors_app = typer.Typer(
+    help="Project chunk embeddings from Postgres into Qdrant",
+    add_completion=False,
+)
+app.add_typer(vectors_app, name="vectors")
+
+
+@vectors_app.command("sync")
+def vectors_sync(
+    target: str = typer.Option(
+        ...,
+        "--target",
+        help="Which index to update: local, cloud, or all.",
+    ),
+    rebuild: bool = typer.Option(
+        False,
+        "--rebuild",
+        help="Upsert every stored chunk, not only ones missing from the index.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print counts only. Do not write to Qdrant or to vector_index_state.",
+    ),
+):
+    """Copy stored chunk embeddings into Qdrant.
+
+    Reads ``paper_chunks`` and ``chunk_embeddings`` for the active model
+    (local bge-base, 768-d, unless ``EMBEDDING_PROVIDER`` says otherwise)
+    and upserts them. Point ids are ``uuid5(chunk_id)``. A second run with
+    nothing new writes nothing. ``--target cloud`` against a suspended
+    cluster leaves that target behind and exits 0; the next sync retries.
+    ``--target local`` fails if the local server cannot be updated.
+
+    Apply docs/migrations/019_vector_index_state.sql before the first real run.
+    """
+    from .projector import ProjectionError, sync_targets
+
+    _log_env_path()
+    _setup_logging()
+    names = [part.strip() for part in target.split(",") if part.strip()]
+    known = {"local", "cloud", "all"}
+    if not names or any(name not in known for name in names):
+        console.print(
+            "[bold red]unknown projection target. Use local, cloud, or all.[/bold red]"
+        )
+        raise typer.Exit(2)
+    try:
+        results = sync_targets(names, rebuild=rebuild, dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except ProjectionError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("vectors sync failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("vectors sync failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+
+    failed = False
+    for result in results:
+        console.print(result.render(), markup=False)
+        console.print()
+        if result.target != "local":
+            continue
+        if result.error and result.error != "not configured":
+            # A dry-run still reports a down server; it did not promise a write.
+            if not dry_run:
+                failed = True
+        elif result.error == "not configured":
+            failed = True
+        elif result.unhealthy and not dry_run:
+            failed = True
+    if failed:
+        raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

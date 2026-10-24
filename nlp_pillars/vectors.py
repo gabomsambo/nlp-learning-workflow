@@ -1,44 +1,60 @@
 """
-Qdrant-based vector store utility with strict namespace routing by pillar.
+Qdrant read path and the hook that projects stored embeddings.
 
-Provides vector storage and search functionality with pillar isolation.
-All operations are namespaced by pillar_id to ensure data separation.
+Postgres holds the chunk text and the vectors (``paper_chunks``,
+``chunk_embeddings``). This module does not embed. ``upsert_text`` projects
+rows that are already stored: local Qdrant immediately, and Qdrant Cloud
+when ``QDRANT_CLOUD_URL`` is set. Search and discovery read the local index
+(``QDRANT_URL``) through the ``nlp_chunks`` alias, and embed the query with
+the same provider that wrote ``chunk_embeddings``.
 """
 
 import logging
 import os
-import hashlib
-import uuid
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
-from openai import OpenAI
 
-from .tools.pdf_loader import VECTOR_CHUNK_OVERLAP, VECTOR_CHUNK_SIZE, chunk_text
+from .projector import (
+    PAPER_ID_FIELD,
+    PILLAR_ID_FIELD,
+    READ_ALIAS,
+    ProjectionError,
+    ensure_index,
+    project_paper,
+)
 
 logger = logging.getLogger(__name__)
 
-# Module-level singletons
+# Module-level singleton. Search and the local projection share it.
 _client: Optional[QdrantClient] = None
-_openai_client: Optional[OpenAI] = None
-_vector_size: Optional[int] = None
 
-COLLECTION_NAME = "nlp_pillars"
+# What search queries. The physical collection is per model; the alias is
+# what a model change flips.
+COLLECTION_NAME = READ_ALIAS
 
-# Payload key every read filters on, and therefore the one key that must carry
-# a Qdrant payload index — see _ensure_payload_indexes().
-PILLAR_ID_FIELD = "pillar_id"
-
-# Chunks per embedding request. text-embedding-3-small accepts a list, and a
-# full-length paper is hundreds of chunks — 100 keeps a request well inside the
-# model's input limits while turning 448 round trips into 5.
-EMBED_BATCH_SIZE = 100
+__all__ = [
+    "COLLECTION_NAME",
+    "PAPER_ID_FIELD",
+    "PILLAR_ID_FIELD",
+    "ProjectionError",
+    "ensure_collections",
+    "get_client",
+    "project_paper",
+    "search_similar",
+    "set_client",
+    "upsert_text",
+]
 
 
 def get_client() -> Optional[QdrantClient]:
     """
     Get or create the Qdrant client singleton.
-    
+
+    This is the local index (``QDRANT_URL``). Cloud is a separate client
+    opened by the projector only while syncing.
+
     Returns:
         QdrantClient instance or None if not configured
     """
@@ -68,343 +84,99 @@ def get_client() -> Optional[QdrantClient]:
         return None
 
 
-def _get_openai_client() -> Optional[OpenAI]:
-    """Get or create OpenAI client for embeddings."""
-    global _openai_client
+def _query_vector(text: str) -> List[float]:
+    """Embed a search query with the same provider the index was built from.
 
-    if _openai_client is not None:
-        return _openai_client
-
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        logger.error("OPENAI_API_KEY environment variable is required for embeddings")
-        return None
-
-    _openai_client = OpenAI(api_key=api_key)
-    return _openai_client
-
-
-def _embed(text: str) -> List[float]:
+    The local model adds its query prefix here. A download or an API error
+    is a runtime failure: ``search_similar`` turns it into an empty result,
+    the same way a transport error does.
     """
-    Generate embedding vector for a single text using OpenAI.
+    from .embeddings import get_embedding_provider
 
-    Args:
-        text: Text to embed
-
-    Returns:
-        List of floats representing the embedding vector
-
-    Raises:
-        RuntimeError: If OpenAI client is not configured or embedding fails
-    """
-    client = _get_openai_client()
-    if not client:
-        raise RuntimeError("OpenAI client not configured. Set OPENAI_API_KEY environment variable.")
-
-    model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
-
-    try:
-        response = client.embeddings.create(
-            model=model,
-            input=text.strip()
-        )
-
-        return response.data[0].embedding
-
-    except Exception as e:
-        raise RuntimeError(f"Failed to generate embedding with model {model}: {e}")
-
-
-def _embed_batch(texts: List[str]) -> List[List[float]]:
-    """Embed several texts in one API call, in the order they were given.
-
-    ``text-embedding-3-small`` accepts a list, and upsert_text used to ignore that:
-    it embedded one chunk per request in a loop, so the captain's 448-chunk paper
-    cost 448 sequential round trips — the dominant term in a 3m20s upload.
-
-    Two things this function refuses to assume:
-
-    - **That the response comes back in request order.** Each item carries an
-      ``index`` naming the input it belongs to, and that is what places the vector.
-      Order almost certainly is preserved, but "almost certainly" applied to a
-      chunk-to-vector mapping is a silent corruption: every chunk of the paper would
-      still be present, and every one of them would answer for a different chunk.
-    - **That a short response is a partial success.** A missing or duplicated index,
-      or a count that does not match the input, raises. Writing the vectors that did
-      arrive would leave the collection quietly wrong.
-
-    Raises:
-        RuntimeError: If the OpenAI client is not configured, the call fails, or the
-            response does not map one vector onto every input.
-    """
-    if not texts:
-        return []
-
-    client = _get_openai_client()
-    if not client:
-        raise RuntimeError("OpenAI client not configured. Set OPENAI_API_KEY environment variable.")
-
-    model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
-
-    try:
-        response = client.embeddings.create(
-            model=model,
-            input=[t.strip() for t in texts],
-        )
-        data = list(response.data)
-    except Exception as e:
-        raise RuntimeError(f"Failed to generate embeddings with model {model}: {e}")
-
-    if len(data) != len(texts):
-        raise RuntimeError(
-            f"Embedding model {model} returned {len(data)} vectors for "
-            f"{len(texts)} inputs"
-        )
-
-    ordered: List[Optional[List[float]]] = [None] * len(texts)
-    for position, item in enumerate(data):
-        # `index` is what the API promises; fall back to arrival order only when a
-        # client or a test double omits the field entirely.
-        idx = getattr(item, "index", None)
-        if idx is None:
-            idx = position
-        if not isinstance(idx, int) or not 0 <= idx < len(texts):
-            raise RuntimeError(
-                f"Embedding model {model} returned an out-of-range index {idx!r} "
-                f"for a batch of {len(texts)}"
-            )
-        if ordered[idx] is not None:
-            raise RuntimeError(
-                f"Embedding model {model} returned index {idx} twice in one batch"
-            )
-        ordered[idx] = item.embedding
-
-    missing = [i for i, v in enumerate(ordered) if v is None]
-    if missing:
-        raise RuntimeError(
-            f"Embedding model {model} returned no vector for input(s) {missing}"
-        )
-
-    return [v for v in ordered if v is not None]
-
-
-def _get_vector_size() -> int:
-    """Get or determine vector size by embedding a test string."""
-    global _vector_size
-
-    if _vector_size is not None:
-        return _vector_size
-
-    try:
-        # Embed a small test string to determine vector size
-        test_vector = _embed("test")
-        _vector_size = len(test_vector)
-        logger.info(f"Determined vector size: {_vector_size}")
-        return _vector_size
-
-    except Exception as e:
-        logger.error(f"Failed to determine vector size: {e}")
-        # Default size for text-embedding-3-small
-        _vector_size = 1536
-        logger.warning(f"Using default vector size: {_vector_size}")
-        return _vector_size
-
-
-def _ensure_payload_indexes(client: QdrantClient) -> None:
-    """
-    Ensure `pillar_id` is a keyword payload index on the collection.
-
-    Every read in this module filters by `pillar_id` — that is the namespace
-    isolation the whole module is built around. Qdrant Cloud enables strict
-    mode, whose `unindexed_filtering_retrieve: false` rejects a filtered query
-    on an unindexed key with `400 Bad Request: Index required but not found`.
-    Without this index the read path cannot work at all, however the query is
-    spelled.
-
-    Idempotent: the index is created only when the collection reports it
-    missing, so this is safe to call on every startup.
-    """
-    try:
-        schema = client.get_collection(COLLECTION_NAME).payload_schema or {}
-        if PILLAR_ID_FIELD in schema:
-            return
-
-        client.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name=PILLAR_ID_FIELD,
-            field_schema=models.PayloadSchemaType.KEYWORD,
-        )
-        logger.info(f"Created keyword payload index on '{PILLAR_ID_FIELD}'")
-
-    except Exception as e:
-        # Non-fatal here: writes do not need the index, and search_similar()
-        # raises with an actionable message if the index is genuinely absent.
-        logger.error(f"Failed to ensure payload index on '{PILLAR_ID_FIELD}': {e}")
+    return get_embedding_provider().embed_query(text.strip())
 
 
 def ensure_collections() -> None:
-    """
-    Ensure the nlp_pillars collection exists with proper configuration.
+    """Ensure the active model's collection, payload indexes, and alias exist.
 
-    Creates the collection with cosine distance and correct vector size if it doesn't exist,
-    and ensures the `pillar_id` payload index every filtered read depends on.
+    Does not embed and does not download weights: the provider's ``dims``
+    are known without loading the ONNX file. Failures are logged. Search
+    raises if the alias is actually missing; an unreachable server at
+    startup must not stop the process.
     """
     client = get_client()
     if client is None:
         logger.warning("Qdrant client not available. Cannot ensure collections.")
         return
 
-    logger.info(f"Ensuring collection '{COLLECTION_NAME}' exists")
-
     try:
-        # Check if collection exists
-        collections = client.get_collections().collections
-        collection_names = [col.name for col in collections]
+        from .embeddings import get_embedding_provider
 
-        if COLLECTION_NAME in collection_names:
-            logger.info(f"Collection '{COLLECTION_NAME}' already exists")
-            # Still check the index: collections created before this existed
-            # (the cloud one has 170 points and no payload index at all) would
-            # otherwise never get one.
-            _ensure_payload_indexes(client)
-            return
-
-        # Get vector size
-        vector_size = _get_vector_size()
-
-        # Create collection
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=models.VectorParams(
-                size=vector_size,
-                distance=models.Distance.COSINE
-            )
-        )
-
-        logger.info(f"Created collection '{COLLECTION_NAME}' with vector size {vector_size} and cosine distance")
-        _ensure_payload_indexes(client)
-
+        provider = get_embedding_provider()
+        ensure_index(client, provider.model_id, provider.dims)
     except Exception as e:
-        # Handle collection already exists error gracefully
-        if "already exists" in str(e).lower():
-            logger.info(f"Collection '{COLLECTION_NAME}' already exists (caught in exception)")
-            return
-        logger.error(f"Failed to ensure collection '{COLLECTION_NAME}': {e}")
-        # Don't raise - let the system continue without vector storage if needed
+        logger.error(f"Failed to ensure vector collection: {e}")
 
 
 def upsert_text(
     pillar_id: str,
     paper_id: str,
     full_text: str,
-    chunk_size: int = VECTOR_CHUNK_SIZE,
-    overlap: int = VECTOR_CHUNK_OVERLAP,
+    chunk_size: int = 0,
+    overlap: int = 0,
 ) -> int:
+    """Project ``paper_id``'s stored chunks into the vector indexes.
+
+    The persist stage has already written ``paper_chunks`` and
+    ``chunk_embeddings``. This reads those rows and upserts them. It does
+    not call an embedding API. ``chunk_size`` and ``overlap`` are accepted
+    so existing callers keep working; the stored chunker config is what
+    was used.
+
+    Returns how many of the paper's chunks the local index represents.
+    Already-projected chunks count, so a second run is not "zero chunks".
+
+    A missing local client returns 0 (the VECTORS stage treats that as
+    failure for non-empty text). A local server that is up but rejects the
+    write raises ``ProjectionError`` with the reason. A configured cloud
+    target that is down is logged and does not change the return.
+
+    Raises:
+        ProjectionError: stored rows are missing, or the local index failed.
     """
-    Chunk text, embed chunks, and upsert to vector store with pillar isolation.
+    del chunk_size, overlap  # stored chunks already used the vector chunker
 
-    Args:
-        pillar_id: Target pillar for namespace isolation
-        paper_id: Paper identifier
-        full_text: Text content to process
-        chunk_size: Maximum TOKENS per chunk, counted with the same encoding
-            EMBEDDING_MODEL uses (~250 tokens is ~1000 characters of prose).
-        overlap: TOKENS of overlap between consecutive chunks
-
-    Returns:
-        Number of chunks upserted, which is all of them or none. Embedding is
-        all-or-nothing (see the batching loop below), so a non-zero return means
-        the paper is fully represented in the collection; 0 means nothing was
-        written and the caller should report a failed vector stage.
-    """
-    client = get_client()
-    if client is None:
-        logger.warning("Qdrant client not available. Cannot upsert text.")
-        return 0
-
-    if not full_text or not full_text.strip():
+    if not full_text or not str(full_text).strip():
         logger.warning("Empty text provided for upsert")
         return 0
 
-    logger.info(f"Upserting text for paper {paper_id} in pillar {pillar_id}")
-
-    try:
-        # Chunk the text
-        chunks = chunk_text(full_text, chunk_size=chunk_size, chunk_overlap=overlap)
-
-        if not chunks:
-            logger.warning("No chunks generated from text")
-            return 0
-
-        # Embed in batches rather than one request per chunk. The per-chunk loop
-        # this replaced also swallowed a failed chunk and carried on, so a paper
-        # could be written to Qdrant with an arbitrary subset of itself embedded and
-        # still report a healthy-looking count. A failed batch now aborts the whole
-        # upsert: nothing is written, upsert_text returns 0, and the callers already
-        # treat 0 chunks from non-empty text as a failed VECTORS stage. Partial is
-        # the one outcome with no honest way to report it.
-        points = []
-
-        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
-            batch = chunks[start:start + EMBED_BATCH_SIZE]
-            vectors_for_batch = _embed_batch(batch)
-
-            for offset, (chunk, vector) in enumerate(zip(batch, vectors_for_batch)):
-                idx = start + offset
-
-                # Create deterministic UUID from hash
-                id_string = f"{pillar_id}|{paper_id}|{idx}"
-                hash_bytes = hashlib.sha1(id_string.encode()).digest()[:16]  # Take first 16 bytes
-                point_id = str(uuid.UUID(bytes=hash_bytes))
-
-                # Create point with payload
-                point = models.PointStruct(
-                    id=point_id,
-                    vector=vector,
-                    payload={
-                        "pillar_id": pillar_id,
-                        "paper_id": paper_id,
-                        "chunk_index": idx,
-                        "len": len(chunk)
-                    }
-                )
-
-                points.append(point)
-
-        if len(points) != len(chunks):
-            # Unreachable unless the loop above is edited into inconsistency; stated
-            # as a check rather than a comment because a chunk-to-vector mismatch is
-            # invisible in the stored data.
-            raise RuntimeError(
-                f"Embedded {len(points)} vectors for {len(chunks)} chunks of "
-                f"paper {paper_id}"
-            )
-
-        successful_embeds = len(points)
-
-        # Upsert points
-        client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=points
-        )
-
-        logger.info(f"Successfully upserted {successful_embeds} chunks for paper {paper_id} in pillar {pillar_id}")
-        return successful_embeds
-
-    except Exception as e:
-        logger.error(f"Failed to upsert text for paper {paper_id} in pillar {pillar_id}: {e}")
+    if get_client() is None:
+        logger.warning("Qdrant client not available. Cannot upsert text.")
         return 0
+
+    logger.info("Projecting stored embeddings for paper %s in pillar %s", paper_id, pillar_id)
+    projected = project_paper(pillar_id, paper_id)
+    logger.info(
+        "Local index represents %s chunk(s) of paper %s in pillar %s",
+        projected,
+        paper_id,
+        pillar_id,
+    )
+    return projected
 
 
 def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
     Search for similar text chunks within a pillar namespace.
-    
+
+    The query is embedded by the same provider that built the index.
+    Results come from the ``nlp_chunks`` alias on the local server.
+
     Args:
         pillar_id: Pillar to search within
         query_text: Text to find similar content for
         top_k: Maximum number of results to return
-        
+
     Returns:
         List of {"paper_id": str, "score": float} dictionaries,
         deduplicated by paper_id (keeping highest score) and limited to top_k
@@ -412,10 +184,10 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
     Raises:
         RuntimeError: If the query call does not match the installed
             qdrant-client's API, or the server rejects the request with a 4xx
-            (e.g. the `pillar_id` payload index is missing under strict mode).
+            (e.g. the ``pillar_id`` payload index is missing under strict mode).
             Both mean this module disagrees with its library or its server —
             not a search that found nothing — so neither may be reported as an
-            empty result set. See the comments below.
+            empty result set.
     """
     client = get_client()
     if client is None:
@@ -428,10 +200,10 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
 
     logger.info(f"Searching for similar text in pillar {pillar_id} with top_k={top_k}")
 
-    # Embedding is a network call to OpenAI: a genuine runtime failure, and
-    # degrading to "no vector candidates" is the right answer for it.
+    # Embedding is a model call: a genuine runtime failure, and degrading
+    # to "no vector candidates" is the right answer for it.
     try:
-        query_vector = _embed(query_text.strip())
+        query_vector = _query_vector(query_text.strip())
     except Exception as e:
         logger.error(f"Failed to embed query text for pillar {pillar_id}: {e}")
         return []
@@ -497,7 +269,7 @@ def search_similar(pillar_id: str, query_text: str, top_k: int = 5) -> List[Dict
         )
 
     # Deduplicate by paper_id, keeping highest score
-    paper_scores = {}
+    paper_scores: Dict[str, float] = {}
     for hit in hits:
         paper_id = (hit.payload or {}).get("paper_id")
         score = hit.score
@@ -519,24 +291,3 @@ def set_client(client: Optional[QdrantClient]) -> None:
     """Set the client singleton (for testing)."""
     global _client
     _client = client
-
-
-def set_openai_client(client: Optional[OpenAI]) -> None:
-    """Set the OpenAI client singleton (for testing)."""
-    global _openai_client
-    _openai_client = client
-
-
-def reset_vector_size() -> None:
-    """Reset cached vector size (for testing)."""
-    global _vector_size
-    _vector_size = None
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
-
-    # Example operations would go here for testing
-    print("Vector store module loaded successfully")

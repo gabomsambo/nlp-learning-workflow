@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     supabase_key: Optional[str] = Field(None, env="SUPABASE_KEY")
     qdrant_url: Optional[str] = Field(None, env="QDRANT_URL")
     qdrant_api_key: Optional[str] = Field(None, env="QDRANT_API_KEY")
+    # Optional second projection. Empty means the cloud target stays unconfigured.
+    qdrant_cloud_url: Optional[str] = Field(None, env="QDRANT_CLOUD_URL")
+    qdrant_cloud_api_key: Optional[str] = Field(None, env="QDRANT_CLOUD_API_KEY")
     searxng_url: Optional[str] = Field(None, env="SEARXNG_URL")
 
     # Semantic Scholar API (optional, for higher rate limits)
@@ -49,12 +52,10 @@ class Settings(BaseSettings):
 
     # Application Settings with defaults
     default_model: str = Field("gpt-4o", env="DEFAULT_MODEL")
-    # Postgres chunk embeddings. Default is the pinned local bge model.
-    # vectors.py does not read this field: it still calls OpenAI for the
-    # Qdrant upsert, using EMBEDDING_MODEL from the environment when that
-    # value is set (see nlp_pillars/embeddings.py). A text-embedding-* value
-    # left in the environment keeps that Qdrant path and does not switch the
-    # Postgres store off bge unless EMBEDDING_PROVIDER=openai.
+    # Postgres chunk embeddings, and the vectors the projector copies into
+    # Qdrant. Default is the pinned local bge model. EMBEDDING_PROVIDER=openai
+    # stores OpenAI vectors and projects those. A text-embedding-* value of
+    # EMBEDDING_MODEL with the local provider does not switch the store.
     embedding_provider: str = Field("local", env="EMBEDDING_PROVIDER")
     embedding_model: str = Field("BAAI/bge-base-en-v1.5", env="EMBEDDING_MODEL")
     log_level: str = Field("INFO", env="LOG_LEVEL")

@@ -472,7 +472,8 @@ def test_status_ok_and_scheduler_exited_zero_is_normal(launcher):
     assert "SearXNG" in out
     assert "IndexTTS" in out and "DOWN" in out
     assert "./workstation up --tts" in out
-    assert "Qdrant Cloud" in out and "reachable" in out
+    assert "Qdrant" in out and "reachable" in out
+    assert "Qdrant Cloud" in out and "not configured" in out
     assert "Exited (0) is normal" in out
     assert "\x1b" not in out
 
@@ -480,7 +481,11 @@ def test_status_ok_and_scheduler_exited_zero_is_normal(launcher):
 def test_status_qdrant_suspended_and_scheduler_crash(launcher):
     proc = launcher["run"](
         ["status"],
-        extra={"WORKSTATION_QDRANT": "suspended", "WORKSTATION_SCHEDULER": "crash"},
+        extra={
+            "WORKSTATION_QDRANT": "suspended",
+            "WORKSTATION_SCHEDULER": "crash",
+            "QDRANT_CLOUD_URL": "http://qdrant.example.test",
+        },
     )
     assert proc.returncode == 0, proc.stderr
     assert "suspended free-tier cluster" in proc.stdout

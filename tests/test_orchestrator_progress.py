@@ -270,10 +270,9 @@ def test_vector_store_failure_marks_the_stage_failed_not_completed(
 ):
     """0 chunks written from non-empty text is a failure, and must say so.
 
-    vectors.upsert_text() swallows every exception and returns 0, so an unreachable
-    Qdrant is indistinguishable from an empty paper at the call site. Reporting that
-    as a completed stage is how a dead vector store stayed invisible: the UI showed
-    'vectors ● 0 chunks' and the paper silently never entered semantic search.
+    An unconfigured local client returns 0. Reporting that as a completed stage
+    is how a dead vector store stayed invisible: the UI showed 'vectors ● 0 chunks'
+    and the paper silently never entered semantic search.
     """
     mock_summ.run.return_value = note
     mock_synth.run.return_value = lesson
@@ -288,6 +287,39 @@ def test_vector_store_failure_marks_the_stage_failed_not_completed(
     detail = next(d for n, s, d in recorder.events
                   if n == StageName.VECTORS.value and s == StageStatus.FAILED.value)
     assert "vector store unavailable" in detail
+
+
+@patch("nlp_pillars.orchestrator.vectors")
+@patch("nlp_pillars.orchestrator.db")
+@patch("nlp_pillars.orchestrator.QuizAgent")
+@patch("nlp_pillars.orchestrator.SynthesisAgent")
+@patch("nlp_pillars.orchestrator.SummarizerAgent")
+@patch("nlp_pillars.orchestrator.DiscoveryAgent")
+def test_local_projection_error_fails_vectors_and_keeps_the_paper(
+    mock_discovery, mock_summ, mock_synth, mock_quiz, mock_db, mock_vectors,
+    paper, parsed, note, lesson, cards,
+):
+    """A down local index fails VECTORS and still returns the lesson and quiz."""
+    from nlp_pillars.projector import ProjectionError
+
+    mock_summ.run.return_value = note
+    mock_synth.run.return_value = lesson
+    mock_quiz.run.return_value = cards
+    mock_vectors.upsert_text.side_effect = ProjectionError(
+        "suspended (plain-text 404); this target stays behind until the cluster answers"
+    )
+
+    recorder = StageRecorder()
+    orch = _build(on_stage=recorder, parsed=parsed, paper=paper)
+    returned_lesson, returned_cards = orch._process_paper(PILLAR, paper)
+
+    assert returned_lesson is lesson
+    assert returned_cards is cards
+    assert StageName.VECTORS.value in recorder.failed()
+    detail = next(d for n, s, d in recorder.events
+                  if n == StageName.VECTORS.value and s == StageStatus.FAILED.value)
+    assert "suspended" in detail
+    mock_db.mark_processed.assert_called_once()
 
 
 @patch("nlp_pillars.orchestrator.vectors")

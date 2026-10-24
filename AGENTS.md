@@ -31,16 +31,13 @@ you must not stack your own review or PR steps on top of it.
 
 ## Running the stack
 
-`docker compose up -d --build` starts **five** services: `webui` (FastAPI on :8000),
-`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080) and
-`scheduler` (no ports). The build is slow and the image is large — `requirements.txt`
-pulls torch and layoutparser.
+`docker compose up -d --build` starts **six** services: `webui` (FastAPI on :8000),
+`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080),
+`qdrant` (host **6333** / **6334**) and `scheduler` (no ports). The build is slow
+and the image is large — `requirements.txt` pulls torch and layoutparser. Search
+reads the local Qdrant. See "Which Qdrant the app talks to".
 
-A sixth service, the local `qdrant`, is defined but sits behind the `local-vectors`
-compose profile and is **not** started: the app writes vectors to Qdrant Cloud. See
-"Which Qdrant the app talks to".
-
-Two of those five look wrong in `docker compose ps` and are not:
+Two of them look wrong in `docker compose ps` and are not:
 
 - **`scheduler` shows `Exited (0)`** whenever `SCHEDULE_ENABLED=false`, which is the
   committed default. `scheduler.py::main()` returns 0 immediately in that case, and the
@@ -261,69 +258,73 @@ lookup was expected but failed.
 
 ## Which Qdrant the app talks to
 
-**Qdrant Cloud**, as of 2026-08-29 — cluster `nlp-learning-workflow-retry`, aws
-eu-west-1, free/cost-optimised tier.
+**Local Qdrant**, the compose `qdrant` service. Search, discovery, and the
+ingest/upload vector stage read and write that server. Postgres
+(`paper_chunks` + `chunk_embeddings`) is the source of truth. Both Qdrant
+servers are rebuildable copies.
 
-This reverses the 2026-08-16 entry that used to be here. That entry said the cloud
-cluster "was suspended and no longer exists". On 2026-08-29 the cluster was only
-suspended: unsuspending it took 20 seconds, and the `nlp_pillars` collection came
-back whole — 170 points, status green, `pillar_id` payload index intact. Qdrant's
-current docs say a free-tier cluster is **suspended after 1 week of inactivity and
-deleted after 4 weeks** (https://qdrant.tech/documentation/cloud/create-cluster/,
-checked 2026-10-23). Resume a suspended cluster while it still exists; after the
-deletion window the cluster and its points are gone.
+`QDRANT_URL` on `webui` and `scheduler` is hardcoded to `http://qdrant:6333`
+in `docker-compose.yml` (`environment:` beats `env_file:`), with
+`QDRANT_API_KEY` empty. A leftover cloud URL in `.env` must not win. The
+optional cloud copy is `QDRANT_CLOUD_URL` / `QDRANT_CLOUD_API_KEY` (empty
+means that target is unconfigured). Move an old cloud endpoint out of
+`QDRANT_URL` and into those two names when the stack is next recreated.
+Both services `depends_on` qdrant `service_healthy`. The volume is still
+`nlp_qdrant_data`.
 
-The reason it read as gone is worth keeping, because it will happen again: **a suspended
-cluster does not fail like a dead host.** DNS still resolves, the regional ingress still
-terminates TLS, and **every** path — `/`, `/healthz`, `/collections` alike — answers a
-plain-text `404 page not found`. A live cluster answers `/` with a JSON banner naming the
-version. Read that 404 as "no cluster routed behind this UUID"; it is neither a wrong URL
-nor proof of deletion.
+The image is pinned to `qdrant/qdrant:v1.19.2`. On 2026-10-24 the Cloud
+management API returned a cluster list with `totalSize` 0, and the configured
+data-plane URL reset the connection instead of answering with a JSON version
+banner, so there was no live server version to copy. The pinned client is
+`qdrant-client==1.19.0`. Qdrant wants the client within one minor of the
+server. v1.19 is the minor a cluster created in the 2026-08 window would have
+been running; v1.19.2 (2026-10-05) is the latest patch. v1.20.0 is what Cloud
+offers for a new cluster and is one minor ahead of the client, so local stays
+on 1.19. Do not float the tag back to `latest`.
 
-`QDRANT_URL` and `QDRANT_API_KEY` are set on **both** `webui` and `scheduler`, and both
-are interpolated from the single `.env` entry rather than hardcoded per service. That is
-deliberate: the two containers share one collection and must never disagree about which
-server holds it, and one value in one file makes them identical by construction where two
-copies only look identical until someone edits one. Both use compose's required-variable
-form (`${QDRANT_URL:?...}`) because the failure mode of an unset value is silent —
-`vectors.py:45-47` logs a WARNING and disables vector operations, so a nightly run would
-finish, report success, and write no embeddings at all. Failing at `docker compose up` is
-the loud version of that. The API key is a live credential: it lives in `.env`, never in
-`docker-compose.yml`.
+`python -m nlp_pillars.cli vectors sync --target local|cloud|all` copies
+stored embeddings into a per-model collection
+(`chunks__<sanitized model id>__<dims>`) and points the `nlp_chunks` alias at
+it. Search reads the alias. Point id is `uuid5(chunk_id)` (namespace frozen
+in `nlp_pillars/projector.py`). Payload is `pillar_id`, `paper_id`,
+`chunk_id`, `chunk_index`, and the chunk text. Keyword payload indexes on
+`pillar_id` and `paper_id`. `vector_index_state`
+(`docs/migrations/019_vector_index_state.sql`, hand-applied, no foreign key
+to `paper_chunks`) records which chunks each target has. A second sync with
+nothing new writes nothing. Chunks deleted by re-ingest leave a state row;
+the next sync deletes those points. `--rebuild` upserts every stored chunk.
+`--dry-run` prints counts and writes nothing.
 
-The local `qdrant` service is still defined, still backed by `nlp_qdrant_data`, and is
-now behind the **`local-vectors` compose profile**, so a plain `up -d` skips it. Keeping
-it costs nothing and it is the offline option; leaving it *running* would have meant an
-idle container holding 6333/6334 and looking like the thing the app uses. The
-`depends_on: qdrant` entries on `webui` and `scheduler` were removed in the same change —
-a dependency on a service the app no longer reads is worse than no dependency at all.
-Start it deliberately with `docker compose --profile local-vectors up -d qdrant`.
+A dead or suspended cloud does not fail the run. The projector probes, and a
+plain-text `404 page not found` on collection listing is "this target stays
+behind". No `vector_index_state` rows are written for that attempt, so the
+next sync retries. Local failure raises `ProjectionError` and fails the
+VECTORS stage. `upsert_text` no longer calls OpenAI: persist has already
+written chunks and embeddings, and the vector stage projects them. Missing
+`QDRANT_URL` still returns 0 from `upsert_text` (the unconfigured path).
 
-Both stores hold **orphaned** points: the papers they describe were rows in the reaped
-Supabase database, and `GET /api/pillars/{id}/search` drops any vector hit whose
-`paper_id` is missing from the `papers` table (`if not paper: continue` in
-`webui/routers/api/pillars.py`). So the points are real, count toward the collection
-total, and are invisible in the UI until those papers are re-ingested. A low visible
-result count is not evidence a write failed — scroll the collection and group by
-`paper_id` before concluding anything. Do not delete them to tidy up.
+Qdrant's current docs say a free-tier cluster is **suspended after 1 week of
+inactivity and deleted after 4 weeks**
+(https://qdrant.tech/documentation/cloud/create-cluster/, checked 2026-10-23).
+**A suspended cluster does not fail like a dead host.** DNS still resolves,
+the regional ingress still terminates TLS, and **every** path answers a
+plain-text `404 page not found`. A live server answers `/` with a JSON banner
+naming the version. Read that 404 as "no cluster routed behind this UUID".
 
-**Free-tier clusters get suspended for inactivity, and this project has already lost one
-cluster outright and had a second suspended.** Nothing currently notices: the app finds
-out at the next ingest, as a stage failure. Making it loud is cheap and unbuilt — the
-distinction above (plain-text 404 on every path vs. a JSON banner on `/`) is a two-line
-check, and `/health` is the obvious place for it.
+`GET /api/pillars/{id}/search` still drops a hit whose `paper_id` is missing
+from `papers`. The old `nlp_pillars` collection (1536-d, OpenAI) is not what
+search reads now. `/health` still labels its `QDRANT_URL` probe "Qdrant Cloud";
+that probe is the local server. The chip is left for the health work.
 
-`nlp_pillars/vectors.py::ensure_collections()` creates the single `nlp_pillars` collection
-(1536-dim, cosine) **and** the `pillar_id` keyword payload index. It runs from
-`VectorSearchTool.__init__`, so constructing an `Orchestrator` is enough to create both.
-The cloud cluster is a small free tier — do not bulk-load it.
+`ensure_collections()` creates the active model's collection, both payload
+indexes, and the alias. It runs from `VectorSearchTool.__init__`. It does not
+download the embedding weights: dims are known without loading ONNX.
 
-That index is not optional. The cloud cluster runs Qdrant **strict mode**
-(`unindexed_filtering_retrieve: false`), which answers a filtered query on an unindexed
-payload key with `400 Bad Request: Index required but not found`. Every read in
-`vectors.py` filters by `pillar_id` — that is the namespace isolation — so without the
-index no search can succeed however it is spelled. Only `pillar_id` is indexed; filtering
-or scrolling by `paper_id` still 400s, so filter that one client-side.
+Both indexes are required under Qdrant **strict mode**
+(`unindexed_filtering_retrieve: false`), which answers a filtered query on an
+unindexed payload key with `400 Bad Request: Index required but not found`.
+Search filters by `pillar_id`. Deleting one paper's stale points filters by
+`paper_id`. Without that index the delete 400s on Cloud.
 
 Read the collection with `client.query_points()`. `search()`, `search_batch()`,
 `search_groups()`, `recommend()` and `discover()` were all removed in qdrant-client 1.19
@@ -341,38 +342,36 @@ Mock the client with `Mock(spec=QdrantClient)` in tests. A bare `Mock()` answers
 attribute, so `tests/test_vectors.py` passed green for months against a read path calling
 a method the installed library no longer had.
 
-`upsert_text()` embeds in **batches of `EMBED_BATCH_SIZE` (100)**, not one request per
-chunk — the captain's 448-chunk paper cost 448 sequential OpenAI round trips and was the
-dominant term in a 3m20s upload. Two contracts hold it together and neither is optional:
-`_embed_batch()` places each vector by the response item's `index` rather than trusting
-arrival order (a reshuffle is invisible in the stored data — payloads carry no chunk
-text), and any batch failure abandons the **whole** upsert. The per-chunk loop it
-replaced logged a warning and `continue`d, so a paper could be written with an arbitrary
-subset of itself embedded and still return a plausible count. `upsert_text` is therefore
-all-or-nothing: a non-zero return means the paper is fully represented, 0 means nothing
-was written.
+The projector upserts in batches of 64 and abandons the rest of the batch loop
+on failure. Points that did land are recorded in `vector_index_state`, so the
+retry does not rewrite them. A non-zero return from `upsert_text` means the
+local index represents every stored chunk of that paper, including chunks that
+were already projected. 0 means the local client is not configured, or the
+text was empty.
 
-Stored payloads carry only `pillar_id`, `paper_id`, `chunk_index` and `len` — **no chunk
-text**. `search_similar()` is a paper-level discovery API, not a snippet API. Postgres
-is the source of truth for that text: `paper_texts` (paper_id, full_text, extractor,
-extracted_at) and `paper_chunks` (text, token count, the semchunk 250/25 cl100k config
-and version, content hash; unique on paper_id, chunk_index, chunker version).
-`docs/migrations/017_paper_text.sql` is hand-applied. Ingest, daily processing and
-upload write both tables with the chunker config `upsert_text` uses, replacing a
-paper's chunks in one transaction on re-ingest. Vectors for those chunks are
-`chunk_embeddings` (`docs/migrations/018_chunk_embeddings.sql`, also hand-applied):
-one `real[]` (float32) per `(chunk_id, model_id)`, not a column on `paper_chunks`
-and not pgvector. The default provider is local `BAAI/bge-base-en-v1.5` (fastembed
+`search_similar()` embeds the query with the same provider that stored
+`chunk_embeddings` (`embed_query`, so the bge query prefix is applied) and
+reads the `nlp_chunks` alias. It is still a paper-level discovery API: the
+payload now carries chunk text, and the route still returns papers. Postgres
+is the source of truth for that text: `paper_texts` and `paper_chunks`
+(`docs/migrations/017_paper_text.sql`, hand-applied). Ingest, daily processing
+and upload replace a paper's chunks in one transaction on re-ingest. Vectors
+for those chunks are `chunk_embeddings`
+(`docs/migrations/018_chunk_embeddings.sql`, also hand-applied): one `real[]`
+(float32) per `(chunk_id, model_id)`, not a column on `paper_chunks` and not
+pgvector. The default provider is local `BAAI/bge-base-en-v1.5` (fastembed
 ONNX, 768-d, revision pinned in `nlp_pillars/embeddings.py`);
 `EMBEDDING_PROVIDER=openai` stores `text-embedding-3-small` instead. Weights
 download to `EMBEDDING_CACHE_DIR` (compose: `/app/data/embedding-models` on the
-uploads volume, about 208 MB the first time), not into the image. `upsert_text`
-still embeds for Qdrant with OpenAI and is not a projection of these rows.
-Ingest and upload embed new chunks after the text write and fail the persist
-stage if that errors. `python -m nlp_pillars.cli embeddings backfill` fills chunks
-that lack a row for the active model (`--dry-run` prints counts only).
+uploads volume, about 208 MB the first time), not into the image.
+`python -m nlp_pillars.cli embeddings backfill` fills chunks that lack a row
+for the active model (`--dry-run` prints counts only).
 `python -m nlp_pillars.cli text backfill` re-extracts retained uploads and
 re-downloads URL papers (`--dry-run` prints counts only).
+`python -m nlp_pillars.cli vectors sync` projects those rows into Qdrant.
+**019 (`vector_index_state`) must be applied by hand** before that sync, or
+before an ingest projects; until it is, the call names
+`docs/migrations/019_vector_index_state.sql`.
 
 The learner graph is the same kind of projection. `concepts`, `paper_concepts`
 and `graph_edges` (`docs/migrations/020_knowledge_graph.sql`, hand-applied) are
@@ -589,9 +588,12 @@ told the user:
   real failures. The route answers **503** for those, because the browser treats 404 as
   "forget this run" and one blip used to detach the UI from a live job.
 
-`upsert_text()` returning 0 is ambiguous — empty text and a dead Qdrant look identical —
-so `_process_paper` marks VECTORS **failed** when it gets 0 chunks from non-empty text.
-Non-fatal: the lesson and quiz are already written.
+`upsert_text()` returning 0 is the unconfigured local client, or empty text.
+`_process_paper` marks VECTORS **failed** when it gets 0 chunks from non-empty
+text. A local `ProjectionError` (server down, missing embeddings, missing
+019) is caught there and fails the same stage with the message, without
+aborting the paper. Non-fatal: the lesson and quiz are already written. A
+cloud outage does not raise.
 
 Discovery has the same ambiguity in three places, and resolves it the same way: **a
 discovery step that says "0 found" means genuinely zero results, never "this failed".**
@@ -751,11 +753,10 @@ Two others of the same shape were fixed in PR #17, and the resulting contracts m
   `add_paper()` catches the `ValueError` and returns `False`, so a daily run records the
   paper as failed and surfaces it rather than aborting mid-run.
 
-`upsert_text()` wraps its whole body in `except Exception: return 0`, and that body calls
-`chunk_text()` — so the `RuntimeError` PR #8 added there is caught and reported as "0 chunks
-upserted". Both `upsert_text()` callers (`orchestrator.py`, `upload_service.py`) invoke it
-un-guarded, so making it propagate would abort a daily run mid-paper. Left alone; know that
-a chunker contract break shows up here as a zero, not an exception.
+`upsert_text()` does not chunk and does not embed. Chunker failures happen in
+persist (`replace_paper_text`). A local projection error raises `ProjectionError`;
+`_process_paper` and the upload job catch it at the VECTORS stage so the paper
+is still saved. Cloud errors are logged and that target stays behind.
 
 `webui/routers/api/script_download.py` is dead code and must **not** be registered in
 `webui/app.py`: importing it aborts application startup (FastAPI rejects its

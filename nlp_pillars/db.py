@@ -1069,6 +1069,257 @@ def embed_paper_chunks(paper_id: str) -> int:
     return embed_paper(paper_id)
 
 
+def _projection_store_error(error: Any, action: str):
+    """Name migration 019 when the projection table or its functions are missing."""
+    from .projector import MIGRATION, ProjectionError
+
+    text = str(error)
+    lowered = text.lower()
+    missing = any(
+        name in lowered
+        for name in (
+            "vector_index_state",
+            "chunks_with_embeddings",
+            "projection_stale_chunks",
+        )
+    ) and any(
+        token in lowered
+        for token in ("pgrst202", "pgrst205", "pgrst204", "does not exist", "schema cache", "404")
+    )
+    hint = f" Apply {MIGRATION} by hand." if missing else ""
+    return ProjectionError(f"{action}: {text}.{hint}")
+
+
+def _projection_page(fn: str, params: Dict[str, Any], action: str) -> List[Dict[str, Any]]:
+    try:
+        client = get_client()
+        response = client.rpc(fn, params)
+    except Exception as e:
+        raise _projection_store_error(e, action) from e
+    if response['error']:
+        raise _projection_store_error(response['error'], action)
+    data = response['data']
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        from .projector import MIGRATION, ProjectionError
+        raise ProjectionError(
+            f"{fn} returned {data!r}, not a row list. Apply {MIGRATION} by hand."
+        )
+    return data
+
+
+def list_chunks_with_embeddings(
+    model_id: str,
+    paper_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Chunks that already have ``model_id``, joined to the paper's pillar.
+
+    ``paper_id`` limits the read to one paper. The walk pages the SQL
+    function so a long library is not one response.
+
+    Raises:
+        ProjectionError: the read failed. A missing function names migration 019.
+    """
+    if not model_id or not str(model_id).strip():
+        from .projector import ProjectionError
+        raise ProjectionError("projection read missing model_id")
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    previous_first = None
+    while True:
+        params: Dict[str, Any] = {
+            'p_model_id': model_id,
+            'p_limit': _PAGE_SIZE,
+            'p_offset': offset,
+        }
+        if paper_id is not None:
+            params['p_paper_id'] = paper_id
+        page = _projection_page(
+            'chunks_with_embeddings',
+            params,
+            f"Could not list embeddings for {model_id}",
+        )
+        if not page:
+            return rows
+        marker = page[0].get('chunk_id')
+        if marker is not None and marker == previous_first:
+            from .projector import ProjectionError
+            raise ProjectionError(
+                f"Reading embeddings for {model_id} did not advance past offset {offset}"
+            )
+        previous_first = marker
+        rows.extend(page)
+        if len(page) < _PAGE_SIZE:
+            return rows
+        offset += len(page)
+
+
+def list_projection_state(target: str, model_id: str) -> List[str]:
+    """Chunk ids already projected to ``target`` for ``model_id``.
+
+    Raises:
+        ProjectionError: the read failed. A missing table names migration 019.
+    """
+    rows: List[str] = []
+    offset = 0
+    previous_first = None
+    while True:
+        try:
+            client = get_client()
+            response = (
+                client.table('vector_index_state')
+                .select('chunk_id')
+                .eq('target', target)
+                .eq('model_id', model_id)
+                .order('chunk_id')
+                .limit(_PAGE_SIZE)
+                .offset(offset)
+                .execute()
+            )
+        except Exception as e:
+            raise _projection_store_error(
+                e, f"Could not read projection state for {target}"
+            ) from e
+        if response['error']:
+            raise _projection_store_error(
+                response['error'],
+                f"Could not read projection state for {target}",
+            )
+        page = response['data'] or []
+        if not page:
+            return rows
+        marker = page[0].get('chunk_id')
+        if marker is not None and marker == previous_first:
+            from .projector import ProjectionError
+            raise ProjectionError(
+                f"Reading projection state for {target} did not advance past offset {offset}"
+            )
+        previous_first = marker
+        rows.extend(str(row['chunk_id']) for row in page if row.get('chunk_id'))
+        if len(page) < _PAGE_SIZE:
+            return rows
+        offset += len(page)
+
+
+def list_projection_stale(target: str, model_id: str) -> List[str]:
+    """Projected chunk ids whose ``paper_chunks`` row is gone.
+
+    Raises:
+        ProjectionError: the read failed. A missing function names migration 019.
+    """
+    rows: List[str] = []
+    offset = 0
+    previous_first = None
+    while True:
+        page = _projection_page(
+            'projection_stale_chunks',
+            {
+                'p_target': target,
+                'p_model_id': model_id,
+                'p_limit': _PAGE_SIZE,
+                'p_offset': offset,
+            },
+            f"Could not list stale projections for {target}",
+        )
+        if not page:
+            return rows
+        marker = page[0].get('chunk_id')
+        if marker is not None and marker == previous_first:
+            from .projector import ProjectionError
+            raise ProjectionError(
+                f"Reading stale projections for {target} did not advance past offset {offset}"
+            )
+        previous_first = marker
+        rows.extend(str(row['chunk_id']) for row in page if row.get('chunk_id'))
+        if len(page) < _PAGE_SIZE:
+            return rows
+        offset += len(page)
+
+
+def mark_projection_state(target: str, model_id: str, chunk_ids: List[str]) -> None:
+    """Record that these chunks were upserted to ``target``. Idempotent.
+
+    Raises:
+        ProjectionError: the write failed. A missing table names migration 019.
+    """
+    from .projector import indexed_at_now
+
+    ids = [str(chunk_id) for chunk_id in chunk_ids if chunk_id]
+    if not ids:
+        return
+    stamped = indexed_at_now()
+    client = get_client()
+    for start in range(0, len(ids), _PAGE_SIZE):
+        batch = ids[start:start + _PAGE_SIZE]
+        rows = [
+            {
+                'target': target,
+                'chunk_id': chunk_id,
+                'model_id': model_id,
+                'indexed_at': stamped,
+            }
+            for chunk_id in batch
+        ]
+        try:
+            response = client.client.post(
+                f"{client.base_url}/vector_index_state",
+                params={'on_conflict': 'target,chunk_id,model_id'},
+                json=rows,
+                headers={
+                    **client.headers,
+                    'Prefer': 'resolution=merge-duplicates,return=minimal',
+                },
+            )
+        except Exception as e:
+            raise _projection_store_error(
+                e, f"Could not record projection state for {target}"
+            ) from e
+        if response.status_code >= 400:
+            try:
+                error = response.json()
+            except Exception:
+                error = response.text[:500]
+            raise _projection_store_error(
+                error, f"Could not record projection state for {target}"
+            )
+
+
+def forget_projection_state(target: str, model_id: str, chunk_ids: List[str]) -> None:
+    """Drop state rows after the Qdrant points were deleted.
+
+    Raises:
+        ProjectionError: the delete failed. A missing table names migration 019.
+    """
+    ids = [str(chunk_id) for chunk_id in chunk_ids if chunk_id]
+    if not ids:
+        return
+    client = get_client()
+    for start in range(0, len(ids), _PAGE_SIZE):
+        batch = ids[start:start + _PAGE_SIZE]
+        try:
+            response = client.client.delete(
+                f"{client.base_url}/vector_index_state",
+                params={
+                    'target': f'eq.{target}',
+                    'model_id': f'eq.{model_id}',
+                    'chunk_id': 'in.(' + ','.join(batch) + ')',
+                },
+            )
+        except Exception as e:
+            raise _projection_store_error(
+                e, f"Could not drop projection state for {target}"
+            ) from e
+        if response.status_code >= 400:
+            try:
+                error = response.json()
+            except Exception:
+                error = response.text[:500]
+            raise _projection_store_error(
+                error, f"Could not drop projection state for {target}"
+            )
+
+
 def update_paper_metadata(paper_id: str, fields: Dict[str, Any]) -> bool:
     """Update only the named metadata columns on an existing paper row."""
     if not fields:

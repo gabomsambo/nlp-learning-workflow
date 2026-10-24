@@ -93,34 +93,41 @@ services:
     restart: unless-stopped
 
   # ============================================
-  # Qdrant Vector Database (Local) — DEFINED BUT NOT STARTED BY DEFAULT
+  # Qdrant Vector Database (Local) — always on
   #
-  # As of 2026-08-29 the app talks to Qdrant Cloud again (see the QDRANT block
-  # on `webui`), so this service has no consumer. It is kept rather than
-  # deleted because it is the offline option and because `nlp_qdrant_data`
-  # still holds vectors from earlier local runs.
+  # Search and the local projection read this server. Qdrant Cloud is a
+  # second, optional copy (QDRANT_CLOUD_URL), not this service.
   #
-  # The `profiles:` key is what makes "unused" structurally true instead of
-  # merely documented: a service with a profile is skipped by a plain
-  # `docker compose up -d`, so an idle container cannot sit there holding
-  # 6333/6334 and looking like the thing the app is using. Nothing silently
-  # depends on it — the `depends_on: qdrant` entries on webui and scheduler
-  # were removed in the same change.
+  # Image pin, determined 2026-10-24: the pinned client is qdrant-client
+  # 1.19.0 (requirements.txt). Qdrant asks that the client stay within one
+  # minor of the server. The Cloud management API for this account returned
+  # a cluster list with totalSize 0 (no cluster left to copy a version
+  # from), and the data-plane URL reset the connection instead of answering
+  # with a JSON version banner. v1.19.0 of the server shipped 2026-08-04,
+  # which is the minor a cluster created in the 2026-08 window would have
+  # started on. v1.19.2 (2026-10-05) is the latest patch on that minor.
+  # v1.20.0 (2026-10-22) is what Cloud offers for a brand-new cluster and is
+  # one minor ahead of the pinned client, so local stays on 1.19. Tag:
+  # qdrant/qdrant:v1.19.2
   #
-  # To run it (offline work, or inspecting the old local vectors):
-  #     docker compose --profile local-vectors up -d qdrant
-  # Pointing the app back at it means changing QDRANT_URL/QDRANT_API_KEY in
-  # .env for BOTH webui and scheduler and restoring both depends_on entries.
+  # The image has bash and no curl/wget. /readyz answers 200 once shards
+  # are ready. Do not float this tag: `latest` moved to 1.20 within days
+  # of this pin.
   # ============================================
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.19.2
     container_name: nlp_qdrant
-    profiles: ["local-vectors"]
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf \"GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && grep -q \"200 OK\" <&3'"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
 
   # ============================================
@@ -157,41 +164,28 @@ services:
       # Overrides for Docker networking. Values set here beat anything in the
       # env_file above, which matters for POSTGREST_URL in particular.
       #
-      # QDRANT: back on Qdrant Cloud as of 2026-08-29. This reverses the
-      # 2026-08-16 note that used to live here, which said the cloud cluster
-      # "no longer exists" and hardcoded `http://qdrant:6333` on both services.
-      # That was wrong: the free-tier cluster had been SUSPENDED for inactivity,
-      # not deleted. Unsuspending it took 20 seconds and the `nlp_pillars`
-      # collection came back intact — 170 points, status green, pillar_id
-      # payload index present.
+      # QDRANT: the app reads the local server. Cloud is optional
+      # (QDRANT_CLOUD_URL / QDRANT_CLOUD_API_KEY). A suspended cloud cluster
+      # does not fail like a dead host: DNS still resolves and every path
+      # answers plain-text `404 page not found`. A live server answers `/`
+      # with a JSON banner. The projector treats that 404 as "this target
+      # stays behind" and retries on the next sync. It does not fail the run.
       #
-      # A suspended cluster does not fail like a dead host, which is why it read
-      # as gone: DNS still resolves, the regional ingress still terminates TLS,
-      # and EVERY path — `/`, `/healthz`, `/collections` alike — answers a
-      # plain-text `404 page not found`. A live cluster answers `/` with a JSON
-      # banner. Read that 404 as "no cluster routed behind this UUID", never as
-      # "wrong endpoint".
-      #
-      # These are interpolated from .env rather than hardcoded, and that is the
-      # point: `webui` and `scheduler` share one Qdrant collection and must
-      # never disagree about which server holds it. One value in one file makes
-      # them identical by construction; two hardcoded copies only look identical
-      # until someone edits one of them. The API key is a live credential and
-      # must never be written into this file.
-      #
-      # `:?` (required-variable) rather than a default, because the failure mode
-      # of an unset QDRANT_URL is silent: nlp_pillars/vectors.py:45-47 logs a
-      # WARNING and disables vector operations, so a daily run would complete,
-      # report success, and write no embeddings at all. Failing at
-      # `docker compose up` is the loud version of that.
-      QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
-      QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
+      # Local Qdrant, hardcoded so a leftover cloud URL in .env cannot point
+      # the container at Cloud. `environment:` beats `env_file:`. Both webui
+      # and scheduler use this same value; they share the local collection.
+      # The cloud copy is optional and read only by the projector.
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_API_KEY: ""
+      QDRANT_CLOUD_URL: "${QDRANT_CLOUD_URL:-}"
+      QDRANT_CLOUD_API_KEY: "${QDRANT_CLOUD_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
       # Local embedding weights (pinned BAAI/bge-base-en-v1.5 ONNX, about 208 MB
       # on first use). On the uploads volume so a restart or image rebuild does
       # not fetch them again and the image does not carry the weights.
-      # EMBEDDING_MODEL is intentionally not set here: vectors.py still reads it
-      # for the OpenAI Qdrant upsert, which this change does not replace.
+      # Query and stored vectors use the same provider. Default is the pinned
+      # local bge model. EMBEDDING_PROVIDER=openai stores OpenAI vectors in
+      # Postgres and projects those; it does not embed inside the projector.
       EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-local}"
       EMBEDDING_CACHE_DIR: /app/data/embedding-models
       #
@@ -250,10 +244,10 @@ services:
       # diverge. Docker creates the host directory on first use.
       - ${VAULT_HOST_DIR:-${HOME}/NLP-Vault}:/vault
     depends_on:
-      # Map form (not the list form used before) so postgrest can carry a
-      # condition. `qdrant` is deliberately NOT listed: the app talks to Qdrant
-      # Cloud (see the QDRANT block above), so a depends_on here would start a
-      # container nothing reads and imply a dependency that does not exist.
+      # Map form (not the list form used before) so a condition can be set.
+      # Search reads the local Qdrant, so wait until its healthcheck passes.
+      qdrant:
+        condition: service_healthy
       postgrest:
         condition: service_started
     restart: unless-stopped
@@ -281,22 +275,17 @@ services:
       # the long comment on that service. The scheduler drives the pipeline
       # through nlp_pillars/db.py, which reads SUPABASE_URL only.
       #
-      # The Qdrant override is here too, and is not optional: a daily run ingests
-      # papers, and ingest writes vectors. Without it the scheduler would keep
-      # dialling the suspended cloud cluster and every run would lose its
-      # embeddings while the webui quietly used the local one. Whenever one of
-      # these two services changes which Qdrant it talks to, the other must
-      # change with it — they share a collection.
+      # A scheduled ingest projects into the same local Qdrant webui reads.
       SEARXNG_URL: "http://searxng:8080"
       POSTGREST_URL: "http://postgrest:3000"
       SUPABASE_URL: "http://postgrest:3000"
-      # Qdrant Cloud, from the same two .env values webui uses — see the long
-      # comment on that service. This is not a convenience: the two containers
-      # share ONE collection, so if they ever resolve QDRANT_URL differently the
-      # scheduler's nightly embeddings land somewhere the UI never reads.
-      # Sourcing both from one .env entry is what makes that impossible.
-      QDRANT_URL: "${QDRANT_URL:?set QDRANT_URL in .env — the Qdrant Cloud cluster endpoint}"
-      QDRANT_API_KEY: "${QDRANT_API_KEY:?set QDRANT_API_KEY in .env — the Qdrant Cloud API key}"
+      # Same local server and optional cloud target as webui. Hardcoded URL so
+      # the two containers cannot diverge onto whatever QDRANT_URL .env still
+      # holds from the old cloud endpoint.
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_API_KEY: ""
+      QDRANT_CLOUD_URL: "${QDRANT_CLOUD_URL:-}"
+      QDRANT_CLOUD_API_KEY: "${QDRANT_CLOUD_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
       # Same embedding cache as webui. A scheduled ingest writes chunk
       # embeddings, and the weights have to be the ones webui already downloaded.
@@ -313,12 +302,12 @@ services:
       - uploads_data:/app/data
       - ${VAULT_HOST_DIR:-${HOME}/NLP-Vault}:/vault
     depends_on:
+      qdrant:
+        condition: service_healthy
       postgrest:
         condition: service_started
       searxng:
         condition: service_started
-      # No `qdrant` entry, same reason as on webui: vectors go to Qdrant Cloud,
-      # which is not a service in this file and cannot be waited on here.
     # The Dockerfile's HEALTHCHECK curls http://localhost:8000/health, which only
     # exists in the webui container. Inherited here it can never pass, so this
     # service would sit permanently "unhealthy" while working perfectly. There is
@@ -336,10 +325,9 @@ services:
 # Named Volumes (Docker-managed)
 # ============================================
 volumes:
-  # Storage for the `local-vectors` profile's qdrant service only — the app
-  # writes to Qdrant Cloud. Kept because it still holds vectors from the period
-  # when the app did use local Qdrant, and because it is shared with any other
-  # worktree running this compose file. Never remove it to "clean up".
+  # Local Qdrant storage. Shared with any other worktree running this compose
+  # file. Never remove it to "clean up". A second worktree must override the
+  # volume name or it attaches to this one.
   qdrant_data:
     name: nlp_qdrant_data
   # Application database. Named so `docker compose down` (without -v) keeps it.
