@@ -30,7 +30,12 @@ MODEL_COLLECTION = collection_name(LOCAL_MODEL_ID, 768)
 def make_hit(paper_id, score, chunk_index=0):
     """One ScoredPoint-shaped search hit."""
     hit = Mock()
-    hit.payload = {"paper_id": paper_id, "chunk_index": chunk_index}
+    hit.payload = {
+        "paper_id": paper_id,
+        "chunk_id": f"chunk-{paper_id}-{chunk_index}",
+        "chunk_index": chunk_index,
+        "text": f"Matched text for {paper_id}",
+    }
     hit.score = score
     return hit
 
@@ -114,7 +119,9 @@ def stub_index_embedder():
     provider.model_id = LOCAL_MODEL_ID
     provider.dims = 768
     provider.embed_query.return_value = [0.1, 0.2, 0.3, 0.4]
-    with patch("nlp_pillars.embeddings.get_embedding_provider", return_value=provider):
+    sparse = models.SparseVector(indices=[7, 11], values=[1.0, 1.0])
+    with patch("nlp_pillars.embeddings.get_embedding_provider", return_value=provider), \
+         patch("nlp_pillars.vectors.bm25_query", return_value=sparse):
         yield provider
 
 
@@ -341,21 +348,35 @@ class TestSearchSimilar:
         search_call = mock_qdrant_client.query_points.call_args
 
         assert search_call[1]['collection_name'] == COLLECTION_NAME
-        assert search_call[1]['query'] == [0.1, 0.2, 0.3, 0.4]
+        assert isinstance(search_call[1]['query'], models.FusionQuery)
+        assert search_call[1]['query'].fusion == models.Fusion.RRF
         assert search_call[1]['limit'] == 15  # top_k * 3 for deduplication
         assert search_call[1]['with_payload'] is True
 
-        # Check pillar filter
-        query_filter = search_call[1]['query_filter']
-        assert len(query_filter.must) == 1
-        field_condition = query_filter.must[0]
-        assert field_condition.key == "pillar_id"
-        assert field_condition.match.value == "data-training-methodologies"
+        dense, sparse = search_call[1]['prefetch']
+        assert dense.query == [0.1, 0.2, 0.3, 0.4]
+        assert dense.using is None
+        assert sparse.using == "bm25"
+        assert sparse.query.indices == [7, 11]
+        for leg in (dense, sparse):
+            assert leg.limit == 15
+            assert len(leg.filter.must) == 1
+            field_condition = leg.filter.must[0]
+            assert field_condition.key == "pillar_id"
+            assert field_condition.match.value == "data-training-methodologies"
         
         # Check results format
         expected_results = [
-            {"paper_id": "paper.123", "score": 0.9},
-            {"paper_id": "paper.456", "score": 0.8}
+            {
+                "paper_id": "paper.123", "score": 0.9,
+                "snippet": "Matched text for paper.123",
+                "chunk_id": "chunk-paper.123-0", "chunk_index": 0,
+            },
+            {
+                "paper_id": "paper.456", "score": 0.8,
+                "snippet": "Matched text for paper.456",
+                "chunk_id": "chunk-paper.456-0", "chunk_index": 0,
+            },
         ]
         assert result == expected_results
     
@@ -374,8 +395,16 @@ class TestSearchSimilar:
         
         # Should deduplicate and keep highest score for paper.123
         expected_results = [
-            {"paper_id": "paper.123", "score": 0.9},  # Higher score kept
-            {"paper_id": "paper.456", "score": 0.8}
+            {
+                "paper_id": "paper.123", "score": 0.9,
+                "snippet": "Matched text for paper.123",
+                "chunk_id": "chunk-paper.123-0", "chunk_index": 0,
+            },
+            {
+                "paper_id": "paper.456", "score": 0.8,
+                "snippet": "Matched text for paper.456",
+                "chunk_id": "chunk-paper.456-0", "chunk_index": 0,
+            },
         ]
         assert result == expected_results
     
@@ -550,13 +579,20 @@ class TestNamespaceEnforcement:
 
             # Get the last search call
             search_call = mock_qdrant_client.query_points.call_args
-            query_filter = search_call[1]['query_filter']
+            for leg in search_call[1]['prefetch']:
+                assert len(leg.filter.must) == 1
+                field_condition = leg.filter.must[0]
+                assert field_condition.key == "pillar_id"
+                assert field_condition.match.value == pillar
 
-            # Verify pillar filter is present
-            assert len(query_filter.must) == 1
-            field_condition = query_filter.must[0]
-            assert field_condition.key == "pillar_id"
-            assert field_condition.match.value == pillar
+    def test_all_scope_omits_filter_from_both_legs(self, mock_qdrant_client):
+        set_client(mock_qdrant_client)
+        mock_qdrant_client.query_points.return_value = query_response([])
+
+        search_similar(None, "test query")
+
+        for leg in mock_qdrant_client.query_points.call_args.kwargs["prefetch"]:
+            assert leg.filter is None
     
 class TestErrorHandling:
     """Test error handling and graceful degradation."""

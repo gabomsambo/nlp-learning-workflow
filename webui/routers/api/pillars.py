@@ -3,8 +3,7 @@ Provides REST endpoints for managing learning pillars.
 """
 
 import logging
-import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -20,7 +19,7 @@ from nlp_pillars.db import (
     create_pillar,
     delete_pillar,
     enqueue_library_paper,
-    get_papers,
+    get_papers_by_ids,
     get_pillar_by_id,
     get_pillars_or_empty,
     pillar_exists,
@@ -201,20 +200,23 @@ async def check_pillar_exists(pillar_id: str) -> JSONResponse:
 async def search_pillar(
     pillar_id: str,
     q: str = Query(..., description="Search query string"),
-    top_k: int = Query(10, ge=1, le=50, description="Maximum number of results to return")
+    top_k: int = Query(
+        10, ge=1, le=50, description="Maximum number of results to return"
+    ),
+    scope: Literal["pillar", "all"] = Query(
+        "pillar", description="Search this pillar or the whole library"
+    ),
 ) -> List[Dict[str, Any]]:
-    """Search for papers within a specific pillar using vector similarity and re-ranking.
-    
-    Combines vector search with keyword overlap scoring based on pillar focus areas.
+    """Search this pillar, or optionally the whole library, with hybrid retrieval.
     
     - **pillar_id**: The URL-friendly slug of the pillar to search in
     - **q**: Search query string
     - **top_k**: Maximum number of results (1-50, default 10)
+    - **scope**: `pillar` (default) or `all`
     
     Returns a list of search results with paper metadata and scores.
     """
     try:
-        # Get pillar to access focus areas
         pillar = get_pillar_by_id(pillar_id)
         if pillar is None:
             raise HTTPException(
@@ -222,31 +224,22 @@ async def search_pillar(
                 detail=f"Pillar '{pillar_id}' not found"
             )
 
-        # Perform vector search using pillar_id directly (now accepts strings)
         vector_results = vectors.search_similar(
-            pillar_id=pillar_id,
+            pillar_id=pillar_id if scope == "pillar" else None,
             query_text=q,
-            top_k=top_k * 2  # Get more results to allow for re-ranking
+            top_k=top_k,
         )
 
         if not vector_results:
             return []
 
-        # Get paper details for all found papers
-        papers_map = {}
-        try:
-            papers = get_papers(pillar_id, limit=1000)  # Get a large number to find all papers
-            papers_map = {paper.id: paper for paper in papers}
-        except Exception as e:
-            # If we can't get paper details, continue with basic info
-            logger.warning(f"Failed to get paper details for pillar {pillar_id}: {e}")
-            pass
+        papers = get_papers_by_ids([result["paper_id"] for result in vector_results])
+        papers_map = {paper.id: paper for paper in papers}
 
-        # Apply re-ranking with focus area keyword overlap
         enhanced_results = []
         for result in vector_results:
             paper_id = result["paper_id"]
-            cosine_score = result["score"]
+            fused_score = result["score"]
 
             # Get paper details
             paper = papers_map.get(paper_id)
@@ -254,23 +247,23 @@ async def search_pillar(
                 # Skip if we can't find paper details
                 continue
 
-            # Calculate keyword overlap with focus areas
-            keyword_overlap_score = _calculate_keyword_overlap(q, pillar.focus_areas)
-
-            # Apply re-ranking formula: 0.75 * cosine + 0.10 * keyword_overlap
-            # (reserve 0.15 for potential BM25 component in future)
-            final_score = 0.75 * cosine_score + 0.10 * keyword_overlap_score
-
             enhanced_results.append({
                 "paper_id": paper_id,
                 "title": paper.title,
                 "authors": paper.authors or [],
                 "year": paper.year,
                 "venue": paper.venue,
-                "score": round(final_score, 4),
-                "cosine_similarity": round(cosine_score, 4),
-                "keyword_overlap": round(keyword_overlap_score, 4),
-                "source": "vector_search"
+                "score": round(fused_score, 4),
+                # Compatibility fields retained for existing clients. The score
+                # is now Qdrant's RRF fusion score, not a raw cosine value.
+                "cosine_similarity": round(fused_score, 4),
+                "keyword_overlap": 0.0,
+                "source": "vector_search",
+                "snippet": result.get("snippet", ""),
+                "matched_chunk": {
+                    "id": result.get("chunk_id"),
+                    "index": result.get("chunk_index"),
+                },
             })
 
         # Sort by final score and limit to top_k
@@ -315,41 +308,3 @@ async def enqueue_pillar_paper(pillar_id: str, body: EnqueuePaperRequest) -> Dic
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Could not queue the paper: {e}",
         ) from e
-
-
-def _calculate_keyword_overlap(query: str, focus_areas: List[str]) -> float:
-    """Calculate keyword overlap score between query and pillar focus areas.
-    
-    Args:
-    ----
-        query: Search query string
-        focus_areas: List of focus area strings from the pillar
-        
-    Returns:
-    -------
-        Overlap score between 0.0 and 1.0
-
-    """
-    if not query or not focus_areas:
-        return 0.0
-
-    # Normalize and tokenize query
-    query_tokens = set(re.findall(r'\w+', query.lower()))
-    if not query_tokens:
-        return 0.0
-
-    # Normalize and tokenize focus areas
-    focus_tokens = set()
-    for area in focus_areas:
-        focus_tokens.update(re.findall(r'\w+', area.lower()))
-
-    if not focus_tokens:
-        return 0.0
-
-    # Calculate overlap
-    overlap = len(query_tokens.intersection(focus_tokens))
-
-    # Normalize by query length (Jaccard-like similarity)
-    total_unique = len(query_tokens.union(focus_tokens))
-
-    return overlap / total_unique if total_unique > 0 else 0.0

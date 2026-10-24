@@ -627,6 +627,33 @@ def get_papers(pillar_id: str, limit: int = 10) -> List[PaperRef]:
         return []
 
 
+def get_papers_by_ids(paper_ids: List[str]) -> List[PaperRef]:
+    """Fetch a specific set of papers in one PostgREST request.
+
+    Search already knows the ids it needs. Reading an arbitrary first 1000
+    rows from a pillar was both wasteful and capable of dropping a real hit.
+    Values are JSON-quoted because PostgREST's ``in`` grammar reserves commas,
+    parentheses, and colons, all of which may occur in paper identifiers.
+    """
+    unique = list(dict.fromkeys(str(item) for item in paper_ids if item))
+    if not unique:
+        return []
+    try:
+        client = get_client()
+        query = client.table('papers').select('*')
+        encoded = ','.join(json.dumps(item) for item in unique)
+        query.params['id'] = f'in.({encoded})'
+        query.params['limit'] = str(len(unique))
+        response = query.execute()
+        if response['error']:
+            logger.error("Failed to get matched papers: %s", response['error'])
+            return []
+        return [_dict_to_paper_ref(row) for row in response['data'] or []]
+    except Exception as e:
+        logger.error("Failed to get matched papers: %s", e)
+        return []
+
+
 def paper_exists(pillar_id: str, paper_id: str) -> bool:
     """
     Check if a paper exists for a specific pillar.
