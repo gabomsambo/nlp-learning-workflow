@@ -155,7 +155,9 @@ def test_dispatch_does_not_refuse_an_upload_behind_a_live_discovery_run():
     conn = _guarded_table()
     scheduler = MagicMock()
 
-    def fake_create(pillar_id, trigger_source, kind, stage_names):
+    def fake_create(pillar_id, trigger_source, kind, stage_names, result=None):
+        # ``result`` matches create_pipeline_run. This index does not read it;
+        # a fact-check stores script_id there so a different index can.
         try:
             _insert(conn, kind, status="pending", pillar=pillar_id)
         except sqlite3.IntegrityError:
