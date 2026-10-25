@@ -16,6 +16,26 @@ from nlp_pillars.orchestrator import Orchestrator
 
 
 @pytest.fixture(autouse=True)
+def _no_live_concept_store(monkeypatch):
+    """probe/load/save dial PostgREST through concept_extraction's own handle.
+
+    The per-test ``orchestrator.db`` mock cannot cover them, so stub the
+    module that owns the calls. An empty vocabulary keeps the focus on the
+    pipeline shape, not on concept resolution.
+    """
+    monkeypatch.setattr(
+        "nlp_pillars.concept_extraction.probe_migration", lambda: None
+    )
+    monkeypatch.setattr(
+        "nlp_pillars.concept_extraction.load_vocabulary", lambda: []
+    )
+    monkeypatch.setattr(
+        "nlp_pillars.concept_extraction.save_paper_concepts",
+        lambda *args, **kwargs: {},
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_live_semantic_scholar(monkeypatch):
     """run_daily stores citations. The real client sleeps and dials out."""
 

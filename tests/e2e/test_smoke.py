@@ -18,6 +18,18 @@ from nlp_pillars.schemas import (
 from nlp_pillars.orchestrator import Orchestrator
 
 
+@pytest.fixture(autouse=True)
+def _no_live_concept_store(monkeypatch):
+    """probe/load/save dial PostgREST; the per-test db mock cannot cover them."""
+    store = Mock()
+    store.probe_migration.return_value = None
+    store.load_vocabulary.return_value = []
+    store.save_paper_concepts.return_value = {}
+    monkeypatch.setattr(
+        "nlp_pillars.orchestrator.concept_extraction", store
+    )
+
+
 @pytest.fixture
 def fake_data():
     """Create deterministic fake data for all components."""

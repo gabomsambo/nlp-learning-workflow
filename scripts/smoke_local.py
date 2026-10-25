@@ -160,8 +160,9 @@ def run_smoke_test():
              patch('nlp_pillars.orchestrator.SynthesisAgent') as mock_synthesis_agent_class, \
              patch('nlp_pillars.orchestrator.QuizAgent') as mock_quiz_agent_class, \
              patch('nlp_pillars.orchestrator.db') as mock_db, \
+             patch('nlp_pillars.orchestrator.concept_extraction') as mock_concepts, \
              patch('nlp_pillars.orchestrator.vectors') as mock_vectors:
-            
+                        
             # Mock agent class methods (static methods)
             mock_discovery_agent_class.run.return_value = fake_data['discovery_output']
             mock_summarizer_agent_class.run.return_value = fake_data['paper_note']
@@ -177,6 +178,11 @@ def run_smoke_test():
             mock_db.insert_lesson.return_value = None
             mock_db.insert_quiz_cards.return_value = None
             mock_db.mark_processed.return_value = None
+            
+            # Vocabulary concepts bypass the db mock, so stub that module too.
+            mock_concepts.probe_migration.return_value = None
+            mock_concepts.load_vocabulary.return_value = []
+            mock_concepts.save_paper_concepts.return_value = {}
             
             # Mock vector operations
             mock_vectors.upsert_text.return_value = 1

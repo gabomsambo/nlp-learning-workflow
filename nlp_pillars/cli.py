@@ -1584,6 +1584,47 @@ def graph_build(
     raise typer.Exit(0)
 
 
+concepts_app = typer.Typer(
+    help="Vocabulary-aware concepts selected from stored paper notes",
+    add_completion=False,
+)
+app.add_typer(concepts_app, name="concepts")
+
+
+@concepts_app.command("backfill")
+def concepts_backfill(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Print the note count and estimated spend. Do not create a model "
+            "client and do not write."
+        ),
+    ),
+):
+    """Choose vocabulary concepts for notes not already processed by an LLM.
+
+    Run with ``--dry-run`` first. Apply
+    docs/migrations/024_vocabulary_concepts.sql by hand before the real run.
+    """
+    from .concept_extraction import run_backfill
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = run_backfill(dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("concept backfill failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    console.print(report.render(), markup=False)
+    if report.failed:
+        raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
 vault_app = typer.Typer(
     help="Obsidian vault projected from Postgres",
     add_completion=False,

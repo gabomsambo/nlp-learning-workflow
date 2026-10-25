@@ -5,6 +5,7 @@ All OpenAI calls are mocked for fast, reliable testing.
 
 import pytest
 import logging
+from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
 from pydantic import ValidationError
 from instructor.core.exceptions import InstructorRetryException
@@ -17,6 +18,16 @@ from nlp_pillars.agents.summarizer_agent import (
     _make_client,
     _LazySummarizerAgent
 )
+
+
+def _completed(value, *, prompt_tokens=100, completion_tokens=20):
+    completion = SimpleNamespace(
+        usage=SimpleNamespace(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    )
+    return value, completion
 
 
 # Test fixtures
@@ -61,7 +72,8 @@ def sample_summarizer_input(sample_parsed_paper):
         recent_notes=[
             "Previous paper on RNNs showed limited parallelization capabilities",
             "Recent work on transformers achieved breakthrough performance"
-        ]
+        ],
+        concept_vocabulary=["multi-head attention"],
     )
 
 
@@ -95,6 +107,7 @@ def valid_paper_note():
             "BLEU score",
             "computational efficiency"
         ],
+        concepts=["multi-head attention"],
         confidence_score=0.9
     )
 
@@ -102,9 +115,9 @@ def valid_paper_note():
 @pytest.fixture
 def mock_instructor_client():
     """Mock Instructor client for testing."""
-    mock_client = Mock()
-    mock_client.chat = Mock()
-    mock_client.chat.completions = Mock()
+    mock_client = Mock(spec=["chat"])
+    mock_client.chat = Mock(spec=["completions"])
+    mock_client.chat.completions = Mock(spec=["create_with_completion"])
     return mock_client
 
 
@@ -114,10 +127,10 @@ class TestSummarizerAgentImpl:
     def test_happy_path(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
         """Test successful summarization on first attempt."""
         # Mock successful response
-        mock_instructor_client.chat.completions.create.return_value = valid_paper_note
+        mock_instructor_client.chat.completions.create_with_completion.return_value = _completed(valid_paper_note)
         
         # Create agent
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
         
         # Run summarization
         with patch('nlp_pillars.agents.summarizer_agent.logger') as mock_logger:
@@ -138,9 +151,9 @@ class TestSummarizerAgentImpl:
         mock_logger.info.assert_any_call("Summarization completed successfully")
         
         # Verify client was called correctly
-        mock_instructor_client.chat.completions.create.assert_called_once()
-        call_args = mock_instructor_client.chat.completions.create.call_args
-        assert call_args[1]['model'] == "gpt-4"
+        mock_instructor_client.chat.completions.create_with_completion.assert_called_once()
+        call_args = mock_instructor_client.chat.completions.create_with_completion.call_args
+        assert call_args[1]['model'] == "gpt-4o"
         assert call_args[1]['response_model'] == PaperNote
         assert call_args[1]['temperature'] == 0.2
         assert len(call_args[1]['messages']) == 2
@@ -161,9 +174,9 @@ class TestSummarizerAgentImpl:
             total_usage=0,
             messages=[],
         )
-        mock_instructor_client.chat.completions.create.side_effect = retry_exc
+        mock_instructor_client.chat.completions.create_with_completion.side_effect = retry_exc
 
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
 
         with pytest.raises(SummarizerValidationError) as exc_info:
             agent.run(sample_summarizer_input)
@@ -175,7 +188,7 @@ class TestSummarizerAgentImpl:
         assert exc_info.value.__cause__ is retry_exc
 
         # Instructor owns retrying; the agent must not re-issue the call itself.
-        assert mock_instructor_client.chat.completions.create.call_count == 1
+        assert mock_instructor_client.chat.completions.create_with_completion.call_count == 1
 
     def test_no_hand_rolled_retry_on_validation_error(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
         """A pydantic ValidationError is wrapped, not retried locally.
@@ -187,28 +200,28 @@ class TestSummarizerAgentImpl:
             "ValidationError",
             [{"type": "missing", "loc": ("problem",), "msg": "Field required"}]
         )
-        mock_instructor_client.chat.completions.create.side_effect = [
+        mock_instructor_client.chat.completions.create_with_completion.side_effect = [
             validation_error,
             valid_paper_note
         ]
 
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
 
         with pytest.raises(SummarizerValidationError):
             agent.run(sample_summarizer_input)
 
         # Exactly one call - the second side_effect entry is never consumed.
-        assert mock_instructor_client.chat.completions.create.call_count == 1
+        assert mock_instructor_client.chat.completions.create_with_completion.call_count == 1
 
     def test_context_pass_through(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
         """Test that recent_notes context is included in the prompt."""
-        mock_instructor_client.chat.completions.create.return_value = valid_paper_note
+        mock_instructor_client.chat.completions.create_with_completion.return_value = _completed(valid_paper_note)
         
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
         result = agent.run(sample_summarizer_input)
         
         # Verify the context was passed through
-        call_args = mock_instructor_client.chat.completions.create.call_args
+        call_args = mock_instructor_client.chat.completions.create_with_completion.call_args
         user_message = call_args[1]['messages'][1]['content']
         
         # Check that recent notes are included
@@ -223,12 +236,12 @@ class TestSummarizerAgentImpl:
     
     def test_system_message_building(self, mock_instructor_client, sample_summarizer_input, valid_paper_note):
         """Test that system message is built correctly from SystemPromptGenerator."""
-        mock_instructor_client.chat.completions.create.return_value = valid_paper_note
+        mock_instructor_client.chat.completions.create_with_completion.return_value = _completed(valid_paper_note)
         
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
         agent.run(sample_summarizer_input)
         
-        call_args = mock_instructor_client.chat.completions.create.call_args
+        call_args = mock_instructor_client.chat.completions.create_with_completion.call_args
         system_message = call_args[1]['messages'][0]['content']
         
         # Verify required content from the task specification
@@ -245,12 +258,12 @@ class TestSummarizerAgentImpl:
         long_content = "Very long paper content. " * 1000  # Much longer than 8000 chars
         sample_summarizer_input.parsed_paper.full_text = long_content
         
-        mock_instructor_client.chat.completions.create.return_value = valid_paper_note
+        mock_instructor_client.chat.completions.create_with_completion.return_value = _completed(valid_paper_note)
         
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
         agent.run(sample_summarizer_input)
         
-        call_args = mock_instructor_client.chat.completions.create.call_args
+        call_args = mock_instructor_client.chat.completions.create_with_completion.call_args
         user_message = call_args[1]['messages'][1]['content']
         
         # Verify content was truncated (should be much shorter than original)
@@ -261,9 +274,9 @@ class TestSummarizerAgentImpl:
     def test_instructor_exception_handling(self, mock_instructor_client, sample_summarizer_input):
         """Test that non-ValidationError exceptions from Instructor are handled properly."""
         # Mock Instructor to raise a different kind of error
-        mock_instructor_client.chat.completions.create.side_effect = Exception("API Error")
+        mock_instructor_client.chat.completions.create_with_completion.side_effect = Exception("API Error")
         
-        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_instructor_client, "gpt-4o")
         
         # Should wrap in SummarizerValidationError for consistent handling
         with pytest.raises(SummarizerValidationError, match="Instructor completion failed"):
@@ -377,7 +390,7 @@ class TestLazySingleton:
         mock_get_settings.return_value = mock_settings
 
         mock_client = Mock()
-        mock_client.chat.completions.create.return_value = valid_paper_note
+        mock_client.chat.completions.create_with_completion.return_value = _completed(valid_paper_note)
         mock_make_client.return_value = mock_client
 
         agent = _LazySummarizerAgent()
@@ -400,16 +413,16 @@ class TestIntegration:
         """Test full agent initialization and usage flow."""
         # Mock settings
         mock_settings = Mock()
-        mock_settings.default_model = "gpt-4"
+        mock_settings.default_model = "gpt-4o"
         mock_get_settings.return_value = mock_settings
         
         # Mock client
         mock_client = Mock()
-        mock_client.chat.completions.create.return_value = valid_paper_note
+        mock_client.chat.completions.create_with_completion.return_value = _completed(valid_paper_note)
         mock_make_client.return_value = mock_client
         
         # Create agent directly
-        agent = SummarizerAgentImpl(mock_client, "gpt-4")
+        agent = SummarizerAgentImpl(mock_client, "gpt-4o")
         
         # Test the agent
         result = agent.run(sample_summarizer_input)
