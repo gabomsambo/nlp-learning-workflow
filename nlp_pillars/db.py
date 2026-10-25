@@ -855,6 +855,20 @@ def list_stored_paper_text_ids() -> List[str]:
     return [row['paper_id'] for row in rows]
 
 
+def list_noted_paper_ids() -> List[str]:
+    """Paper ids that have at least one ``notes`` row.
+
+    Raises:
+        PaperLookupError: the table could not be read.
+    """
+    try:
+        return sorted({row['paper_id'] for row in _each_row('notes', 'paper_id', 'id')})
+    except PaperLookupError:
+        raise
+    except Exception as e:
+        raise PaperLookupError(f"Could not read notes: {e}") from e
+
+
 def get_stored_paper_text(paper_id: str) -> Optional[str]:
     """Stored full text for ``paper_id``, or None when no row exists.
 
