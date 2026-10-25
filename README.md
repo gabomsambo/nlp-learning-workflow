@@ -96,10 +96,12 @@ Notes that save time:
 
 ### Prerequisites
 - Python 3.12+ (atomic-agents requires >= 3.12)
-- OpenAI API key (required)
+- Anthropic API key (required) — every generation stage runs on Claude
 - A Postgres database with PostgREST in front of it (see the `db` / `postgrest` services in
   `docker-compose.yml` for a working reference configuration)
 - Qdrant instance (Qdrant Cloud, or a local one)
+- DeepSeek API key (optional) — the podcast Ground Pack extraction runs there by default
+  and falls back to Claude Haiku 5.5
 
 ### Installation
 
@@ -124,8 +126,8 @@ cp .env.example .env
 
 Create a `.env` file with:
 ```bash
-# Required
-OPENAI_API_KEY=your_openai_api_key_here
+# Required — every generation stage runs on Claude
+ANTHROPIC_API_KEY=sk-ant-...
 
 # Database — PostgREST in front of Postgres.
 # Under Docker these are overridden in docker-compose.yml and can be left alone.
@@ -140,10 +142,30 @@ QDRANT_API_KEY=...  # required for cloud
 # Metasearch (Docker sets this to http://searxng:8080)
 SEARXNG_URL=http://localhost:8080
 
-# Optional providers
-ANTHROPIC_API_KEY=...
-GROQ_API_KEY=...
+# Optional — the podcast Ground Pack calls 1-4 run on DeepSeek, with Claude
+# Haiku 5.5 behind them. Set PODCAST_EXTRACTION_PROVIDER=anthropic to put
+# Claude in front.
+DEEPSEEK_API_KEY=...
 ```
+
+### Which model runs each stage
+
+Every generation stage names its model in `nlp_pillars/llm_routes.py`, and every
+stage can be moved with an env var — no code change:
+
+| Stage | Env var | Default |
+|---|---|---|
+| Paper summary | `LLM_SUMMARIZE_MODEL` | `claude-haiku-5-5` |
+| Lesson | `LLM_SYNTHESIZE_MODEL` | `claude-haiku-5-5` |
+| Quiz cards | `LLM_QUIZ_MODEL` | `claude-haiku-5-5` |
+| Discovery queries | `LLM_DISCOVER_MODEL` | `claude-haiku-5-5` |
+| Concept extraction | `LLM_CONCEPTS_MODEL` | `claude-haiku-5-5` |
+| Podcast Ground Pack (calls 1-4) | `LLM_PODCAST_EXTRACTION_MODEL`, `PODCAST_EXTRACTION_PROVIDER` | `deepseek-flash` (DeepSeek), `claude-haiku-5-5` as fallback |
+| Podcast script (call 5) | `LLM_PODCAST_SYNTHESIS_MODEL` | `claude-sonnet-5` |
+| Fact-check | `LLM_FACTCHECK_EXTRACT_MODEL`, `LLM_FACTCHECK_SCREEN_MODEL`, `LLM_FACTCHECK_REJUDGE_MODEL` | Haiku 5.5 / Haiku 5.5 / Sonnet 5.5 |
+
+Every call's model, token counts and cost are shown in the run's stage detail
+and logged at WARNING.
 
 ### Database Setup
 
@@ -317,7 +339,7 @@ pytest --cov=nlp_pillars tests/
 
 5. **"Rate limit exceeded"**
    - ArXiv: Wait 3 seconds between requests
-   - OpenAI: Reduce parallel processing
+   - Anthropic: Reduce parallel processing
 
 ## 📈 Monitoring Progress
 
@@ -346,7 +368,7 @@ MIT License - see LICENSE file
 ## 🙏 Acknowledgments
 
 - Built with [Atomic Agents](https://github.com/BrainBlend-AI/atomic-agents)
-- Powered by OpenAI, Anthropic, and Groq APIs
+- Powered by the Anthropic API (Claude), with DeepSeek for podcast extraction
 - Database: Postgres + PostgREST (self-hosted, see docker-compose.yml)
 - Vector search by Qdrant
 

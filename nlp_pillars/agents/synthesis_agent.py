@@ -1,17 +1,25 @@
-"""Synthesis Agent - Real LLM implementation using instructor + OpenAI.
+"""Synthesis Agent - turns paper notes into an educational lesson, with Claude.
 
-Converts paper notes into educational lessons with takeaways and practice ideas.
+The lesson used to be written from the note alone, which measured worse than
+almost anything else about it: a lesson built from a summary fills gaps from
+general knowledge and repeats the summary's mistakes. The paper's own text is
+now passed alongside the note, and the prompt names the paper, so the model
+does not list it as related work.
+
+The call goes through :mod:`nlp_pillars.llm_client`: Claude's native
+structured output, a small model-facing schema (``LessonDraft``), and no
+sampling parameters — current Claude models reject ``temperature`` with a
+400.
 """
 
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import instructor
-from openai import OpenAI
-
 from ..config import get_settings
-from ..schemas import Lesson, SynthesisInput
+from ..llm_client import StructuredCall, fit_paper_text, structured
+from ..llm_routes import SYNTHESIZE_ROUTE
+from ..schemas import Lesson, LessonDraft, SynthesisInput, lesson_from_draft
 from .discovery_agent import SystemPromptGenerator
 
 logger = logging.getLogger(__name__)
@@ -26,20 +34,23 @@ class SynthesisValidationError(Exception):
 class SynthesisAgentImpl:
     """Instance-based implementation for synthesizing educational lessons.
 
-    Uses instructor + OpenAI for structured output generation.
-    Tests create their own instances with mocked clients.
+    Uses Claude's native structured output. Tests create their own instances
+    with a mocked client.
     """
 
-    def __init__(self, client, model: str):
+    def __init__(self, client, model: Optional[str] = None):
         """Initialize the synthesis agent.
 
         Args:
-            client: Instructor-wrapped OpenAI client
-            model: Model name to use for completions
+            client: An Anthropic client with a ``messages.parse`` method.
+            model: Model id override. ``None`` means the synthesize route's
+                resolved model.
 
         """
         self.client = client
         self.model = model
+        #: The last call this agent made, for the run's stage detail.
+        self.last_call: Optional[StructuredCall] = None
 
         # System prompt for educational synthesis
         self.system_prompt = SystemPromptGenerator(
@@ -67,9 +78,8 @@ class SynthesisAgentImpl:
     def run(self, input_data: SynthesisInput) -> Lesson:
         """Run synthesis.
 
-        Retries on invalid model output are handled by instructor itself, which
-        re-prompts with the validation feedback up to ``max_retries`` times
-        (default 3) before raising. There is deliberately no retry layer here.
+        One call, no hand-rolled retry. The helper falls back to the route's
+        fallback model when the call fails outright.
 
         Args:
             input_data: SynthesisInput with paper note and pillar config
@@ -87,7 +97,7 @@ class SynthesisAgentImpl:
             result = self._attempt_synthesis(input_data)
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
-            raise SynthesisValidationError(f"Instructor completion failed: {e}") from e
+            raise SynthesisValidationError(f"Claude completion failed: {e}") from e
 
         logger.info("Synthesis completed successfully")
         return result
@@ -105,20 +115,23 @@ class SynthesisAgentImpl:
         system_message = self._build_system_message()
         user_message = self._build_user_message(input_data)
 
-        result = self.client.chat.completions.create(
+        call = structured(
+            SYNTHESIZE_ROUTE,
+            system=system_message,
+            user=user_message,
+            out_model=LessonDraft,
+            client=self.client,
             model=self.model,
-            response_model=Lesson,
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message}
-            ]
         )
+        self.last_call = call
 
         # Identity and the storage timestamp come from this process. A date on
         # the model object is the one the model invented, and it is not kept.
-        result.paper_id = input_data.paper_note.paper_id
-        result.pillar_id = input_data.paper_note.pillar_id
+        result = lesson_from_draft(
+            call.parsed,
+            input_data.paper_note.paper_id,
+            input_data.paper_note.pillar_id,
+        )
         result.created_at = datetime.now(timezone.utc)
 
         return result
@@ -166,6 +179,30 @@ class SynthesisAgentImpl:
             f"Key Terms: {', '.join(note.key_terms)}"
         ]
 
+        # Name the paper. Without this the model treats the paper it was
+        # given as related work, and writes a lesson about the wrong paper.
+        title = input_data.paper_title or ""
+        if title:
+            authors = ", ".join(input_data.paper_authors or [])
+            parts.insert(
+                0,
+                f"This paper is: {title}"
+                + (f" by {authors}" if authors else "")
+                + ". It is the paper you are writing about, not related work.",
+            )
+
+        # The paper's own text, when there is one. A lesson written from the
+        # note alone fills gaps from general knowledge.
+        full_text = (input_data.full_text or "").strip()
+        if full_text:
+            parts.extend(
+                [
+                    "",
+                    "Paper Text:",
+                    fit_paper_text(full_text),
+                ]
+            )
+
         # Add related lessons context if provided
         if input_data.related_lessons:
             parts.append("\nRelated lessons for context:")
@@ -178,19 +215,18 @@ class SynthesisAgentImpl:
 
 
 def _make_client():
-    """Create instructor-wrapped OpenAI client.
+    """Create the Anthropic client.
 
     Returns:
-        Instructor-wrapped OpenAI client
+        An Anthropic client
 
     Raises:
-        ValueError: If OPENAI_API_KEY is not set
+        ValueError: If ANTHROPIC_API_KEY is not set
 
     """
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required")
-    return instructor.from_openai(OpenAI(api_key=settings.openai_api_key))
+    from ..llm_client import make_client
+
+    return make_client()
 
 
 class _LazySynthesisAgent:
@@ -205,13 +241,18 @@ class _LazySynthesisAgent:
     def _get_impl(self) -> SynthesisAgentImpl:
         if self._impl is None:
             settings = get_settings()
-            if not settings.openai_api_key:
+            if not settings.anthropic_api_key:
                 raise ValueError(
                     "SynthesisAgent is not initialized: "
-                    "OPENAI_API_KEY environment variable is required"
+                    "ANTHROPIC_API_KEY environment variable is required"
                 )
-            self._impl = SynthesisAgentImpl(_make_client(), settings.default_model)
+            self._impl = SynthesisAgentImpl(_make_client())
         return self._impl
+
+    @property
+    def last_call(self) -> Optional[StructuredCall]:
+        """The most recent call, for the run's stage detail."""
+        return self._impl.last_call if self._impl is not None else None
 
     def run(self, input_data: SynthesisInput) -> Lesson:
         """Synthesize, constructing the underlying agent on first use."""

@@ -179,6 +179,10 @@ services:
       QDRANT_API_KEY: ""
       QDRANT_CLOUD_URL: "${QDRANT_CLOUD_URL:-}"
       QDRANT_CLOUD_API_KEY: "${QDRANT_CLOUD_API_KEY:-}"
+      # Every generation stage runs on Claude, so this key is load-bearing:
+      # without it the summarizer, the lesson, the quiz and discovery all
+      # fail. Required, like the DeepSeek key below.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env — generation runs on Claude}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
       # Fact-check a saved script on its own run. A failed check does not fail
       # the script run and does not change the script. Unset means on.
@@ -295,6 +299,9 @@ services:
       QDRANT_API_KEY: ""
       QDRANT_CLOUD_URL: "${QDRANT_CLOUD_URL:-}"
       QDRANT_CLOUD_API_KEY: "${QDRANT_CLOUD_API_KEY:-}"
+      # Same key webui needs: a scheduled run generates the same notes,
+      # lessons and quiz cards.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env — generation runs on Claude}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env — DeepSeek Ground Pack extraction}"
       # Same embedding cache as webui. A scheduled ingest writes chunk
       # embeddings, and the weights have to be the ones webui already downloaded.

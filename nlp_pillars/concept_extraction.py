@@ -12,13 +12,12 @@ from pydantic import BaseModel, Field
 from . import db
 from .concept_cost import (
     ConceptCall,
-    call_from_completion,
-    call_from_exception,
     estimate_backfill_call,
     require_price,
 )
-from .config import get_settings
 from .graph import canonicalize_term
+from .llm_client import structured
+from .llm_routes import CONCEPTS_ROUTE
 
 logger = logging.getLogger(__name__)
 
@@ -273,48 +272,46 @@ def _backfill_messages(note: dict, vocabulary: Sequence[str]) -> list[dict]:
 
 
 def extract_note_concepts(
-    client: Any, *, note: dict, vocabulary: Sequence[str], model: str
+    client: Any, *, note: dict, vocabulary: Sequence[str], model: str | None = None
 ) -> tuple[list[str], list[str], ConceptCall]:
-    """Make one structured call, price it, then validate the vocabulary result."""
+    """Make one structured call, price it, then validate the vocabulary result.
+
+    The call is Claude's native structured output with a two-field schema —
+    the same helper every other generation stage uses. There is no sampling
+    parameter and no instructor.
+    """
     paper_id = str(note["paper_id"])
-    require_price(model)
+    target = model or CONCEPTS_ROUTE.resolved_model()
+    require_price(target)
+    messages = _backfill_messages(note, vocabulary)
     try:
-        result, completion = client.chat.completions.create_with_completion(
-            model=model,
-            response_model=ConceptExtraction,
-            temperature=0.2,
-            messages=_backfill_messages(note, vocabulary),
+        call = structured(
+            CONCEPTS_ROUTE,
+            system=messages[0]["content"],
+            user=messages[1]["content"],
+            out_model=ConceptExtraction,
+            client=client,
+            model=target,
         )
     except Exception as exc:
-        call = call_from_exception(
-            purpose="concept_backfill",
-            paper_id=paper_id,
-            model=model,
-            error=exc,
-        )
         raise ConceptExtractionError(
-            f"Instructor completion failed: {exc}", call=call
+            f"Claude completion failed: {exc}"
         ) from exc
-    call = call_from_completion(
-        purpose="concept_backfill",
-        paper_id=paper_id,
-        model=model,
-        completion=completion,
-    )
+    record = ConceptCall.from_structured(call, purpose="concept_backfill", paper_id=paper_id)
     try:
         selected, proposed = normalize_concepts(
-            result.concepts, result.proposed_concepts, vocabulary
+            call.parsed.concepts, call.parsed.proposed_concepts, vocabulary
         )
     except ConceptExtractionError as exc:
-        exc.call = call
+        exc.call = record
         raise
-    return selected, proposed, call
+    return selected, proposed, record
 
 
 def _make_client():
-    from .agents.summarizer_agent import _make_client as make_instructor_client
+    from .llm_client import make_client
 
-    return make_instructor_client()
+    return make_client()
 
 
 def run_backfill(
@@ -324,7 +321,7 @@ def run_backfill(
     writer: Callable[[str, Sequence[str], Sequence[str], str], dict] | None = None,
 ) -> BackfillReport:
     """Backfill historical notes, stopping visibly at the first failed paper."""
-    model = get_settings().default_model
+    model = CONCEPTS_ROUTE.resolved_model()
     estimate = estimate_backfill_call(model)
     notes = latest_notes_without_llm_concepts()
     report = BackfillReport(

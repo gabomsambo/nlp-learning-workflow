@@ -580,7 +580,7 @@ def test_stages_run_extract_through_persist_in_order():
             return_value="fc-1",
         ) as insert,
         patch("nlp_pillars.factcheck.engine.make_client") as maker,
-        patch("nlp_pillars.podcast_models.get_settings") as settings,
+        patch("nlp_pillars.llm_routes.get_settings") as settings,
     ):
         settings.return_value.factcheck_extract_model = "claude-haiku-5-5"
         settings.return_value.factcheck_screen_model = "claude-haiku-5-5"
@@ -618,7 +618,7 @@ def test_cancel_before_extract_does_not_call_the_model():
         patch("nlp_pillars.factcheck.engine.db.get_stored_paper_text", return_value=PAPER),
         patch("nlp_pillars.factcheck.engine.db.list_paper_chunks", return_value=[]),
         patch("nlp_pillars.factcheck.engine.db.insert_podcast_fact_check") as insert,
-        patch("nlp_pillars.podcast_models.get_settings") as settings,
+        patch("nlp_pillars.llm_routes.get_settings") as settings,
     ):
         settings.return_value.factcheck_extract_model = "claude-haiku-5-5"
         settings.return_value.factcheck_screen_model = "claude-haiku-5-5"
@@ -644,7 +644,7 @@ def test_cli_dry_run_does_not_call_a_model_or_write():
         patch("nlp_pillars.factcheck.engine.db.list_paper_chunks", return_value=[{"id": "c", "chunk_index": 0, "text": "t"}]),
         patch("nlp_pillars.factcheck.engine.db.insert_podcast_fact_check") as insert,
         patch("nlp_pillars.factcheck.engine.make_client") as maker,
-        patch("nlp_pillars.podcast_models.get_settings") as settings,
+        patch("nlp_pillars.llm_routes.get_settings") as settings,
     ):
         settings.return_value.factcheck_extract_model = "claude-haiku-5-5"
         settings.return_value.factcheck_screen_model = "claude-haiku-5-5"

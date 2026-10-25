@@ -36,29 +36,57 @@ class Settings(BaseSettings):
         env="DEEPSEEK_BASE_URL",
     )
 
-    # Podcast model routing — see nlp_pillars/podcast_models.py
-    podcast_extraction_model: str = Field(
-        "deepseek-v4-flash",
-        env="PODCAST_EXTRACTION_MODEL",
+    # Generation routing — see nlp_pillars/llm_routes.py, which holds the
+    # defaults and the fallback chain. Every one of these is None on purpose:
+    # the route's own default applies unless an env var is set, so a new
+    # stage's model can be changed in one place (the registry) rather than in
+    # two (here and the registry).
+    llm_summarize_model: Optional[str] = Field(None, env="LLM_SUMMARIZE_MODEL")
+    llm_synthesize_model: Optional[str] = Field(None, env="LLM_SYNTHESIZE_MODEL")
+    llm_quiz_model: Optional[str] = Field(None, env="LLM_QUIZ_MODEL")
+    llm_discover_model: Optional[str] = Field(None, env="LLM_DISCOVER_MODEL")
+    llm_concepts_model: Optional[str] = Field(None, env="LLM_CONCEPTS_MODEL")
+    llm_podcast_extraction_model: Optional[str] = Field(
+        None, env="LLM_PODCAST_EXTRACTION_MODEL"
     )
-    podcast_synthesis_model: str = Field(
-        "claude-sonnet-5",
-        env="PODCAST_SYNTHESIS_MODEL",
+    llm_podcast_synthesis_model: Optional[str] = Field(
+        None, env="LLM_PODCAST_SYNTHESIS_MODEL"
+    )
+    llm_factcheck_extract_model: Optional[str] = Field(
+        None, env="LLM_FACTCHECK_EXTRACT_MODEL"
+    )
+    llm_factcheck_screen_model: Optional[str] = Field(
+        None, env="LLM_FACTCHECK_SCREEN_MODEL"
+    )
+    llm_factcheck_rejudge_model: Optional[str] = Field(
+        None, env="LLM_FACTCHECK_REJUDGE_MODEL"
     )
 
-    # Fact-check routes. See nlp_pillars/podcast_models.py. Haiku screens every
+    # Legacy routing names, still honoured and consulted second. They used to
+    # carry the defaults themselves; the registry does now.
+    podcast_extraction_model: Optional[str] = Field(
+        None, env="PODCAST_EXTRACTION_MODEL",
+    )
+    podcast_synthesis_model: Optional[str] = Field(
+        None, env="PODCAST_SYNTHESIS_MODEL",
+    )
+    # "anthropic" (the default) or "deepseek". Left unset, a DeepSeek model id
+    # in PODCAST_EXTRACTION_MODEL selects the DeepSeek path, and anything else
+    # keeps it on Claude.
+    podcast_extraction_provider: Optional[str] = Field(
+        None, env="PODCAST_EXTRACTION_PROVIDER",
+    )
+
+    # Fact-check routes. See nlp_pillars/llm_routes.py. Haiku screens every
     # claim; Sonnet re-judges only what the screen flagged. No temperature.
-    factcheck_extract_model: str = Field(
-        "claude-haiku-5-5",
-        env="FACTCHECK_EXTRACT_MODEL",
+    factcheck_extract_model: Optional[str] = Field(
+        None, env="FACTCHECK_EXTRACT_MODEL",
     )
-    factcheck_screen_model: str = Field(
-        "claude-haiku-5-5",
-        env="FACTCHECK_SCREEN_MODEL",
+    factcheck_screen_model: Optional[str] = Field(
+        None, env="FACTCHECK_SCREEN_MODEL",
     )
-    factcheck_rejudge_model: str = Field(
-        "claude-sonnet-5-5",
-        env="FACTCHECK_REJUDGE_MODEL",
+    factcheck_rejudge_model: Optional[str] = Field(
+        None, env="FACTCHECK_REJUDGE_MODEL",
     )
     # Start a fact-check run after a podcast script is saved. A failed check
     # does not fail the script run and does not change the script. Set false
@@ -70,6 +98,12 @@ class Settings(BaseSettings):
     vector_search_top_k: int = Field(5, env="VECTOR_SEARCH_TOP_K")
 
     # Application Settings with defaults
+    #
+    # DEFAULT_MODEL is retired. It named the OpenAI model the summarizer,
+    # lesson and quiz agents used, and that account ran out of credit on
+    # 2026-10-25. Generation routing lives in nlp_pillars/llm_routes.py now;
+    # this value is kept only so a stale .env line does not break startup,
+    # and nothing generation-related reads it.
     default_model: str = Field("gpt-4o", env="DEFAULT_MODEL")
     # Postgres chunk embeddings, and the vectors the projector copies into
     # Qdrant. Default is the pinned local bge model. EMBEDDING_PROVIDER=openai

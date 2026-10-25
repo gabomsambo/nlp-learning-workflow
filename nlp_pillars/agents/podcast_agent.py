@@ -1,7 +1,17 @@
 """
 Podcast Agent for generating educational podcast scripts from papers.
-Uses a 4-prompt Ground Pack system: DeepSeek for extraction (calls 1–4),
+Uses a 4-prompt Ground Pack system: DeepSeek for extraction (calls 1-4),
 Claude for synthesis (call 5).
+
+The Ground Pack calls go to DeepSeek's ``deepseek-flash``. Claude Haiku 5.5
+answers when DeepSeek fails, and Claude Sonnet 5 writes the script (call 5),
+which is unchanged: the script is the one call where taste is the point.
+
+The model id the app used to send was ``deepseek-v4-flash``. That is a legacy
+alias and the model behind it is served as ``deepseek-flash`` now, so that is
+what this route sends. ``PODCAST_EXTRACTION_PROVIDER`` and
+``LLM_PODCAST_EXTRACTION_MODEL`` can move the calls to Claude instead, with
+no code change.
 """
 
 import asyncio
@@ -16,6 +26,8 @@ import httpx
 from anthropic import AsyncAnthropic
 
 from ..config import get_settings
+from ..llm_client import supports_thinking_disabled
+from ..llm_prices import price_tokens
 from ..podcast_models import EXTRACTION_ROUTE, SYNTHESIS_ROUTE
 from ..podcast_options import (
     PRECEDENCE_NOTE, build_variables, resolve, settings_block,
@@ -109,6 +121,9 @@ class LLMCallResult:
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     finish_reason: Optional[str] = None
+    #: None means the cost could not be worked out (an unpriced model, or no
+    #: usage reported). It never means zero.
+    cost_usd: Optional[float] = None
 
 
 class FullTextResult(NamedTuple):
@@ -333,7 +348,21 @@ class PodcastAgent:
     _variables = DEFAULT_VARIABLES
     _settings_block = DEFAULT_SETTINGS_BLOCK
 
-    # Unlike the OpenAI-backed agents, this class has no module-level singleton
+    # The Ground Pack route's defaults, mirroring
+    # ``llm_routes.PODCAST_EXTRACTION_ROUTE``. ``__init__`` overwrites them
+    # from the route; they are here for the same reason the prompt fragments
+    # above are — the test suite stubs ``__init__`` out in a dozen places and
+    # an agent that never ran it still has to answer.
+    extraction_provider: str = "deepseek"
+    extraction_model: str = "deepseek-flash"
+    extraction_fallback_model: Optional[str] = "claude-haiku-5-5"
+    extraction_secondary_fallback: Optional[str] = "claude-sonnet-5"
+    extraction_thinking: str = "disabled"
+
+    #: The last call 5 made, for the run's stage detail.
+    last_synthesis_call: Optional[LLMCallResult] = None
+
+    # Unlike the other agents, this class has no module-level singleton
     # (webui/routers/api/podcast.py constructs it per request), so the lazy-proxy
     # pattern used by SummarizerAgent/SynthesisAgent/QuizAgent does not apply
     # here: there is nothing built at import time to fail, and a missing key
@@ -357,12 +386,20 @@ class PodcastAgent:
         )
         self.synthesis_model = SYNTHESIS_ROUTE.resolved_model()
 
-        # DeepSeek for Ground Pack extraction. Missing key does not abort init —
-        # compose fails at startup via DEEPSEEK_API_KEY:? — but every extraction
-        # call falls back to Claude and records why.
+        # The Ground Pack route. DeepSeek by default, with Claude Haiku 5.5
+        # behind it; Haiku can be made primary by configuration.
+        extraction = EXTRACTION_ROUTE.resolve()
+        self.extraction_provider = extraction.provider
+        self.extraction_model = extraction.model
+        self.extraction_fallback_model = extraction.fallback_model
+        self.extraction_secondary_fallback = extraction.secondary_fallback_model
+        self.extraction_thinking = extraction.thinking
+
+        # DeepSeek for the optional Ground Pack path. Missing key does not
+        # abort init — every extraction call falls back to Claude and records
+        # why.
         self._deepseek_api_key = settings.deepseek_api_key
         self._deepseek_base_url = settings.deepseek_base_url.rstrip("/")
-        self.extraction_model = EXTRACTION_ROUTE.resolved_model()
         self._deepseek_client: Optional[httpx.AsyncClient] = None
         if self._deepseek_api_key:
             self._deepseek_client = httpx.AsyncClient(
@@ -404,26 +441,38 @@ class PodcastAgent:
         max_tokens: int = EXTRACTION_MAX_TOKENS,
         *,
         model: Optional[str] = None,
+        thinking: Optional[str] = None,
     ) -> LLMCallResult:
         """Make streaming API call to Claude.
 
         Claude Sonnet 5 rejects ``temperature`` / ``top_p`` / ``top_k`` (HTTP
-        400). Sampling for Ground Pack fallback and synthesis is steered by
-        prompt text instead. DeepSeek extraction still takes an explicit
+        400). Sampling for the Ground Pack and the script is steered by prompt
+        text instead. DeepSeek extraction still takes an explicit
         temperature — see ``_call_deepseek``.
+
+        ``thinking`` is sent only when the route asks for it AND the model
+        accepts it. The Ground Pack extractions disable it: Haiku thinks by
+        default and the reasoning tokens come out of the same budget as the
+        content, which is how a section used to come back empty. Sonnet 5
+        refuses the parameter, so it never gets it.
         """
         model_id = model or self.synthesis_model
         full_text = ""
         input_tokens: Optional[int] = None
         output_tokens: Optional[int] = None
         finish_reason: Optional[str] = None
+        cost: Optional[float] = None
 
-        async with self.client.messages.stream(
-            model=model_id,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}]
-        ) as stream:
+        kwargs = {
+            "model": model_id,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        if thinking == "disabled" and supports_thinking_disabled(model_id):
+            kwargs["thinking"] = {"type": "disabled"}
+
+        async with self.client.messages.stream(**kwargs) as stream:
             async for text in stream.text_stream:
                 full_text += text
 
@@ -433,12 +482,23 @@ class PodcastAgent:
                 input_tokens = usage.input_tokens
                 output_tokens = usage.output_tokens
                 finish_reason = final.stop_reason
-                logger.info(
-                    f"Claude call usage ({model_id}): input={input_tokens} "
-                    f"output={output_tokens} tokens stop={finish_reason!r}"
-                )
             except Exception as e:  # usage logging must never fail a generation
                 logger.debug(f"Could not read token usage: {e}")
+
+        if input_tokens is not None or output_tokens is not None:
+            try:
+                cost = price_tokens(model_id, input_tokens or 0, output_tokens or 0)
+            except ValueError as exc:
+                # An unpriced model still produces a script; it just cannot be
+                # costed. Say so rather than recording a zero that reads as
+                # "free".
+                logger.warning("Podcast call cost is unknown (%s): %s", model_id, exc)
+            else:
+                logger.warning(
+                    f"Podcast Claude call usage ({model_id}): input={input_tokens} "
+                    f"output={output_tokens} tokens stop={finish_reason!r} "
+                    f"cost_usd={cost:.6f}"
+                )
 
         return LLMCallResult(
             text=full_text,
@@ -447,6 +507,7 @@ class PodcastAgent:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             finish_reason=finish_reason,
+            cost_usd=cost,
         )
 
     async def _call_deepseek(
@@ -496,9 +557,17 @@ class PodcastAgent:
         input_tokens = usage.get("prompt_tokens")
         output_tokens = usage.get("completion_tokens")
 
-        logger.info(
-            f"DeepSeek call usage ({model_id}): input={input_tokens} "
-            f"output={output_tokens} tokens finish={finish_reason!r}"
+        cost: Optional[float] = None
+        if input_tokens is not None or output_tokens is not None:
+            try:
+                cost = price_tokens(model_id, input_tokens or 0, output_tokens or 0)
+            except ValueError as exc:
+                logger.warning("Podcast call cost is unknown (%s): %s", model_id, exc)
+
+        logger.warning(
+            f"Podcast DeepSeek call usage ({model_id}): input={input_tokens} "
+            f"output={output_tokens} tokens finish={finish_reason!r} "
+            f"cost_usd={cost}"
         )
 
         return LLMCallResult(
@@ -508,6 +577,7 @@ class PodcastAgent:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             finish_reason=finish_reason,
+            cost_usd=cost,
         )
 
     def _record_from_result(
@@ -527,7 +597,31 @@ class PodcastAgent:
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             finish_reason=result.finish_reason,
+            cost_usd=result.cost_usd,
         )
+
+    def _extraction_attempts(self) -> list[tuple[str, str]]:
+        """The provider/model pairs to try, in order.
+
+        The route's own model goes first. A failure — the API, an empty
+        section, or a truncated one — moves to the next attempt, and the
+        record says which model actually answered and why the earlier one did
+        not.
+
+        The fallback models are Claude ones, so a DeepSeek outage still gets
+        a Ground Pack. A fallback equal to the primary model is skipped: that
+        would be the same call twice.
+        """
+        attempts: list[tuple[str, str]] = [
+            (self.extraction_provider, self.extraction_model)
+        ]
+        for model in (self.extraction_fallback_model, self.extraction_secondary_fallback):
+            if not model or model == self.extraction_model:
+                continue
+            if any(model == used for _provider, used in attempts):
+                continue
+            attempts.append(("anthropic", model))
+        return attempts
 
     async def _run_extraction_call(
         self,
@@ -537,41 +631,57 @@ class PodcastAgent:
         temperature: float,
         max_tokens: int = EXTRACTION_MAX_TOKENS,
     ) -> tuple[str, GroundPackCallRecord]:
-        """Run one Ground Pack extraction: DeepSeek first, Claude on failure."""
+        """Run one Ground Pack extraction, falling back loudly.
+
+        The first attempt uses the route's model. A failure — the API, an
+        empty section, or a truncated one — moves to the next attempt, and
+        the record says which model actually answered and why the earlier one
+        did not.
+        """
+        reasons: list[str] = []
         fallback_reason: Optional[str] = None
 
-        try:
-            deepseek_result = await self._call_deepseek(
-                system, user, max_tokens=max_tokens, temperature=temperature,
-            )
-            self._validate_extraction(deepseek_result)
+        for index, (provider, model) in enumerate(self._extraction_attempts()):
+            try:
+                if provider == "deepseek":
+                    result = await self._call_deepseek(
+                        system, user, max_tokens=max_tokens, temperature=temperature,
+                    )
+                else:
+                    result = await self._call_claude(
+                        system,
+                        user,
+                        max_tokens=max_tokens,
+                        model=model,
+                        thinking=self.extraction_thinking,
+                    )
+                self._validate_extraction(result)
+            except Exception as exc:
+                reasons.append(f"{provider}/{model}: {exc}")
+                if fallback_reason is None:
+                    fallback_reason = str(exc)
+                logger.warning(
+                    "Ground Pack extraction for %s failed on %s/%s (%s)",
+                    section, provider, model, exc,
+                )
+                continue
+
             return (
-                deepseek_result.text,
-                self._record_from_result(section, deepseek_result),
-            )
-        except Exception as exc:
-            fallback_reason = str(exc)
-            logger.warning(
-                "DeepSeek extraction for %s failed (%s); falling back to Claude",
-                section,
-                fallback_reason,
+                result.text,
+                self._record_from_result(
+                    section,
+                    result,
+                    fallback=index > 0,
+                    fallback_reason=fallback_reason if index > 0 else None,
+                ),
             )
 
-        claude_result = await self._call_claude(
-            system,
-            user,
-            max_tokens=max_tokens,
-            model=self.synthesis_model,
-        )
-        self._validate_extraction(claude_result)
-        return (
-            claude_result.text,
-            self._record_from_result(
-                section,
-                claude_result,
-                fallback=True,
-                fallback_reason=fallback_reason,
-            ),
+        # Every attempt failed. The message carries every reason, not just
+        # the first: which model ran out of budget and which one refused is
+        # the difference between "try again" and "this paper is too long".
+        raise GroundPackExtractionError(
+            f"every attempt at the {section} extraction failed: "
+            + "; ".join(reasons)
         )
 
     def _ground_pack_user(self, lead_in: str, paper_content: str) -> str:
@@ -667,13 +777,15 @@ LIMITATIONS & THREATS:
             **self._variables,
         )
 
-        return (await self._call_claude(
+        result = await self._call_claude(
             # Constant across every run: role, grounding, format, TTS. Only the
             # options, the Ground Pack and the paper are in the user message.
             system=FINAL_SYNTHESIS_SYSTEM,
             user=prompt,
             max_tokens=SYNTHESIS_MAX_TOKENS,
-        )).text
+        )
+        self.last_synthesis_call = result
+        return result.text
 
     def _extract_key_points(self, ground_pack: dict) -> list:
         """Extract key points from the facts outline."""
@@ -836,11 +948,13 @@ LIMITATIONS & THREATS:
     def _call_detail(rec: GroundPackCallRecord) -> str:
         bits = [f"{rec.provider}/{rec.model}"]
         if rec.fallback:
-            bits.append("Claude fallback")
-        if rec.output_tokens is not None:
-            bits.append(f"{rec.output_tokens:,} out tokens")
+            bits.append("fallback")
         if rec.input_tokens is not None:
             bits.append(f"{rec.input_tokens:,} in")
+        if rec.output_tokens is not None:
+            bits.append(f"{rec.output_tokens:,} out")
+        if rec.cost_usd is not None:
+            bits.append(f"${rec.cost_usd:.6f}")
         return " · ".join(bits)
 
     async def generate(
@@ -967,7 +1081,8 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
 """
 
         logger.info(f"Paper content assembled: {len(paper_content)} chars")
-        extraction_model = EXTRACTION_ROUTE.resolved_model()
+        extraction_model = self.extraction_model
+        extraction_provider = self.extraction_provider
 
         async def _run_section(
             stage: StageName,
@@ -979,7 +1094,7 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
                 on_stage,
                 stage,
                 StageStatus.RUNNING,
-                f"Extracting {label} via {extraction_model}",
+                f"Extracting {label} via {extraction_provider}/{extraction_model}",
             )
             try:
                 text, rec = await coro
@@ -1042,11 +1157,15 @@ Key Terms: {', '.join(notes.key_terms) if notes.key_terms else 'N/A'}
             self._emit_stage(on_stage, synth, StageStatus.FAILED, _first_line(e))
             raise
         word_count = len(script.split())
+        synth_bits = [synth_model, f"{word_count:,} words"]
+        synth_call = getattr(self, "last_synthesis_call", None)
+        if synth_call is not None and synth_call.cost_usd is not None:
+            synth_bits.append(f"${synth_call.cost_usd:.6f}")
         self._emit_stage(
             on_stage,
             synth,
             StageStatus.COMPLETED,
-            f"{synth_model} · {word_count:,} words",
+            " · ".join(synth_bits),
         )
 
         # Create PodcastScript

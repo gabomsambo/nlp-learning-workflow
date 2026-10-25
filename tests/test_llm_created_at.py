@@ -20,6 +20,8 @@ from nlp_pillars.created_at_repair import choose_real_timestamp, repair_sql_text
 from nlp_pillars.db import _lesson_to_dict, _paper_note_to_dict
 from nlp_pillars.schemas import (
     Lesson,
+    LessonDraft,
+    NoteDraft,
     PaperNote,
     PaperRef,
     ParsedPaper,
@@ -29,6 +31,43 @@ from nlp_pillars.schemas import (
 )
 
 INVENTED = datetime(2023, 10, 1, tzinfo=timezone.utc)
+
+
+def _parsed(value):
+    """One structured response from a mocked provider."""
+    return SimpleNamespace(
+        parsed_output=value,
+        usage=SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
+        stop_reason="end_turn",
+    )
+
+
+def _note_draft():
+    return NoteDraft(
+        problem="Recurrence blocks parallel training.",
+        method="Scaled dot-product attention.",
+        findings=["BLEU improved."],
+        limitations=["Quadratic cost."],
+        future_work=["Restricted attention."],
+        key_terms=["attention"],
+        concepts=["attention"],
+    )
+
+
+def _lesson_draft():
+    return LessonDraft(
+        title="Attention replaces recurrence",
+        content="The model attends over the whole sequence.",
+        tl_dr="Attention is all you need.",
+        takeaways=["No recurrence."],
+        practice_ideas=["Mask the diagonal."],
+        connections=["BERT."],
+    )
 
 
 def _note() -> PaperNote:
@@ -91,14 +130,8 @@ def test_llm_supplied_created_at_is_ignored():
         full_text="Attention is all you need.",
         chunks=["Attention is all you need."],
     )
-    summarizer = SummarizerAgentImpl(Mock(), "gpt-4o-mini")
-    completion = SimpleNamespace(
-        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20)
-    )
-    summarizer.client.chat.completions.create_with_completion.return_value = (
-        _note(),
-        completion,
-    )
+    summarizer = SummarizerAgentImpl(Mock(), "claude-haiku-5-5")
+    summarizer.client.messages.parse.return_value = _parsed(_note_draft())
     summarized = summarizer.run(
         SummarizerInput(
             parsed_paper=parsed,
@@ -108,15 +141,16 @@ def test_llm_supplied_created_at_is_ignored():
     )
     assert summarized.created_at != INVENTED
     assert summarized.created_at.year != 2023
-    assert summarizer.client.chat.completions.create_with_completion.call_args.kwargs["response_model"] is PaperNote
+    # The model is never asked for a date, an id or a pillar.
+    assert summarizer.client.messages.parse.call_args.kwargs["output_format"] is NoteDraft
 
-    synthesis = SynthesisAgentImpl(Mock(), "gpt-4o-mini")
-    synthesis.client.chat.completions.create.return_value = _lesson()
+    synthesis = SynthesisAgentImpl(Mock(), "claude-haiku-5-5")
+    synthesis.client.messages.parse.return_value = _parsed(_lesson_draft())
     pillar = PillarConfig(id="neural-architectures-language", name="Neural", goal="Read papers.")
     synthesized = synthesis.run(SynthesisInput(paper_note=_note(), pillar_config=pillar))
     assert synthesized.created_at != INVENTED
     assert synthesized.created_at.year != 2023
-    assert synthesis.client.chat.completions.create.call_args.kwargs["response_model"] is Lesson
+    assert synthesis.client.messages.parse.call_args.kwargs["output_format"] is LessonDraft
 
 
 def test_repair_chooses_processing_time_before_later_fallbacks():

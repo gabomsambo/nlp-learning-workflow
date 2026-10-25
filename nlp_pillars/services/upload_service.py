@@ -42,7 +42,8 @@ from ..agents.synthesis_agent import SynthesisAgent
 from ..db import add_paper
 from ..embeddings import EmbeddingError
 from .. import concept_extraction
-from ..config import get_settings
+from ..llm_client import stage_detail
+from ..llm_routes import CONCEPTS_ROUTE
 
 # _first_line is imported rather than copied: it strips tenacity's RetryError
 # wrapper, httpx's ' for url …' tail and instructor's dangling tag, and a second
@@ -752,15 +753,17 @@ class UploadService:
                     paper.id,
                     paper_note.concepts,
                     paper_note.proposed_concepts,
-                    str(call.get("model") or get_settings().default_model),
+                    str(call.get("model") or CONCEPTS_ROUTE.resolved_model()),
                 )
                 actions_triggered.append("summarizer")
                 stages.done(
                     StageName.SUMMARIZE,
-                    f"{len(paper_note.findings)} finding(s), "
-                    f"{len(paper_note.key_terms)} key term(s), "
-                    f"{len(paper_note.concepts) + len(paper_note.proposed_concepts)} concept(s), "
-                    f"cost_usd {float(call.get('cost_usd') or 0):.6f}",
+                    stage_detail(
+                        SummarizerAgent.last_call,
+                        f"{len(paper_note.findings)} finding(s), "
+                        f"{len(paper_note.key_terms)} key term(s), "
+                        f"{len(paper_note.concepts) + len(paper_note.proposed_concepts)} concept(s)",
+                    ),
                 )
             except Exception as e:
                 logger.error(f"Summarizer failed for {paper.id}: {e}")
@@ -783,7 +786,12 @@ class UploadService:
                 synthesis_input = SynthesisInput(
                     paper_note=paper_note,
                     pillar_config=pillar_config,
-                    related_lessons=[]  # Could get recent lessons from DB
+                    related_lessons=[],  # Could get recent lessons from DB
+                    # The paper's own text. A lesson written from the note
+                    # alone fills gaps from general knowledge.
+                    full_text=parsed_paper.full_text,
+                    paper_title=paper.title,
+                    paper_authors=list(paper.authors or []),
                 )
 
                 lesson = SynthesisAgent.run(synthesis_input)
@@ -791,7 +799,10 @@ class UploadService:
                 # Persist the lesson
                 db.insert_lesson(lesson)
                 actions_triggered.append("lesson_synthesis")
-                stages.done(StageName.SYNTHESIZE, lesson.title)
+                stages.done(
+                    StageName.SYNTHESIZE,
+                    stage_detail(SynthesisAgent.last_call, lesson.title),
+                )
             except Exception as e:
                 # A failed lesson must not take the quiz down with it: both are built
                 # from the note, not from each other.
@@ -816,7 +827,9 @@ class UploadService:
                 quiz_input = QuizGeneratorInput(
                     paper_note=paper_note,
                     num_questions=5,
-                    difficulty_mix={"easy": 2, "medium": 2, "hard": 1}
+                    difficulty_mix={"easy": 2, "medium": 2, "hard": 1},
+                    # The paper's own text, for the same reason as the lesson's.
+                    full_text=parsed_paper.full_text,
                 )
 
                 quiz_cards = QuizAgent.run(quiz_input)
@@ -825,7 +838,10 @@ class UploadService:
                 if quiz_cards:
                     db.insert_quiz_cards(quiz_cards)
                     actions_triggered.append("quiz_generation")
-                    stages.done(StageName.QUIZ, f"{len(quiz_cards)} card(s)")
+                    stages.done(
+                        StageName.QUIZ,
+                        stage_detail(QuizAgent.last_call, f"{len(quiz_cards)} card(s)"),
+                    )
                 else:
                     errors.append("quiz_generation: the model returned no cards")
                     stages.failed(StageName.QUIZ, "the model returned no cards")
