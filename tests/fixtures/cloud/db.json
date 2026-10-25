@@ -1,0 +1,630 @@
+{
+  "concepts": [
+    {
+      "aliases": [
+        "self attention"
+      ],
+      "created_at": "2026-10-7T12:00:00+00:00",
+      "description": "Attention over one sequence.",
+      "id": "c0c0c0c0-0000-4000-8000-000000000001",
+      "name": "Self-attention",
+      "updated_at": "2026-10-7T12:00:00+00:00"
+    },
+    {
+      "aliases": [],
+      "created_at": "2026-10-7T12:00:00+00:00",
+      "description": null,
+      "id": "c0c0c0c0-0000-4000-8000-000000000002",
+      "name": "Transformer",
+      "updated_at": "2026-10-7T12:00:00+00:00"
+    }
+  ],
+  "graph_edges": [
+    {
+      "created_at": "2026-10-8T12:00:00+00:00",
+      "dst_id": "file:abc123def456",
+      "dst_kind": "paper",
+      "kind": "related_to",
+      "provenance": "embedding",
+      "src_id": "arxiv:1706.03762",
+      "src_kind": "paper",
+      "weight": 0.81
+    },
+    {
+      "created_at": "2026-10-8T12:00:00+00:00",
+      "dst_id": "arxiv:9999.99999",
+      "dst_kind": "paper",
+      "kind": "related_to",
+      "provenance": "embedding",
+      "src_id": "arxiv:1706.03762",
+      "src_kind": "paper",
+      "weight": 0.99
+    },
+    {
+      "created_at": "2026-10-8T12:00:00+00:00",
+      "dst_id": "s2:ext1",
+      "dst_kind": "external_paper",
+      "kind": "cites",
+      "provenance": "s2",
+      "src_id": "arxiv:1706.03762",
+      "src_kind": "paper",
+      "weight": null
+    },
+    {
+      "created_at": "2026-10-8T12:00:00+00:00",
+      "dst_id": "Noam Shazeer",
+      "dst_kind": "author",
+      "kind": "authored_by",
+      "provenance": "paper",
+      "src_id": "arxiv:1706.03762",
+      "src_kind": "paper",
+      "weight": null
+    }
+  ],
+  "lessons": [
+    {
+      "connections": [
+        "Seq2seq"
+      ],
+      "created_at": "2026-10-6T12:00:00+00:00",
+      "difficulty": 2,
+      "estimated_time": 10,
+      "id": "l0000000-0000-4000-8000-000000000001",
+      "paper_id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "practice_ideas": [
+        "Implement attention"
+      ],
+      "takeaways": [
+        "Parallel training"
+      ],
+      "tl_dr": "Attention replaces recurrence."
+    }
+  ],
+  "notes": [
+    {
+      "confidence_score": 0.5,
+      "created_at": "2026-10-5T12:00:00+00:00",
+      "findings": [
+        "old"
+      ],
+      "future_work": [],
+      "id": "n0000000-0000-4000-8000-000000000001",
+      "key_terms": [
+        "old"
+      ],
+      "limitations": [],
+      "method": "old",
+      "paper_id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "problem": "OLD note problem",
+      "related_papers": []
+    },
+    {
+      "confidence_score": 0.8,
+      "created_at": "2026-10-6T12:00:00+00:00",
+      "findings": [
+        "Better BLEU"
+      ],
+      "future_work": [
+        "Long inputs"
+      ],
+      "id": "n0000000-0000-4000-8000-000000000002",
+      "key_terms": [
+        "self-attention",
+        "transformer"
+      ],
+      "limitations": [
+        "Quadratic cost"
+      ],
+      "method": "Self-attention.",
+      "paper_id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "problem": "Recurrence is sequential.",
+      "related_papers": [
+        "file:abc123def456"
+      ]
+    },
+    {
+      "confidence_score": 0.7,
+      "created_at": "2026-10-6T12:00:00+00:00",
+      "findings": [],
+      "future_work": [],
+      "id": "n0000000-0000-4000-8000-000000000003",
+      "key_terms": [],
+      "limitations": [],
+      "method": "Formalism.",
+      "paper_id": "file:abc123def456",
+      "pillar_id": "linguistic-theory",
+      "problem": "Grammar.",
+      "related_papers": []
+    }
+  ],
+  "paper_concepts": [
+    {
+      "concept_id": "c0c0c0c0-0000-4000-8000-000000000001",
+      "paper_id": "arxiv:1706.03762",
+      "source": "llm",
+      "weight": 0.9
+    },
+    {
+      "concept_id": "c0c0c0c0-0000-4000-8000-000000000002",
+      "paper_id": "arxiv:1706.03762",
+      "source": "note",
+      "weight": null
+    },
+    {
+      "concept_id": "c0c0c0c0-0000-4000-8000-000000000001",
+      "paper_id": "file:abc123def456",
+      "source": "note",
+      "weight": 0.7
+    }
+  ],
+  "papers": [
+    {
+      "abstract": "The dominant sequence transduction models are based on recurrent networks.",
+      "added_at": "2026-10-2T12:00:00+00:00",
+      "authors": [
+        "Ashish Vaswani",
+        "Noam Shazeer"
+      ],
+      "citation_count": 100000,
+      "created_at": "2026-10-2T12:00:00+00:00",
+      "id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "processed": true,
+      "processed_at": "2026-10-2T12:00:00+00:00",
+      "title": "Attention Is All You Need",
+      "url_pdf": "https://arxiv.org/pdf/1706.03762",
+      "venue": "NeurIPS",
+      "year": 2017
+    },
+    {
+      "abstract": "Uploaded by hand.",
+      "added_at": "2026-10-3T12:00:00+00:00",
+      "authors": [
+        "A. Writer"
+      ],
+      "citation_count": 0,
+      "created_at": "2026-10-3T12:00:00+00:00",
+      "id": "file:abc123def456",
+      "pillar_id": "linguistic-theory",
+      "processed": true,
+      "processed_at": "2026-10-3T12:00:00+00:00",
+      "title": "An uploaded paper — with a dash",
+      "url_pdf": "file:///app/data/uploads/abc123def456.pdf",
+      "venue": null,
+      "year": null
+    },
+    {
+      "abstract": null,
+      "added_at": "2026-10-4T12:00:00+00:00",
+      "authors": [],
+      "citation_count": 0,
+      "created_at": "2026-10-4T12:00:00+00:00",
+      "id": "cs/0301001",
+      "pillar_id": "linguistic-theory",
+      "processed": false,
+      "processed_at": null,
+      "title": "A paper with a slash in its id",
+      "url_pdf": null,
+      "venue": null,
+      "year": 2003
+    }
+  ],
+  "pillars": [
+    {
+      "created_at": "2026-10-1T12:00:00+00:00",
+      "focus_areas": [
+        "transformers",
+        "state space models"
+      ],
+      "goal": "Understand how language models are built.",
+      "id": "neural-architectures-language",
+      "last_active": null,
+      "name": "Neural Architectures for Language",
+      "papers_per_day": 2,
+      "updated_at": "2026-10-1T12:00:00+00:00"
+    },
+    {
+      "created_at": "2026-10-1T12:00:00+00:00",
+      "focus_areas": [
+        "minimalist grammars"
+      ],
+      "goal": "Grammar formalisms.",
+      "id": "linguistic-theory",
+      "last_active": null,
+      "name": "Linguistic Theory",
+      "papers_per_day": 1,
+      "updated_at": "2026-10-1T12:00:00+00:00"
+    }
+  ],
+  "podcast_claims": [
+    {
+      "category": "number",
+      "claim": "Claim 03.",
+      "dismissed_at": null,
+      "dismissed_note": null,
+      "error_type": "none",
+      "evidence": [
+        {
+          "char_end": 40,
+          "char_start": 10,
+          "chunk_id": "POISON-CHUNK-ID-4",
+          "chunk_index": 4,
+          "match_score": 100.0,
+          "quote": "All you need is attention."
+        }
+      ],
+      "evidence_status": "located",
+      "fact_check_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "id": "cccccccc-0000-4000-8000-000000000003",
+      "judge_trail": [
+        {
+          "model": "POISON-JUDGE-MODEL",
+          "step": "screen",
+          "verdict": "supported"
+        }
+      ],
+      "line_index": 2,
+      "rationale": "Because 03.",
+      "scope": "paper",
+      "severity": "none",
+      "source_says": "The paper says 03.",
+      "span_end": 20,
+      "span_start": 0,
+      "span_text": "span 03",
+      "verdict": "supported",
+      "verify_marker": false
+    },
+    {
+      "category": "number",
+      "claim": "Claim 01.",
+      "dismissed_at": null,
+      "dismissed_note": null,
+      "error_type": "none",
+      "evidence": [
+        {
+          "char_end": 40,
+          "char_start": 10,
+          "chunk_id": "POISON-CHUNK-ID-1",
+          "chunk_index": 1,
+          "match_score": 100.0,
+          "quote": "Recurrent models factor computation."
+        },
+        {
+          "char_end": 40,
+          "char_start": 10,
+          "chunk_id": "POISON-CHUNK-ID-2",
+          "chunk_index": 2,
+          "match_score": 100.0,
+          "quote": "Second quote."
+        }
+      ],
+      "evidence_status": "located",
+      "fact_check_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "id": "cccccccc-0000-4000-8000-000000000001",
+      "judge_trail": [
+        {
+          "model": "POISON-JUDGE-MODEL",
+          "step": "screen",
+          "verdict": "contradicted"
+        }
+      ],
+      "line_index": 0,
+      "rationale": "Because 01.",
+      "scope": "paper",
+      "severity": "high",
+      "source_says": "The paper says 01.",
+      "span_end": 25,
+      "span_start": 5,
+      "span_text": "span 01",
+      "verdict": "contradicted",
+      "verify_marker": false
+    },
+    {
+      "category": "number",
+      "claim": "Claim 02.",
+      "dismissed_at": "2026-10-22T12:00:00+00:00",
+      "dismissed_note": "POISON-DISMISSED-NOTE",
+      "error_type": "none",
+      "evidence": [],
+      "evidence_status": "not_located",
+      "fact_check_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "id": "cccccccc-0000-4000-8000-000000000002",
+      "judge_trail": [
+        {
+          "model": "POISON-JUDGE-MODEL",
+          "step": "screen",
+          "verdict": "unsupported"
+        }
+      ],
+      "line_index": 0,
+      "rationale": "Because 02.",
+      "scope": "paper",
+      "severity": "medium",
+      "source_says": "The paper says 02.",
+      "span_end": 50,
+      "span_start": 30,
+      "span_text": "span 02",
+      "verdict": "unsupported",
+      "verify_marker": false
+    },
+    {
+      "category": "number",
+      "claim": "Claim 09.",
+      "dismissed_at": null,
+      "dismissed_note": null,
+      "error_type": "none",
+      "evidence": [
+        {
+          "char_end": 40,
+          "char_start": 10,
+          "chunk_id": "POISON-CHUNK-ID-0",
+          "chunk_index": 0,
+          "match_score": 100.0,
+          "quote": "Superseded check."
+        }
+      ],
+      "evidence_status": "located",
+      "fact_check_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "id": "cccccccc-0000-4000-8000-000000000009",
+      "judge_trail": [
+        {
+          "model": "POISON-JUDGE-MODEL",
+          "step": "screen",
+          "verdict": "supported"
+        }
+      ],
+      "line_index": 0,
+      "rationale": "Because 09.",
+      "scope": "paper",
+      "severity": "none",
+      "source_says": "The paper says 09.",
+      "span_end": 20,
+      "span_start": 0,
+      "span_text": "span 09",
+      "verdict": "supported",
+      "verify_marker": false
+    }
+  ],
+  "podcast_fact_checks": [
+    {
+      "cost_usd": 0.5,
+      "counts": {
+        "claims": 1
+      },
+      "created_at": "2026-10-20T12:00:00+00:00",
+      "id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "models": {
+        "extract": "POISON-MODEL"
+      },
+      "paper_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "prompt_version": "v1",
+      "script_id": "11111111-1111-4111-8111-111111111111",
+      "script_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "status": "succeeded"
+    },
+    {
+      "cost_usd": 0.7,
+      "counts": {
+        "claims": 3,
+        "high": 1
+      },
+      "created_at": "2026-10-21T12:00:00+00:00",
+      "id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "models": {
+        "extract": "POISON-MODEL"
+      },
+      "paper_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "prompt_version": "v2",
+      "script_id": "11111111-1111-4111-8111-111111111111",
+      "script_sha256": "46f657979fa1375b900b1af2f43ec5dea883edd097c2be1eabcbff2097141151",
+      "status": "succeeded"
+    },
+    {
+      "cost_usd": 0,
+      "counts": {},
+      "created_at": "2026-10-24T12:00:00+00:00",
+      "id": "aaaaaaaa-0000-4000-8000-000000000003",
+      "models": {},
+      "paper_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "prompt_version": "v2",
+      "script_id": "11111111-1111-4111-8111-111111111111",
+      "script_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "status": "failed"
+    }
+  ],
+  "podcast_scripts": [
+    {
+      "audio_metadata": {
+        "chunk_count": 3,
+        "duration_seconds": 12.4,
+        "engine": "indextts",
+        "file_name": "attention_20261022.mp3",
+        "file_path": "/app/data/podcast_audio/attention_20261022.mp3",
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "timeline": {
+          "aligned_at": "2026-10-25T12:00:00+00:00",
+          "duration_ms": 12500,
+          "engine": "faster-whisper base.en@3d3d5dee",
+          "lines": [
+            {
+              "end_ms": 4000,
+              "line": 0,
+              "start_ms": 0,
+              "words": [
+                [
+                  0,
+                  500,
+                  1
+                ],
+                [
+                  500,
+                  900,
+                  1
+                ],
+                [
+                  900,
+                  4000,
+                  0
+                ]
+              ]
+            },
+            {
+              "end_ms": 9000,
+              "line": 2,
+              "start_ms": 4200,
+              "words": [
+                [
+                  4200,
+                  5000,
+                  1
+                ],
+                [
+                  5000,
+                  9000,
+                  1
+                ]
+              ]
+            }
+          ],
+          "matched_ratio": 0.9,
+          "script_sha256": "ignored-here",
+          "version": 1,
+          "word_count": 6,
+          "word_level": true
+        },
+        "voice_label": "POISON-VOICE.mp4",
+        "voice_path": "Podcasts/voices/POISON-VOICE.mp4"
+      },
+      "created_at": "2026-10-22T12:00:00+00:00",
+      "ground_pack": {
+        "summary": "POISON-GROUND-PACK"
+      },
+      "ground_pack_calls": {
+        "x": {
+          "model": "POISON-GP-CALLS"
+        }
+      },
+      "id": "11111111-1111-4111-8111-111111111111",
+      "key_points": [
+        "Attention",
+        "No recurrence"
+      ],
+      "options": {
+        "choices": {
+          "tone": "POISON-OPTIONS"
+        }
+      },
+      "paper_id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "script": "[HOST]: Welcome.\n[PAUSE]\n[HOST]: Attention is all you need.",
+      "source_material": {
+        "full_text_chars": 5000,
+        "has_abstract": true,
+        "has_notes": true,
+        "level": "full",
+        "warnings": []
+      },
+      "title": "Deep Dive: Attention",
+      "word_count": 6
+    },
+    {
+      "audio_metadata": null,
+      "created_at": "2026-10-23T12:00:00+00:00",
+      "ground_pack": {
+        "summary": "POISON-GROUND-PACK-2"
+      },
+      "ground_pack_calls": null,
+      "id": "22222222-2222-4222-8222-222222222222",
+      "key_points": [],
+      "options": null,
+      "paper_id": "file:abc123def456",
+      "pillar_id": "linguistic-theory",
+      "script": "[HOST]: Only an abstract was available.",
+      "source_material": {
+        "full_text_chars": 0,
+        "has_abstract": true,
+        "has_notes": false,
+        "level": "partial",
+        "warnings": [
+          "Written from the abstract only."
+        ]
+      },
+      "title": "Deep Dive: Uploaded",
+      "word_count": 6
+    }
+  ],
+  "quiz_cards": [
+    {
+      "answer": "Self-attention.",
+      "created_at": "2026-10-24T12:00:00+00:00",
+      "difficulty": 2,
+      "difficulty_fsrs": 0.0,
+      "due_date": "2026-10-24T12:00:00+00:00",
+      "ease_factor": 2.5,
+      "id": "a0000000-0000-4000-8000-000000000001",
+      "interval": 1,
+      "lapses": 0,
+      "last_review_date": null,
+      "last_reviewed": null,
+      "next_review_date": null,
+      "paper_id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "question": "What replaces recurrence?",
+      "question_type": "factual",
+      "repetitions": 0,
+      "retrievability": null,
+      "stability": 0.0,
+      "state": "new",
+      "user_id": "default_user"
+    },
+    {
+      "answer": "To keep softmax gradients usable.",
+      "created_at": "2026-10-24T12:00:00+00:00",
+      "difficulty": 2,
+      "difficulty_fsrs": 5.5,
+      "due_date": "2026-10-24T12:00:00+00:00",
+      "ease_factor": 2.5,
+      "id": "a0000000-0000-4000-8000-000000000002",
+      "interval": 1,
+      "lapses": 1,
+      "last_review_date": "2026-10-20T12:00:00+00:00",
+      "last_reviewed": "2026-10-20T12:00:00+00:00",
+      "next_review_date": "2026-10-24T12:00:00+00:00",
+      "paper_id": "arxiv:1706.03762",
+      "pillar_id": "neural-architectures-language",
+      "question": "Why scale dot products?",
+      "question_type": "conceptual",
+      "repetitions": 2,
+      "retrievability": null,
+      "stability": 3.25,
+      "state": "review",
+      "user_id": "default_user"
+    },
+    {
+      "answer": "A structure-building operation.",
+      "created_at": "2026-10-24T12:00:00+00:00",
+      "difficulty": 3,
+      "difficulty_fsrs": 0.0,
+      "due_date": "2026-10-24T12:00:00+00:00",
+      "ease_factor": 2.5,
+      "id": "a0000000-0000-4000-8000-000000000003",
+      "interval": 1,
+      "lapses": 0,
+      "last_review_date": null,
+      "last_reviewed": null,
+      "next_review_date": null,
+      "paper_id": "file:abc123def456",
+      "pillar_id": "neural-architectures-language",
+      "question": "What is merge?",
+      "question_type": "factual",
+      "repetitions": 0,
+      "retrievability": null,
+      "stability": 0.0,
+      "state": "new",
+      "user_id": "default_user"
+    }
+  ]
+}
