@@ -122,77 +122,15 @@
     return lines;
   }
 
-  var FACTCHECK_SEVERITY = { high: 3, medium: 2, low: 1 };
-
-  var TONE_ICONS = { high: '▲', medium: '◆', low: '○', neutral: '○' };
-
-  function claimTone(claim) {
-    claim = claim || {};
-    if (claim.verdict === 'supported') return 'supported';
-    if (claim.verdict === 'not_checkable') return 'neutral';
-    return FACTCHECK_SEVERITY[claim.severity] ? claim.severity : 'neutral';
-  }
-
-  /*
-   * One claim, one bucket. The summary bar and the issues panel both count from
-   * this, so they can never disagree about what a verdict means.
-   *
-   *   contradicted  the paper says something incompatible (high severity)
-   *   misattributed the paper says something else, or the claim is not the
-   *                 authors' to make (contradicted background, wrong attribution)
-   *   not_in_paper  the paper does not address it, and the claim is about the paper
-   *   overstated    the core is right and a detail is not
-   *   outside       probably true of the world, absent from the paper
-   *   unchecked     an opinion, a prediction, a hedge — not a checkable claim
-   *   supported     the paper states it
-   *   unclassified  a verdict this build does not know; shown, never folded away
-   */
-  function claimBucket(claim) {
-    claim = claim || {};
-    if (claim.verdict === 'supported') return 'supported';
-    if (claim.verdict === 'not_checkable') return 'unchecked';
-    if (claim.verdict === 'contradicted') {
-      return claim.severity === 'high' ? 'contradicted' : 'misattributed';
-    }
-    if (claim.verdict === 'unsupported') {
-      return claim.severity === 'low' ? 'outside' : 'not_in_paper';
-    }
-    if (claim.verdict === 'partially_supported') {
-      return claim.error_type === 'wrong_attribution' ? 'misattributed' : 'overstated';
-    }
-    return 'unclassified';
-  }
-
-  function claimPresentation(claim) {
-    claim = claim || {};
-    var bucket = claimBucket(claim);
-    if (bucket === 'supported') {
-      return { tone: 'supported', icon: '✓', label: 'Supported by the paper' };
-    }
-    if (bucket === 'unchecked') {
-      return { tone: 'neutral', icon: '○', label: 'Opinion · not checked' };
-    }
-    if (bucket === 'contradicted') {
-      return { tone: 'high', icon: '▲', label: 'Contradicts the paper' };
-    }
-    if (bucket === 'misattributed') {
-      return { tone: 'medium', icon: '◆', label: 'Not what the authors say' };
-    }
-    if (bucket === 'not_in_paper') {
-      return { tone: 'high', icon: '▲', label: 'Not in the paper' };
-    }
-    if (bucket === 'overstated') {
-      // Grey, not amber, when the engine called it low severity: an overstatement
-      // the paper does not contradict is not the same as a wrong number. The
-      // icon follows the tone, so colour and shape always agree.
-      var tone = claim.severity === 'medium' ? 'medium' : 'low';
-      return { tone: tone, icon: TONE_ICONS[tone], label: 'Overstated' };
-    }
-    if (bucket === 'outside') {
-      return { tone: 'low', icon: '○', label: 'Outside the paper' };
-    }
-    return { tone: 'neutral', icon: '○', label: 'Not classified' };
-  }
+  var Factcheck = global.Factcheck ||
+    (typeof require === 'function' ? require('./factcheck.js') : {});
+  var claimTone = Factcheck.claimTone;
+  var claimBucket = Factcheck.claimBucket;
+  var claimPresentation = Factcheck.claimPresentation;
+  var strongestClaim = Factcheck.strongestClaim;
+  var issueClaims = Factcheck.issueClaims;
+  var factcheckSummary = Factcheck.factcheckSummary;
+  var isFactcheckStale = Factcheck.isFactcheckStale;
 
   /*
    * Where a claim's highlight sits in its line.
@@ -266,89 +204,6 @@
       out.push({ start: start, end: end, text: line.slice(start, end), claims: covering });
     }
     return out;
-  }
-
-  var TONE_RANK = { high: 3, medium: 2, low: 1, neutral: 0, supported: -1 };
-
-  function strongestClaim(claims) {
-    var best = null;
-    var bestRank = -2;
-    (claims || []).forEach(function (claim) {
-      var rank = TONE_RANK[claimTone(claim)];
-      if (rank === undefined) rank = 0;
-      if (rank > bestRank) {
-        best = claim;
-        bestRank = rank;
-      }
-    });
-    return best;
-  }
-
-  function issueClaims(claims) {
-    return (claims || []).filter(function (claim) {
-      if (!claim) return false;
-      var bucket = claimBucket(claim);
-      // Supported claims and opinions are not issues. Anything else is — a claim
-      // this build cannot classify is shown as unclassified, never dropped.
-      return bucket !== 'supported' && bucket !== 'unchecked';
-    }).slice().sort(function (a, b) {
-      var severity = (FACTCHECK_SEVERITY[b.severity] || 0) - (FACTCHECK_SEVERITY[a.severity] || 0);
-      if (severity) return severity;
-      var line = Number(a.line_index) - Number(b.line_index);
-      if (line) return line;
-      return Number(a.span_start) - Number(b.span_start);
-    });
-  }
-
-  var SUMMARY_LABELS = {
-    contradicted: 'contradict the paper',
-    not_in_paper: 'not in the paper',
-    misattributed: 'not what the authors say',
-    overstated: 'overstated',
-    outside: 'outside the paper',
-    unchecked: 'opinion (not checked)',
-    unclassified: 'not classified',
-    supported: 'supported',
-  };
-
-  var SUMMARY_ORDER = [
-    'contradicted',
-    'not_in_paper',
-    'misattributed',
-    'overstated',
-    'outside',
-    'unchecked',
-    'unclassified',
-    'supported',
-  ];
-
-  /*
-   * The honest one-liner: how many claims were graded, and how they came out.
-   *
-   * Every bucket is counted, including the opinions that were not checked and
-   * the claims the paper supports. A summary that only named the problems
-   * would let the unmentioned lines read as verified, which is the point the
-   * research makes about the implied-truth effect.
-   */
-  function factcheckSummary(claims) {
-    claims = claims || [];
-    var counts = {};
-    SUMMARY_ORDER.forEach(function (bucket) { counts[bucket] = 0; });
-    claims.forEach(function (claim) {
-      if (!claim) return;
-      var bucket = claimBucket(claim);
-      counts[bucket] = (counts[bucket] || 0) + 1;
-    });
-    var parts = [claims.length + ' claim' + (claims.length === 1 ? '' : 's') + ' checked'];
-    SUMMARY_ORDER.forEach(function (bucket) {
-      if (!counts[bucket]) return;
-      parts.push(counts[bucket] + ' ' + SUMMARY_LABELS[bucket]);
-    });
-    return parts.join(' · ');
-  }
-
-  function isFactcheckStale(expectedHash, currentHash) {
-    return !!(expectedHash && currentHash && expectedHash !== currentHash);
   }
 
   function requestedLine(value, lineCount) {

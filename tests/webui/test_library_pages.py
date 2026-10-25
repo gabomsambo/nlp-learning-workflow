@@ -249,6 +249,26 @@ def test_paper_page_renders_sections_and_actions(client):
     assert 'href="#episode"' in body
 
 
+def test_paper_page_hooks_up_the_episode_fact_check(client):
+    body = client.get("/papers/arxiv:2402.08593").text
+    script_id = "11111111-1111-1111-1111-111111111111"
+    # Without JavaScript the panel says the status is unknown, never "no issues".
+    assert f'data-factcheck-script="{script_id}"' in body
+    assert "nothing here says the script was checked" in body
+    assert f'data-factcheck-chip="{script_id}"' in body
+    # The shared helpers load before the page script that uses them.
+    shared = body.index("/static/factcheck.js")
+    page = body.index("/static/paper-page.js")
+    assert shared < page
+
+
+def test_listen_page_loads_the_shared_fact_check_helpers_first():
+    from pathlib import Path
+
+    template = (Path(__file__).resolve().parents[2] / "webui" / "templates" / "podcast.html").read_text()
+    assert template.index("/static/factcheck.js") < template.index("/static/listen.js")
+
+
 def test_raw_colon_path_resolves_the_same_page(client):
     response = client.get("/papers/arxiv:2402.08593")
     assert response.status_code == 200
