@@ -5,7 +5,7 @@ All data models inherit from BaseIOSchema for Atomic Agents compatibility.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from pydantic import BaseModel as BaseIOSchema
 from pydantic.json_schema import SkipJsonSchema
@@ -266,6 +266,147 @@ class QuizCard(BaseIOSchema):
     interval_days: int = Field(default=1, description="Current interval in days (legacy)")
 
 
+# ---------------------------------------------------------------------------
+# Model-facing drafts
+#
+# Claude's native structured outputs reject the app's full ``QuizCard`` schema
+# with ``400 Schema is too complex``: 23 properties, one of them a nested
+# ``UserFSRSParameters``. The database models are not what a model should be
+# asked to fill in — they carry identity, scheduling state and server-owned
+# timestamps that the model has no business inventing.
+#
+# These drafts are the small schemas the provider sees. The mappers below
+# turn one into the row-shaped model, and the server owns everything the
+# model does not: the ids, the timestamps, the FSRS state, the difficulty mix.
+# ---------------------------------------------------------------------------
+
+
+class NoteDraft(BaseModel):
+    """What the model fills in for one paper note.
+
+    Every field is content the model can know. ``paper_id``, ``pillar_id``,
+    ``created_at`` and the concept-call record are not here, and never were
+    going to be: a date the model invented is not a date.
+    """
+
+    problem: str = Field(..., description="Problem the paper addresses")
+    method: str = Field(..., description="Methodology used")
+    findings: List[str] = Field(..., description="Key findings")
+    limitations: List[str] = Field(..., description="Limitations identified")
+    future_work: List[str] = Field(..., description="Future research directions")
+    key_terms: List[str] = Field(..., description="Important technical terms")
+    concepts: List[str] = Field(
+        default_factory=list,
+        description="Exact names selected from the supplied concept vocabulary",
+    )
+    proposed_concepts: List[str] = Field(
+        default_factory=list,
+        description="New concept names proposed only when the vocabulary has no match",
+    )
+    related_papers: List[str] = Field(
+        default_factory=list, description="Related paper IDs"
+    )
+    confidence_score: float = Field(
+        default=0.8, description="Extraction confidence, 0 to 1"
+    )
+
+
+class LessonDraft(BaseModel):
+    """What the model fills in for one lesson."""
+
+    title: str = Field(..., description="Lesson title")
+    content: str = Field(..., description="Main lesson content")
+    tl_dr: str = Field(..., description="One-sentence summary")
+    takeaways: List[str] = Field(..., description="Key takeaways")
+    practice_ideas: List[str] = Field(..., description="Practical applications")
+    connections: List[str] = Field(..., description="Connections to other work")
+    examples: List[str] = Field(default_factory=list, description="Examples")
+
+
+class CardDraft(BaseModel):
+    """What the model fills in for one quiz card.
+
+    No ``difficulty``: the caller's difficulty mix is a curriculum decision
+    and it seeds FSRS scheduling, so it is applied after the call rather than
+    asked for.
+    """
+
+    question: str = Field(..., description="Quiz question")
+    answer: str = Field(..., description="Correct answer")
+    question_type: Literal["factual", "conceptual", "application"] = Field(
+        ..., description="What the question tests"
+    )
+
+
+class QuizDraft(BaseModel):
+    """The model's answer for a whole quiz: a list of cards."""
+
+    cards: List[CardDraft] = Field(..., description="The quiz cards")
+
+
+def note_from_draft(draft: NoteDraft, paper_id: str, pillar_id: str) -> PaperNote:
+    """Map a model-filled note onto the stored model.
+
+    Identity and the timestamp come from this process. The concept call record
+    is added by the summarizer, which is the only place that knows what the
+    call cost.
+    """
+    return PaperNote(
+        paper_id=paper_id,
+        pillar_id=pillar_id,
+        problem=draft.problem,
+        method=draft.method,
+        findings=list(draft.findings),
+        limitations=list(draft.limitations),
+        future_work=list(draft.future_work),
+        key_terms=list(draft.key_terms),
+        concepts=list(draft.concepts),
+        proposed_concepts=list(draft.proposed_concepts),
+        related_papers=list(draft.related_papers),
+        confidence_score=draft.confidence_score,
+    )
+
+
+def lesson_from_draft(draft: LessonDraft, paper_id: str, pillar_id: str) -> Lesson:
+    """Map a model-filled lesson onto the stored model.
+
+    ``podcast_script``, ``difficulty`` and ``estimated_time`` keep their
+    defaults: the first is written by a different stage, and the other two
+    are the server's call.
+    """
+    return Lesson(
+        paper_id=paper_id,
+        pillar_id=pillar_id,
+        title=draft.title,
+        content=draft.content,
+        tl_dr=draft.tl_dr,
+        takeaways=list(draft.takeaways),
+        practice_ideas=list(draft.practice_ideas),
+        connections=list(draft.connections),
+        examples=list(draft.examples),
+    )
+
+
+def quiz_cards_from_draft(
+    draft: QuizDraft, paper_id: str, pillar_id: str
+) -> List[QuizCard]:
+    """Map a model-filled quiz onto stored cards.
+
+    Difficulty is left at its default; the quiz agent assigns the caller's
+    mix immediately afterwards.
+    """
+    return [
+        QuizCard(
+            paper_id=paper_id,
+            pillar_id=pillar_id,
+            question=card.question,
+            answer=card.answer,
+            question_type=QuestionType(card.question_type),
+        )
+        for card in draft.cards
+    ]
+
+
 class SourceMaterial(BaseModel):
     """What the podcast was actually written from.
 
@@ -326,14 +467,21 @@ class GroundPackCallRecord(BaseModel):
     section: str = Field(..., description="facts_outline | core_concepts | metrics_datasets | limitations")
     provider: str = Field(..., description="deepseek or anthropic")
     model: str = Field(..., description="Model id that produced the section")
-    fallback: bool = Field(default=False, description="True when Claude replaced a failed DeepSeek call")
+    fallback: bool = Field(default=False, description="True when a later attempt replaced a failed one")
     fallback_reason: Optional[str] = Field(
         None,
-        description="Why DeepSeek was skipped, when fallback is True",
+        description="Why the first attempt was skipped, when fallback is True",
     )
     input_tokens: Optional[int] = Field(None, description="Prompt tokens, when reported by the provider")
     output_tokens: Optional[int] = Field(None, description="Completion tokens, when reported by the provider")
     finish_reason: Optional[str] = Field(None, description="Provider stop reason, e.g. stop or length")
+    cost_usd: Optional[float] = Field(
+        None,
+        description=(
+            "Cost of this call in USD. None means it could not be worked out "
+            "(an unpriced model, or no usage reported) — never zero."
+        ),
+    )
 
 
 class AudioMetadata(BaseModel):
@@ -601,6 +749,21 @@ class SynthesisInput(BaseIOSchema):
     paper_note: PaperNote = Field(..., description="Structured paper notes")
     pillar_config: PillarConfig = Field(..., description="Pillar configuration")
     related_lessons: List[Lesson] = Field(default_factory=list, description="Related previous lessons")
+    # The paper's own text. A lesson written from the note alone fills gaps
+    # from general knowledge and repeats the note's mistakes; measured on
+    # the same prompts, adding the text moved the rubric mean from 3.12 to
+    # 4.44. Optional so the CLI and the older callers still work.
+    full_text: Optional[str] = Field(
+        None, description="The paper body, when it is available"
+    )
+    # The paper's own identity, so the lesson does not list the paper it is
+    # about as related work.
+    paper_title: Optional[str] = Field(
+        None, description="Title of the paper being taught"
+    )
+    paper_authors: List[str] = Field(
+        default_factory=list, description="Authors of the paper being taught"
+    )
 
 
 class QuizGeneratorInput(BaseIOSchema):
@@ -610,6 +773,11 @@ class QuizGeneratorInput(BaseIOSchema):
     difficulty_mix: dict = Field(
         default={"easy": 2, "medium": 2, "hard": 1},
         description="Mix of difficulty levels"
+    )
+    # The paper's own text. Same reason as the lesson's: a question built
+    # from the note alone can carry the note's misreading.
+    full_text: Optional[str] = Field(
+        None, description="The paper body, when it is available"
     )
 
 

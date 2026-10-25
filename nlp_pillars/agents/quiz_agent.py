@@ -1,16 +1,29 @@
-"""Quiz Agent - Real LLM implementation using instructor + OpenAI.
+"""Quiz Agent - generates quiz cards for spaced repetition, with Claude.
 
-Generates varied quiz cards (FACTUAL/CONCEPTUAL/APPLICATION) for spaced repetition.
+The model fills a small schema (``CardDraft``), not the stored ``QuizCard``.
+The stored card carries FSRS scheduling state, a legacy SM-2 shadow, an id and
+a timestamp — 23 properties in all — and Claude's native structured outputs
+reject that schema outright with ``400 Schema is too complex``. The draft is
+three fields; everything else on the card is the server's.
+
+``question_type`` is whatever the model determined; only ``difficulty`` is
+reassigned, to honour the caller's requested ``difficulty_mix``.
 """
 
 import logging
 from typing import List, Optional
 
-import instructor
-from openai import OpenAI
-
 from ..config import get_settings
-from ..schemas import DifficultyLevel, QuizCard, QuizGeneratorInput
+from ..config import get_settings
+from ..llm_client import StructuredCall, fit_paper_text, structured
+from ..llm_routes import QUIZ_ROUTE
+from ..schemas import (
+    DifficultyLevel,
+    QuizCard,
+    QuizDraft,
+    QuizGeneratorInput,
+    quiz_cards_from_draft,
+)
 from .discovery_agent import SystemPromptGenerator
 
 logger = logging.getLogger(__name__)
@@ -25,20 +38,23 @@ class QuizValidationError(Exception):
 class QuizAgentImpl:
     """Instance-based implementation for generating quiz cards.
 
-    Uses instructor + OpenAI for structured output generation.
-    Tests create their own instances with mocked clients.
+    Uses Claude's native structured output. Tests create their own instances
+    with a mocked client.
     """
 
-    def __init__(self, client, model: str):
+    def __init__(self, client, model: Optional[str] = None):
         """Initialize the quiz agent.
 
         Args:
-            client: Instructor-wrapped OpenAI client
-            model: Model name to use for completions
+            client: An Anthropic client with a ``messages.parse`` method.
+            model: Model id override. ``None`` means the quiz route's
+                resolved model.
 
         """
         self.client = client
         self.model = model
+        #: The last call this agent made, for the run's stage detail.
+        self.last_call: Optional[StructuredCall] = None
 
         # System prompt for quiz generation
         self.system_prompt = SystemPromptGenerator(
@@ -66,12 +82,8 @@ class QuizAgentImpl:
     def run(self, input_data: QuizGeneratorInput) -> List[QuizCard]:
         """Run quiz generation and post-processing.
 
-        Retries on invalid model output are handled by instructor itself, which
-        re-prompts with the validation feedback up to ``max_retries`` times
-        (default 3) before raising. There is deliberately no retry layer here.
-
-        ``question_type`` is whatever the model determined; only ``difficulty``
-        is reassigned, to honour the caller's requested ``difficulty_mix``.
+        One call, no hand-rolled retry. The helper falls back to the route's
+        fallback model when the call fails outright.
 
         Args:
             input_data: QuizGeneratorInput with paper note and generation params
@@ -90,7 +102,7 @@ class QuizAgentImpl:
             cards = self._attempt_quiz_generation(input_data)
         except Exception as e:
             logger.error(f"Quiz generation failed: {e}")
-            raise QuizValidationError(f"Instructor completion failed: {e}") from e
+            raise QuizValidationError(f"Claude completion failed: {e}") from e
 
         # Apply the caller's requested difficulty mix. The prompt asks for the
         # mix but the model does not reliably honour it, and difficulty seeds
@@ -116,22 +128,22 @@ class QuizAgentImpl:
         system_message = self._build_system_message()
         user_message = self._build_user_message(input_data)
 
-        result = self.client.chat.completions.create(
+        call = structured(
+            QUIZ_ROUTE,
+            system=system_message,
+            user=user_message,
+            out_model=QuizDraft,
+            client=self.client,
             model=self.model,
-            response_model=List[QuizCard],
-            temperature=0.3,  # Slightly higher for variety
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message}
-            ]
         )
+        self.last_call = call
 
         # Set paper_id and pillar_id for all cards
-        for card in result:
-            card.paper_id = input_data.paper_note.paper_id
-            card.pillar_id = input_data.paper_note.pillar_id
-
-        return result
+        return quiz_cards_from_draft(
+            call.parsed,
+            input_data.paper_note.paper_id,
+            input_data.paper_note.pillar_id,
+        )
 
     def _apply_difficulty_mix(
         self,
@@ -199,6 +211,21 @@ class QuizAgentImpl:
             f"Limitations: {'; '.join(note.limitations)}",
             f"Future Work: {'; '.join(note.future_work)}",
             f"Key Terms: {', '.join(note.key_terms)}",
+        ]
+
+        # The paper's own text, when there is one. A card built from the note
+        # alone can carry the note's misreading of a number.
+        full_text = (input_data.full_text or "").strip()
+        if full_text:
+            parts.extend(
+                [
+                    "",
+                    "Paper Text:",
+                    fit_paper_text(full_text),
+                ]
+            )
+
+        parts.extend([
             "",
             f"Generate {input_data.num_questions} quiz questions with this difficulty mix:",
             f"- Easy (direct recall): {input_data.difficulty_mix.get('easy', 0)}",
@@ -209,25 +236,24 @@ class QuizAgentImpl:
             "- FACTUAL: Tests specific facts, metrics, or definitions",
             "- CONCEPTUAL: Tests understanding of ideas and relationships",
             "- APPLICATION: Tests ability to apply concepts to new situations"
-        ]
+        ])
 
         return "\n".join(parts)
 
 
 def _make_client():
-    """Create instructor-wrapped OpenAI client.
+    """Create the Anthropic client.
 
     Returns:
-        Instructor-wrapped OpenAI client
+        An Anthropic client
 
     Raises:
-        ValueError: If OPENAI_API_KEY is not set
+        ValueError: If ANTHROPIC_API_KEY is not set
 
     """
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required")
-    return instructor.from_openai(OpenAI(api_key=settings.openai_api_key))
+    from ..llm_client import make_client
+
+    return make_client()
 
 
 class _LazyQuizAgent:
@@ -242,13 +268,18 @@ class _LazyQuizAgent:
     def _get_impl(self) -> QuizAgentImpl:
         if self._impl is None:
             settings = get_settings()
-            if not settings.openai_api_key:
+            if not settings.anthropic_api_key:
                 raise ValueError(
                     "QuizAgent is not initialized: "
-                    "OPENAI_API_KEY environment variable is required"
+                    "ANTHROPIC_API_KEY environment variable is required"
                 )
-            self._impl = QuizAgentImpl(_make_client(), settings.default_model)
+            self._impl = QuizAgentImpl(_make_client())
         return self._impl
+
+    @property
+    def last_call(self) -> Optional[StructuredCall]:
+        """The most recent call, for the run's stage detail."""
+        return self._impl.last_call if self._impl is not None else None
 
     def run(self, input_data: QuizGeneratorInput) -> List[QuizCard]:
         """Generate quiz cards, constructing the underlying agent on first use."""

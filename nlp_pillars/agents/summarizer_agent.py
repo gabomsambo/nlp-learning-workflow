@@ -1,6 +1,21 @@
-"""Summarizer Agent - Real LLM implementation using instructor + OpenAI.
+"""Summarizer Agent - extracts structured notes from a paper with Claude.
 
-Extracts structured information from research papers into PaperNote objects.
+The agent used to reach OpenAI through ``instructor``. It now calls Claude's
+native structured output through :mod:`nlp_pillars.llm_client`, with a small
+model-facing schema (``NoteDraft``) rather than the stored ``PaperNote``.
+
+Two consequences worth knowing:
+
+- **No sampling parameters.** Current Claude models reject ``temperature``
+  with a 400, so there is none to set.
+- **The model fills in content, not identity.** ``NoteDraft`` has no
+  ``paper_id``, ``pillar_id`` or ``created_at``: those come from this
+  process. The old schema had all three as required fields, so the model was
+  asked for a paper id it could not know.
+
+The whole paper is sent, not the first 8,000 characters. Measured on the same
+prompts, the truncated version made up more future-work items than any other
+change made, because the model's conclusion section was not in the window.
 """
 
 import json
@@ -8,13 +23,11 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import instructor
-from openai import OpenAI
-
 from ..config import get_settings
-from ..concept_cost import call_from_completion, call_from_exception, require_price
 from ..concept_extraction import ConceptExtractionError, normalize_concepts
-from ..schemas import PaperNote, SummarizerInput
+from ..llm_client import StructuredCall, fit_paper_text, structured
+from ..llm_routes import SUMMARIZE_ROUTE
+from ..schemas import NoteDraft, PaperNote, SummarizerInput, note_from_draft
 from .discovery_agent import SystemPromptGenerator
 
 logger = logging.getLogger(__name__)
@@ -31,22 +44,25 @@ class SummarizerValidationError(Exception):
 class SummarizerAgentImpl:
     """Instance-based implementation for summarizing research papers.
 
-    Uses instructor + OpenAI for structured output extraction.
-    Tests create their own instances with mocked clients.
+    Uses Claude's native structured output. Tests create their own instances
+    with a mocked client.
     """
 
-    def __init__(self, client, model: str):
+    def __init__(self, client, model: Optional[str] = None):
         """Initialize the summarizer agent.
 
         Args:
-            client: Instructor-wrapped OpenAI client
-            model: Model name to use for completions
+            client: An Anthropic client with a ``messages.parse`` method.
+            model: Model id override. ``None`` means the summarize route's
+                resolved model.
 
         """
         self.client = client
         self.model = model
+        #: The last call this agent made, for the run's stage detail.
+        self.last_call: Optional[StructuredCall] = None
 
-        # System prompt - MUST include strings verified by tests (lines 248-252)
+        # System prompt - MUST include strings verified by tests
         self.system_prompt = SystemPromptGenerator(
             background=[
                 "You are an NLP research summarizer; faithful, structured.",
@@ -69,9 +85,9 @@ class SummarizerAgentImpl:
     def run(self, input_data: SummarizerInput) -> PaperNote:
         """Run summarization.
 
-        Retries on invalid model output are handled by instructor itself, which
-        re-prompts with the validation feedback up to ``max_retries`` times
-        (default 3) before raising. There is deliberately no retry layer here.
+        One call. There is no hand-rolled retry: the provider retries
+        structured output itself, and the helper falls back to the route's
+        fallback model when the call fails outright.
 
         Args:
             input_data: SummarizerInput with parsed paper and context
@@ -85,19 +101,13 @@ class SummarizerAgentImpl:
         """
         logger.info(f"Starting summarization for paper: {input_data.parsed_paper.paper_ref.title}")
 
-        require_price(self.model)
         try:
             result = self._attempt_summarization(input_data)
         except Exception as e:
             logger.error(f"Summarization failed: {e}")
-            call = getattr(e, "call", None) or call_from_exception(
-                purpose="summarizer",
-                paper_id=input_data.parsed_paper.paper_ref.id,
-                model=self.model,
-                error=e,
-            )
+            call = getattr(e, "call", None) or self.last_call
             raise SummarizerValidationError(
-                f"Instructor completion failed: {e}", call=call
+                f"Claude completion failed: {e}", call=call
             ) from e
 
         logger.info("Summarization completed successfully")
@@ -116,28 +126,25 @@ class SummarizerAgentImpl:
         system_message = self._build_system_message()
         user_message = self._build_user_message(input_data)
 
-        result, completion = self.client.chat.completions.create_with_completion(
+        call = structured(
+            SUMMARIZE_ROUTE,
+            system=system_message,
+            user=user_message,
+            out_model=NoteDraft,
+            client=self.client,
             model=self.model,
-            response_model=PaperNote,
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message}
-            ]
         )
+        self.last_call = call
 
         # Identity and the storage timestamp come from this process. A date on
         # the model object is the one the model invented, and it is not kept.
-        result.paper_id = input_data.parsed_paper.paper_ref.id
-        result.pillar_id = input_data.pillar_id
+        result = note_from_draft(
+            call.parsed,
+            input_data.parsed_paper.paper_ref.id,
+            input_data.pillar_id,
+        )
         result.created_at = datetime.now(timezone.utc)
 
-        call = call_from_completion(
-            purpose="summarizer",
-            paper_id=result.paper_id,
-            model=self.model,
-            completion=completion,
-        )
         try:
             concepts, proposed = normalize_concepts(
                 result.concepts,
@@ -145,7 +152,7 @@ class SummarizerAgentImpl:
                 input_data.concept_vocabulary,
             )
         except ConceptExtractionError as exc:
-            exc.call = call
+            exc.call = call.as_dict()
             raise
         result.concepts = concepts
         result.proposed_concepts = proposed
@@ -182,10 +189,7 @@ class SummarizerAgentImpl:
         paper = input_data.parsed_paper
         ref = paper.paper_ref
 
-        # Truncate content to ~8000 chars (test requirement line 269)
-        content = paper.full_text[:8000]
-        if len(paper.full_text) > 8000:
-            content += "\n[Content truncated...]"
+        content = fit_paper_text(paper.full_text)
 
         parts = [
             f"Title: {ref.title}",
@@ -222,19 +226,18 @@ class SummarizerAgentImpl:
 
 
 def _make_client():
-    """Create instructor-wrapped OpenAI client.
+    """Create the Anthropic client.
 
     Returns:
-        Instructor-wrapped OpenAI client
+        An Anthropic client
 
     Raises:
-        ValueError: If OPENAI_API_KEY is not set
+        ValueError: If ANTHROPIC_API_KEY is not set
 
     """
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required")
-    return instructor.from_openai(OpenAI(api_key=settings.openai_api_key))
+    from ..llm_client import make_client
+
+    return make_client()
 
 
 class _LazySummarizerAgent:
@@ -245,7 +248,7 @@ class _LazySummarizerAgent:
     missing API key produced ``AttributeError: 'NoneType' object has no attribute
     'run'`` at call time. This defers construction to the first ``run()`` so the
     failure names the actual problem, and keeps importing this module free of
-    OpenAI client construction.
+    client construction.
     """
 
     def __init__(self):
@@ -254,13 +257,18 @@ class _LazySummarizerAgent:
     def _get_impl(self) -> SummarizerAgentImpl:
         if self._impl is None:
             settings = get_settings()
-            if not settings.openai_api_key:
+            if not settings.anthropic_api_key:
                 raise ValueError(
                     "SummarizerAgent is not initialized: "
-                    "OPENAI_API_KEY environment variable is required"
+                    "ANTHROPIC_API_KEY environment variable is required"
                 )
-            self._impl = SummarizerAgentImpl(_make_client(), settings.default_model)
+            self._impl = SummarizerAgentImpl(_make_client())
         return self._impl
+
+    @property
+    def last_call(self) -> Optional[StructuredCall]:
+        """The most recent call, for the run's stage detail."""
+        return self._impl.last_call if self._impl is not None else None
 
     def run(self, input_data: SummarizerInput) -> PaperNote:
         """Summarize, constructing the underlying agent on first use."""

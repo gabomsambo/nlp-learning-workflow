@@ -910,18 +910,78 @@ upload without vectors), so nothing reaches the user as a crash.
 
 ## Agent LLM conventions
 
-`summarizer_agent` / `synthesis_agent` / `quiz_agent` are real `instructor` + OpenAI
-structured-output agents. Two deliberate conventions, both easy to "helpfully" undo:
+Generation runs on Claude, through the Anthropic SDK's **native structured
+outputs** — not through Instructor. The OpenAI account the app used ran out of
+credit on 2026-10-25, and even with credit the old path could not have been
+kept: current Claude models reject `temperature` / `top_p` / `top_k` with a 400,
+Sonnet 5.5 and Opus 5.5 reject the forced tool call Instructor's Anthropic mode
+depends on, and Claude rejects the app's full `QuizCard` schema outright with
+**400 "Schema is too complex"**.
 
-- **No hand-rolled retry.** `instructor` retries internally with validation feedback
-  (`max_retries` defaults to 3) and raises `InstructorRetryException`, which is *not* a
-  `pydantic.ValidationError`. An `except ValidationError` retry branch is unreachable dead
-  code. Each agent makes exactly one `create()` call and wraps failures `from e`.
-- **Lazy singletons.** `SummarizerAgent` / `SynthesisAgent` / `QuizAgent` are `_Lazy*`
-  proxies, not agent instances. `orchestrator.py` and `upload_service.py` import them by
-  value at module load, so an eagerly-built `None` singleton surfaced a missing API key as
-  `AttributeError: 'NoneType' object has no attribute 'run'`. The proxy builds the client on
-  first `.run()` and names the missing key instead.
+Three things follow, and all three are load-bearing:
+
+- **One helper.** `nlp_pillars/llm_client.py::structured()` is the only place
+  that calls a model for a structured answer. It calls
+  `client.messages.parse(output_format=…, output_config={"effort": …})`, and
+  **never** sends `temperature`, `top_p`, `top_k` or `tool_choice`. Do not add
+  a second call site that does. `thinking: {"type": "disabled"}` is sent only
+  to the Haiku family, which is the only one that accepts it — Sonnet 5 runs
+  adaptive when the parameter is omitted and Sonnet 5.5 refuses it outright,
+  so sending it there would be a 400 and would break
+  `LLM_<STAGE>_MODEL` as an override.
+- **Small model-facing schemas.** The provider sees `NoteDraft`,
+  `LessonDraft`, `CardDraft` and `QuizDraft` from `nlp_pillars/schemas.py` —
+  never `PaperNote`, `Lesson` or `QuizCard`. The stored models carry identity,
+  FSRS scheduling state and server-owned timestamps that a model must not be
+  asked to invent, and `QuizCard`'s 23 properties are what the 400 is about.
+  The drafts map to the stored models through `note_from_draft`,
+  `lesson_from_draft` and `quiz_cards_from_draft`.
+- **Routing lives in one registry.** `nlp_pillars/llm_routes.py` names the
+  model, provider, fallback, effort and thinking mode for every stage.
+  `nlp_pillars/podcast_models.py` re-exports the podcast and fact-check routes
+  for existing importers. Every stage is env-overridable with
+  `LLM_<STAGE>_MODEL`; the older `PODCAST_*_MODEL` and `FACTCHECK_*_MODEL`
+  names still work. Moving the lesson from Haiku to Sonnet is a config change,
+  not a code change.
+
+Defaults today: summarize, synthesize (lesson), quiz, discover and concept
+extraction on `claude-haiku-5-5` with `claude-sonnet-5-5` behind them; podcast
+Ground Pack extraction on DeepSeek's `deepseek-flash` with `claude-haiku-5-5`
+behind it; the podcast script (call 5) on `claude-sonnet-5`, unchanged.
+
+**The whole paper goes to the model, not the first 8,000 characters.** The
+summarizer used to truncate, and the measured result was that the model could
+not see the conclusion section — it invented future work that was not on the
+list. The lesson and the quiz used to see only the note, which is where a
+note's own misreading of a number came from. All three now get the paper's
+text, and the lesson prompt names the paper so it does not list the paper it
+is about as related work.
+
+**The paper text is trimmed by TOKENS, not characters.** `llm_client.py`'s
+`fit_paper_text()` cuts the body to `PAPER_TEXT_TOKEN_BUDGET` (60,000
+tiktoken tokens) on a token boundary and marks the cut. A character cap
+cannot see Haiku's rate card coming: Haiku is $0.10/$0.50 per million tokens
+up to a **100K-token prompt** and $0.50/$2.50 above it, and the long rate
+applies to the *whole* request. Measured live on 2026-10-25, a 343K-character
+paper trimmed to 300K characters is 117K tiktoken tokens and **172K Claude
+tokens** — over the line, and **$0.089 per call instead of $0.009**. The
+60,000-token budget puts the same paper at 89,261 Claude tokens and **$0.0095
+per call**. Do not go back to a character cap.
+
+**Every call is priced, and the price is shown.** `nlp_pillars/llm_prices.py`
+is the one price table (Claude, OpenAI and DeepSeek). A model with no price
+refuses to be called, because spend that cannot be recorded is spend nobody
+can see. Each call's tokens and dollars go into the run's stage detail
+(`model · in/out tokens · $cost`) and are logged at **WARNING**, not INFO —
+`docker compose logs` never shows INFO from these loggers.
+
+**Lazy singletons.** `SummarizerAgent` / `SynthesisAgent` / `QuizAgent` are
+`_Lazy*` proxies, not agent instances. `orchestrator.py` and `upload_service.py`
+import them by value at module load, so an eagerly-built `None` singleton
+surfaced a missing API key as
+`AttributeError: 'NoneType' object has no attribute 'run'`. The proxy builds the
+client on first `.run()` and names the missing key — now
+**`ANTHROPIC_API_KEY`**, not `OPENAI_API_KEY`.
 
 `podcast_agent` is the exception to the lazy-proxy rule and deliberately so: it has no
 module-level singleton (`webui/routers/api/podcast.py` constructs it per request), so there
@@ -936,23 +996,31 @@ to end on a 5-page paper at 37.8K input + 9.6K output tokens ≈ **$0.26** when 
 were Claude — synthesis still dominates the bill.
 
 **Ground Pack extraction routes to DeepSeek; synthesis stays on Claude.** Model ids live
-in `nlp_pillars/podcast_models.py` and override through `PODCAST_EXTRACTION_MODEL` /
-`PODCAST_SYNTHESIS_MODEL` in `.env` (defaults: `deepseek-v4-flash` and
-`claude-sonnet-5`). DeepSeek V4 **Flash** enables thinking by default; reasoning tokens
-share the `max_tokens` budget with `content`, so a long paper can return HTTP 200 with
-`reasoning_tokens=4000` and empty `content`. `_call_deepseek` therefore sends
-`thinking: {type: "disabled"}` — do not "restore" thinking for Ground Pack. The same
-budget trap is why `deepseek-v4-pro` is not the extraction default. Extraction
-`max_tokens` is `EXTRACTION_MAX_TOKENS` (16000); synthesis uses `SYNTHESIS_MAX_TOKENS`
-(64000). Sonnet 5 rejects `temperature` / `top_p` / `top_k` — `_call_claude` must not
-pass them. `DEEPSEEK_API_KEY` is required in compose (`:?` on `webui` and `scheduler`,
-same pattern as `QDRANT_API_KEY`); it lives only in `.env`, never in the repo.
+in `nlp_pillars/llm_routes.py` and override through `LLM_PODCAST_EXTRACTION_MODEL` /
+`LLM_PODCAST_SYNTHESIS_MODEL` in `.env` (defaults: `deepseek-flash` and
+`claude-sonnet-5`). `PODCAST_EXTRACTION_PROVIDER=anthropic` moves the four extraction
+calls to Claude Haiku 5.5 with no code change. DeepSeek V4 **Flash** enables thinking by
+default; reasoning tokens share the `max_tokens` budget with `content`, so a long paper can
+return HTTP 200 with `reasoning_tokens=4000` and empty `content`. `_call_deepseek`
+therefore sends `thinking: {type: "disabled"}` — do not "restore" thinking for Ground
+Pack. The same budget trap is why `deepseek-v4-pro` is not the extraction default.
+Extraction `max_tokens` is `EXTRACTION_MAX_TOKENS` (16000); synthesis uses
+`SYNTHESIS_MAX_TOKENS` (64000). Sonnet 5 rejects `temperature` / `top_p` / `top_k` —
+`_call_claude` must not pass them. `DEEPSEEK_API_KEY` is required in compose (`:?` on
+`webui` and `scheduler`, same pattern as `QDRANT_API_KEY`); it lives only in `.env`, never
+in the repo.
+
+The model id is **`deepseek-flash`**. `deepseek-v4-flash` is a legacy alias for the same
+model and is still accepted, but the route sends the current id.
 
 Each extraction call tries DeepSeek first and **falls back to Claude loudly** on any
 failure, recording `fallback=true` and `fallback_reason` on the row. Truncated
 (`finish_reason` `length`/`max_tokens`) or empty extraction output is never passed to
 synthesis — it triggers fallback, and raises `GroundPackExtractionError` if Claude fails
-too (HTTP 500). Per-section provenance is stored in `podcast_scripts.ground_pack_calls`
+too. The attempt chain is DeepSeek → Claude Haiku 5.5 → Claude Sonnet 5, and the final
+error message carries every attempt's reason, not just the first: which model ran out of
+budget and which one refused is the difference between "try again" and "this paper is too
+long". Per-section provenance is stored in `podcast_scripts.ground_pack_calls`
 (JSONB, `docs/migrations/013_…`, hand-applied); same degradation loop as 011/012 when
 the column is missing.
 
@@ -1069,11 +1137,11 @@ user-steered with two priority topics), usage barely moves: **451-526 input toke
 129-133 output**, averaging 492 in / 132 out. The prompt is a fixed system message plus a
 pillar's focus areas — it does not scale with paper text, which is why it is so stable.
 
-At $0.15/$0.60 per million input/output tokens that is **~$0.00015 per call**, about 6,500
-calls to the dollar. Eight pillars discovering once a day is **$0.0012/day, ~$0.45/year** —
-less than two podcasts. Re-derive from the token counts rather than trusting the dollar
-figure; those rates were current when this was written and the token counts are the part
-that will not drift.
+At $0.10/$0.50 per million input/output tokens (Haiku 5.5) that is **~$0.00012 per
+call**, about 8,700 calls to the dollar. Eight pillars discovering once a day is
+**$0.028/month** — less than a tenth of one podcast. Re-derive from the token
+counts rather than trusting the dollar figure; the counts are the part that
+will not drift, and the rates move.
 
 Both callers guard the call and fall back to `Orchestrator._fallback_queries`, so no
 discovery failure — missing key, rate limit, network — can stop a daily run or 500 the

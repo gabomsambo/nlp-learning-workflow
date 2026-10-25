@@ -1,6 +1,9 @@
 """DeepSeek routing for Ground Pack extraction (calls 1–4).
 
 All provider calls are stubbed — no live API spend in CI.
+
+DeepSeek's ``deepseek-flash`` is the primary and Claude Haiku 5.5 is the
+fallback, so a DeepSeek outage still produces a Ground Pack.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,10 +25,11 @@ def _deepseek_result(text: str = "deepseek extraction", **kwargs) -> LLMCallResu
     return LLMCallResult(
         text=text,
         provider="deepseek",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         input_tokens=kwargs.get("input_tokens", 100),
         output_tokens=kwargs.get("output_tokens", 50),
         finish_reason=kwargs.get("finish_reason", "stop"),
+        cost_usd=kwargs.get("cost_usd", 0.0004),
     )
 
 
@@ -33,10 +37,11 @@ def _claude_result(text: str = "claude extraction", **kwargs) -> LLMCallResult:
     return LLMCallResult(
         text=text,
         provider="anthropic",
-        model="claude-sonnet-5",
+        model=kwargs.get("model", "claude-haiku-5-5"),
         input_tokens=kwargs.get("input_tokens", 200),
         output_tokens=kwargs.get("output_tokens", 80),
         finish_reason=kwargs.get("finish_reason", "end_turn"),
+        cost_usd=kwargs.get("cost_usd", 0.004),
     )
 
 
@@ -62,6 +67,57 @@ def agent():
 
 
 class TestExtractionRouting:
+    @pytest.mark.asyncio
+    async def test_deepseek_is_the_primary_and_haiku_the_fallback(self, agent):
+        """A DeepSeek failure must still produce the section."""
+        assert agent.extraction_provider == "deepseek"
+        assert agent.extraction_model == "deepseek-flash"
+
+        agent._call_deepseek = AsyncMock(
+            return_value=_deepseek_result("", finish_reason="length"),
+        )
+        agent._call_claude = AsyncMock(
+            return_value=_claude_result("recovered table", model="claude-haiku-5-5"),
+        )
+
+        text, record = await agent._generate_metrics_datasets("PAPER")
+
+        assert text == "recovered table"
+        assert record.fallback is True
+        assert record.provider == "anthropic"
+        assert record.model == "claude-haiku-5-5"
+        assert "empty extraction" in (record.fallback_reason or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_the_cost_of_the_extraction_is_recorded_on_the_row(self, agent):
+        agent._call_deepseek = AsyncMock(return_value=_deepseek_result("ok"))
+        agent._call_claude = AsyncMock()
+
+        _text, record = await agent._generate_facts_outline("PAPER")
+
+        assert record.cost_usd == pytest.approx(0.0004)
+        assert record.input_tokens == 100
+        assert record.output_tokens == 50
+
+    @pytest.mark.asyncio
+    async def test_the_attempt_chain_is_deepseek_then_haiku_then_sonnet(self, agent):
+        assert agent._extraction_attempts() == [
+            ("deepseek", "deepseek-flash"),
+            ("anthropic", "claude-haiku-5-5"),
+            ("anthropic", "claude-sonnet-5"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_haiku_as_primary_does_not_retry_itself(self, agent):
+        """Making Haiku primary by config must not queue Haiku twice."""
+        agent.extraction_provider = "anthropic"
+        agent.extraction_model = "claude-haiku-5-5"
+
+        assert agent._extraction_attempts() == [
+            ("anthropic", "claude-haiku-5-5"),
+            ("anthropic", "claude-sonnet-5"),
+        ]
+
     @pytest.mark.asyncio
     async def test_four_extraction_calls_use_deepseek(self, agent):
         agent._call_deepseek = AsyncMock(side_effect=[
@@ -105,7 +161,7 @@ class TestExtractionRouting:
         assert text == "recovered table"
         assert record.fallback is True
         assert record.provider == "anthropic"
-        assert "truncated" in (record.fallback_reason or "").lower() or "empty" in (record.fallback_reason or "").lower()
+        assert "empty extraction" in (record.fallback_reason or "").lower() or "empty" in (record.fallback_reason or "").lower()
         agent._call_claude.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -310,7 +366,7 @@ class TestExtractionRouting:
         for rec in result.ground_pack_calls.values():
             assert isinstance(rec, GroundPackCallRecord)
             assert rec.provider == "deepseek"
-            assert rec.model == "deepseek-v4-flash"
+            assert rec.model == "deepseek-flash"
             assert rec.fallback is False
         assert agent._call_deepseek.await_count == 4
         assert agent._call_claude.await_count == 1

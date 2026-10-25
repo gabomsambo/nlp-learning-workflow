@@ -229,7 +229,9 @@ class TestPodcastAgent:
             agent = PodcastAgent()
 
             assert agent.synthesis_model == "claude-sonnet-5"
-            assert agent.extraction_model == "deepseek-v4-flash"
+            # The route sends `deepseek-flash`; `deepseek-v4-flash` is a
+            # legacy alias for the same model.
+            assert agent.extraction_model == "deepseek-flash"
             assert isinstance(agent.ingest_agent, IngestAgent)
             # Timeouts matter: without them a hung Anthropic call would pin a
             # request forever.

@@ -408,15 +408,16 @@ def learn(
                 focus_areas=[topic]
             )
 
-            # Run discovery for this specific topic
-            discovery_agent = DiscoveryAgent()
-            discovery_input = DiscoveryInput(
-                pillar=pillar_config,
-                recent_papers=[],
-                priority_topics=[topic]
-            )
-
             try:
+                # Constructed inside the try: building it needs the API key,
+                # and a missing key must not take the whole command down.
+                discovery_agent = DiscoveryAgent()
+                discovery_input = DiscoveryInput(
+                    pillar=pillar_config,
+                    recent_papers=[],
+                    priority_topics=[topic]
+                )
+
                 discovery_result = discovery_agent.run(discovery_input)
                 console.print(f"[dim]🔍 Generated {len(discovery_result.queries)} search queries for '{topic}'[/dim]")
             except Exception as e:

@@ -398,23 +398,19 @@ class TestSearXNGTool:
 class TestDiscoveryAgent:
     """Test cases for Discovery Agent."""
     
-    @patch('nlp_pillars.agents.discovery_agent.instructor.from_openai')
-    @patch('nlp_pillars.agents.discovery_agent.OpenAI')
-    def test_init(self, mock_openai, mock_instructor):
+    @patch('nlp_pillars.agents.discovery_agent._make_client')
+    def test_init(self, mock_make_client):
         """Test Discovery Agent initialization."""
-        # Mock the components
-        mock_client = Mock()
-        mock_instructor.return_value = mock_client
-        
+        mock_make_client.return_value = Mock()
+
         agent = DiscoveryAgent()
-        
-        assert agent.model == "gpt-4o-mini"  # Default from config
+
+        # The model comes from the discover route, not from DEFAULT_MODEL.
+        assert agent.model is None
         assert agent.system_prompt is not None
         assert agent.agent is not None
     
-    @patch('nlp_pillars.agents.discovery_agent.instructor.from_openai')
-    @patch('nlp_pillars.agents.discovery_agent.OpenAI')
-    def test_discover_success(self, mock_openai, mock_instructor, sample_pillar):
+    def test_discover_success(self, sample_pillar):
         """Test successful discovery query generation."""
         # Mock the atomic agent response
         mock_discovery_output = DiscoveryOutput(
@@ -464,9 +460,7 @@ class TestDiscoveryAgent:
         assert "long context" in query_texts[1].lower()
         assert "multimodal" in query_texts[2].lower()
     
-    @patch('nlp_pillars.agents.discovery_agent.instructor.from_openai')
-    @patch('nlp_pillars.agents.discovery_agent.OpenAI')
-    def test_discover_insufficient_queries(self, mock_openai, mock_instructor, sample_pillar):
+    def test_discover_insufficient_queries(self, sample_pillar):
         """Test discovery with insufficient queries (should raise error)."""
         # Mock response with too few queries
         mock_discovery_output = DiscoveryOutput(
@@ -491,9 +485,7 @@ class TestDiscoveryAgent:
             with pytest.raises(ValueError, match="must generate at least 3 queries"):
                 agent.discover(sample_pillar)
     
-    @patch('nlp_pillars.agents.discovery_agent.instructor.from_openai')
-    @patch('nlp_pillars.agents.discovery_agent.OpenAI')
-    def test_discover_for_pillar_id(self, mock_openai, mock_instructor):
+    def test_discover_for_pillar_id(self):
         """Test discovery by pillar ID."""
         # Mock successful discovery
         mock_discovery_output = DiscoveryOutput(
@@ -536,10 +528,8 @@ class TestDiscoveryAgent:
 class TestIntegration:
     """Integration tests for Discovery Agent and Search Tools."""
     
-    @patch('nlp_pillars.agents.discovery_agent.instructor.from_openai')
-    @patch('nlp_pillars.agents.discovery_agent.OpenAI')
     @patch('nlp_pillars.tools.arxiv_tool.arxiv.Client')
-    def test_discovery_to_arxiv_integration(self, mock_arxiv_client, mock_openai, mock_instructor, sample_pillar):
+    def test_discovery_to_arxiv_integration(self, mock_arxiv_client, sample_pillar):
         """Test that DiscoveryAgent output is compatible with ArXiv tool input."""
         # Mock Discovery Agent
         mock_discovery_output = DiscoveryOutput(
@@ -604,9 +594,7 @@ class TestIntegration:
             assert arxiv_results[0].title == "Test Paper"
             assert arxiv_results[0].id == "2301.12345"
     
-    @patch('nlp_pillars.agents.discovery_agent.instructor.from_openai') 
-    @patch('nlp_pillars.agents.discovery_agent.OpenAI')
-    def test_discovery_to_searxng_integration(self, mock_openai, mock_instructor, sample_pillar):
+    def test_discovery_to_searxng_integration(self, sample_pillar):
         """Test that DiscoveryAgent output is compatible with SearXNG tool input."""
         # Mock Discovery Agent (same as above)
         mock_discovery_output = DiscoveryOutput(

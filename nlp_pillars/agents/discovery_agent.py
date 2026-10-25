@@ -1,4 +1,4 @@
-"""Discovery Agent - real LLM implementation using instructor + OpenAI.
+"""Discovery Agent - real LLM implementation using Claude.
 
 Generates the search queries that feed paper discovery. Until 2026-08-16 this
 module was a stub: `run()` was a classmethod that string-mangled the pillar goal
@@ -11,19 +11,21 @@ classes for why they are still here.
 Conventions match summarizer/synthesis/quiz (see AGENTS.md, "Agent LLM
 conventions"):
 
-- **No hand-rolled retry.** instructor re-prompts with validation feedback
-  (`max_retries` defaults to 3) and raises `InstructorRetryException`, which is
-  *not* a `pydantic.ValidationError`. One `create()` call, failures wrapped
-  `from e`.
+- **No sampling parameters.** Current Claude models reject `temperature` with
+  a 400, so the diversity this agent used to get from `temperature=0.7` is
+  asked for in the prompt instead.
+- **No hand-rolled retry.** The provider retries structured output itself,
+  and `llm_client.structured` falls back to the route's fallback model when
+  the call fails outright.
 - **Lazy construction.** `orchestrator` imports `DiscoveryAgent` at module load,
-  so nothing may build an OpenAI client at import time.
+  so nothing may build a client at import time.
 """
 
 import logging
 from typing import Any, Generic, List, Optional, TypeVar
 
-import instructor
-from openai import OpenAI
+from ..llm_client import StructuredCall, structured
+from ..llm_routes import DISCOVER_ROUTE
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,7 @@ class AtomicAgent(Generic[T, U]):
         raise NotImplementedError("This is a mock implementation for testing only")
 
 
-from ..config import PILLAR_CONFIGS, get_pillar_config, get_settings  # noqa: E402
+from ..config import PILLAR_CONFIGS, get_pillar_config  # noqa: E402
 from ..schemas import (  # noqa: E402
     DiscoveryInput,
     DiscoveryOutput,
@@ -103,27 +105,28 @@ class _DiscoveryCompletion:
 
     Kept as its own object rather than a method so a test can swap in a Mock
     whose `.run()` returns a canned DiscoveryOutput without also having to stand
-    up an OpenAI client.
+    up a client.
     """
 
-    def __init__(self, client, model: str, system_prompt: SystemPromptGenerator):
+    def __init__(self, client, model: Optional[str] = None,
+                 system_prompt: SystemPromptGenerator = None):
         self.client = client
         self.model = model
         self.system_prompt = system_prompt
+        #: The last call, for the run's stage detail.
+        self.last_call: Optional[StructuredCall] = None
 
     def run(self, input_data: DiscoveryInput) -> DiscoveryOutput:
-        return self.client.chat.completions.create(
+        call = structured(
+            DISCOVER_ROUTE,
+            system=self.system_prompt.render(),
+            user=_build_user_message(input_data),
+            out_model=DiscoveryOutput,
+            client=self.client,
             model=self.model,
-            response_model=DiscoveryOutput,
-            # Higher than the summarizer's 0.2 on purpose: the whole value of
-            # this agent is queries that differ from each other. Near-zero
-            # temperature reliably produces three rephrasings of one idea.
-            temperature=0.7,
-            messages=[
-                {"role": "system", "content": self.system_prompt.render()},
-                {"role": "user", "content": _build_user_message(input_data)},
-            ],
         )
+        self.last_call = call
+        return call.parsed
 
 
 def _build_user_message(input_data: DiscoveryInput) -> str:
@@ -161,20 +164,16 @@ def _build_user_message(input_data: DiscoveryInput) -> str:
 
 
 def _make_client():
-    """Create the instructor-wrapped OpenAI client.
+    """Create the Anthropic client.
 
     Raises:
-        ValueError: if OPENAI_API_KEY is unset, naming the key rather than
+        ValueError: if ANTHROPIC_API_KEY is unset, naming the key rather than
             failing later with an AttributeError on None.
 
     """
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise ValueError(
-            "DiscoveryAgent is not initialized: "
-            "OPENAI_API_KEY environment variable is required"
-        )
-    return instructor.from_openai(OpenAI(api_key=settings.openai_api_key))
+    from ..llm_client import make_client
+
+    return make_client()
 
 
 class DiscoveryAgent:
@@ -184,12 +183,12 @@ class DiscoveryAgent:
         """Build the agent.
 
         Args:
-            model: Override the model. Defaults to `Settings.default_model`,
-                which is `gpt-4o` unless DEFAULT_MODEL says otherwise.
+            model: Override the model. Defaults to the discover route's
+                resolved model, which is `claude-haiku-5-5` unless
+                `LLM_DISCOVER_MODEL` says otherwise.
 
         """
-        settings = get_settings()
-        self.model = model or settings.default_model
+        self.model = model
         self.system_prompt = SystemPromptGenerator(
             background=[
                 "You plan literature searches for a working NLP researcher.",
@@ -223,11 +222,24 @@ class DiscoveryAgent:
                 "Bad: 'An investigation into state space models for sequences'.",
                 "Every query must stay within the pillar's remit.",
                 "Set pillar_id on every query to the pillar id you were given.",
+                # This used to be bought with temperature=0.7, which Claude
+                # rejects. It is asked for in words instead: the whole value of
+                # this agent is queries that differ from each other, and
+                # without this instruction the model returns three
+                # rephrasings of one idea.
+                "Make the queries differ in angle, not in wording: each one "
+                "should search a different corner of the pillar, so that a "
+                "paper on one of them would not also match the others.",
                 "Explain the spread of angles in `rationale`.",
                 "Return valid DiscoveryOutput JSON only (no extra text).",
             ],
         )
         self.agent = _DiscoveryCompletion(_make_client(), self.model, self.system_prompt)
+
+    @property
+    def last_call(self) -> Optional[StructuredCall]:
+        """The most recent call, for the run's stage detail."""
+        return getattr(self.agent, "last_call", None)
 
     def discover(
         self,
@@ -252,7 +264,7 @@ class DiscoveryAgent:
             result = self.agent.run(input_data)
         except Exception as e:
             logger.error(f"Discovery failed for pillar {pillar.id}: {e}")
-            raise DiscoveryError(f"Instructor completion failed: {e}") from e
+            raise DiscoveryError(f"Claude completion failed: {e}") from e
 
         if len(result.queries) < MIN_QUERIES:
             raise ValueError(
@@ -310,7 +322,7 @@ class DiscoveryAgent:
         on the class (two sites) while `cli` builds an instance and calls
         `agent.run(x)`; a classmethod satisfies both, where a plain instance
         method would bind `x` to `self` for the orchestrator and an eagerly
-        constructed singleton would need an OpenAI client at import time.
+        constructed singleton would need a client at import time.
 
         The consequence worth knowing: `agent.run(...)` does NOT use `agent`. It
         uses the shared instance. Call `agent.discover(...)` if you need the
@@ -329,6 +341,18 @@ class DiscoveryAgent:
         if cls._shared_instance is None:
             cls._shared_instance = cls()
         return cls._shared_instance
+
+    @classmethod
+    def last_call(cls) -> Optional[StructuredCall]:
+        """The shared agent's most recent call, for the run's stage detail.
+
+        None before the first discovery call — the shared agent does not exist
+        until then, and building it just to read a cost would construct a
+        client for nothing.
+        """
+        if cls._shared_instance is None:
+            return None
+        return cls._shared_instance.last_call
 
     @staticmethod
     def _blend_topics(pillar_areas: List[str], user_topics: List[str]) -> List[str]:

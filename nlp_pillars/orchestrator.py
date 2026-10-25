@@ -29,6 +29,8 @@ from .tools.semantic_scholar_tool import SemanticScholarTool
 from .tools.vector_search_tool import VectorSearchTool
 from .config import get_settings, get_pillar_config
 from . import concept_extraction
+from .llm_client import stage_detail
+from .llm_routes import CONCEPTS_ROUTE
 from .paper_ids import resolvable_pdf_url
 from . import db
 from . import vectors
@@ -258,6 +260,10 @@ class Orchestrator:
             if used_fallback:
                 discovery_detail += (
                     " (discovery agent unavailable, used pillar focus areas)"
+                )
+            else:
+                discovery_detail = stage_detail(
+                    DiscoveryAgent.last_call(), discovery_detail
                 )
             self._stage(StageName.DISCOVERY, StageStatus.COMPLETED.value,
                         discovery_detail)
@@ -489,7 +495,7 @@ class Orchestrator:
     ) -> List[str]:
         """Deterministic queries for when the discovery LLM is unavailable.
 
-        Discovery is one OpenAI call, so it can fail for reasons that have
+        Discovery is one model call, so it can fail for reasons that have
         nothing to do with this pillar — no API key, a rate limit, a network
         blip. None of those should stop a daily run, so both callers fall back
         here instead of propagating.
@@ -632,7 +638,10 @@ class Orchestrator:
             concept_vocabulary=concept_vocabulary,
         )
         paper_note = SummarizerAgent.run(summarizer_input)
-        self._stage(StageName.SUMMARIZE, StageStatus.COMPLETED.value, paper.id)
+        self._stage(
+            StageName.SUMMARIZE, StageStatus.COMPLETED.value,
+            stage_detail(SummarizerAgent.last_call, paper.id),
+        )
 
         # Step 5c: Synthesize lesson
         logger.info(f"Step 5c: Synthesizing lesson for paper {paper.id} in pillar {pillar_id}")
@@ -641,16 +650,24 @@ class Orchestrator:
         synthesis_input = SynthesisInput(
             paper_note=paper_note,
             pillar_config=pillar_config,
-            related_lessons=[]  # Could get recent lessons from DB
+            related_lessons=[],  # Could get recent lessons from DB
+            # The paper's own text. A lesson written from the note alone fills
+            # gaps from general knowledge and repeats the note's mistakes.
+            full_text=parsed_paper.full_text,
+            paper_title=paper.title,
+            paper_authors=list(paper.authors or []),
         )
         lesson = SynthesisAgent.run(synthesis_input)
-        self._stage(StageName.SYNTHESIZE, StageStatus.COMPLETED.value, paper.id)
+        self._stage(
+            StageName.SYNTHESIZE, StageStatus.COMPLETED.value,
+            stage_detail(SynthesisAgent.last_call, paper.id),
+        )
 
         # Step 5d: Generate quiz (if enabled)
         quiz_cards = None
         if not self.enable_quiz:
-            # Report it as skipped rather than leaving the row pending forever — the
-            # UI must be able to tell "turned off" from "not reached yet".
+            # Report it as skipped rather than leaving the row pending forever —
+            # the UI must be able to tell "turned off" from "not reached yet".
             self._stage(StageName.QUIZ, StageStatus.SKIPPED.value, "quiz disabled")
         if self.enable_quiz:
             logger.info(f"Step 5d: Generating quiz for paper {paper.id} in pillar {pillar_id}")
@@ -658,11 +675,13 @@ class Orchestrator:
             quiz_input = QuizGeneratorInput(
                 paper_note=paper_note,
                 num_questions=5,
-                difficulty_mix={"easy": 2, "medium": 2, "hard": 1}
+                difficulty_mix={"easy": 2, "medium": 2, "hard": 1},
+                # The paper's own text, for the same reason as the lesson's.
+                full_text=parsed_paper.full_text,
             )
             quiz_cards = QuizAgent.run(quiz_input)
             self._stage(StageName.QUIZ, StageStatus.COMPLETED.value,
-                        f"{len(quiz_cards or [])} cards")
+                        stage_detail(QuizAgent.last_call, f"{len(quiz_cards or [])} cards"))
 
         # Step 5e: Persist to database
         logger.info(f"Step 5e: Persisting data for paper {paper.id} in pillar {pillar_id}")
@@ -674,7 +693,7 @@ class Orchestrator:
             paper.id,
             paper_note.concepts,
             paper_note.proposed_concepts,
-            str(call.get("model") or get_settings().default_model),
+            str(call.get("model") or CONCEPTS_ROUTE.resolved_model()),
         )
         db.insert_lesson(lesson)
         if quiz_cards:
@@ -834,7 +853,7 @@ class Orchestrator:
 
         # --- Step D2: search queries ----------------------------------------------
         #
-        # Guarded for the same reason _run_discovery is: discovery is one OpenAI call
+        # Guarded for the same reason _run_discovery is: discovery is one model call
         # and this is the user-facing path — reached from
         # `POST /api/pillars/{id}/discover` and from `cli discover`. An unguarded raise
         # turned a transient rate limit into a 500 with no candidates, when usable
@@ -855,7 +874,7 @@ class Orchestrator:
             logger.info(f"Generated {len(queries)} queries: {queries}")
             self._stage(
                 StageName.DISCOVER_QUERIES, StageStatus.COMPLETED.value,
-                _quote_queries(queries),
+                stage_detail(DiscoveryAgent.last_call(), _quote_queries(queries)),
             )
         except Exception as e:
             logger.warning(
