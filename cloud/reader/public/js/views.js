@@ -1,7 +1,7 @@
 /* The four pages. Each takes the store and returns an element to mount. */
 import { bullets, callout, chip, emptyState, h } from './dom.js';
 import {
-  PAPER_TABS, authorLine, dueSummary, filterPapers, formatDate, formatDuration, greeting,
+  PAPER_TABS, audioSrc, authorLine, dueSummary, episodeHref, filterPapers, formatDate, formatDuration, greeting,
   newestFirst, paperHref, pillarGlance, plural, readableScript, relativeTime, safePdfHref,
 } from './lib.js';
 
@@ -69,12 +69,13 @@ export async function todayView(store, now = Date.now()) {
 
     h('section', { class: 'today-section', 'aria-labelledby': 'episodes-heading' },
       h('div', { class: 'section-head' },
-        h('h2', { id: 'episodes-heading', class: 'section-title', text: 'New episodes' })),
+        h('h2', { id: 'episodes-heading', class: 'section-title', text: 'New episodes' }),
+        h('a', { href: '#/listen', text: 'Listen' })),
       episodes.length === 0
         ? h('p', { class: 'section-lede', text: 'No episodes yet.' })
         : h('ul', { class: 'episode-list' }, episodes.map((episode) =>
           h('li', { class: 'episode-row' },
-            h('a', { class: 'episode-copy', href: paperHref(episode.paper_id, 'episode') },
+            h('a', { class: 'episode-copy', href: episodeHref(episode.id) },
               h('span', { class: 'episode-title', text: episode.title }),
               h('span', { class: 'episode-meta', text: [pillars.get(episode.pillar_id)?.name, formatDuration(episode.duration_seconds), relativeTime(episode.created_at, now)].filter(Boolean).join(' · ') })))))),
 
@@ -215,7 +216,8 @@ export async function paperView(store, id, tab) {
         ? episodes.filter(Boolean).map((episode) => h('article', { class: 'card' },
           h('h3', { class: 'card-title', text: episode.title }),
           h('p', { class: 'list-row-meta', text: [`${episode.word_count || 0} words`, formatDate(episode.created_at)].filter(Boolean).join(' · ') }),
-          h('p', { class: 'paper-muted', text: 'Audio is not available in the reader yet. The script is below.' }),
+          h('div', { class: 'page-actions' },
+            h('a', { class: 'btn btn-primary btn-md', href: episodeHref(episode.id), text: audioSrc(episode.audio && episode.audio.key) ? 'Listen and read along' : 'Open the episode' })),
           episode.key_points?.length ? [h('h3', { text: 'Key points' }), bullets(episode.key_points)] : null,
           h('details', null, h('summary', { text: 'Script' }), h('div', { class: 'reader-script', text: readableScript(episode.script) }))))
         : h('p', { class: 'paper-muted', text: 'No episode for this paper yet.' })),

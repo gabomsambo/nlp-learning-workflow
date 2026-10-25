@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { ReaderError, createStore } from '../public/js/data.js';
 import {
-  authorLine, dueSummary, filterPapers, paperHref, parseRoute, pillarGlance, readableScript, safePdfHref, sha256Hex,
+  PLAYBACK_RATES, audioSrc, authorLine, dueSummary, episodeHref, episodeInitial, episodeMeta, factcheckState, filterPapers,
+  listenRows, paperHref, parseRoute, pillarGlance, rateOrDefault, readAlongNote, readableScript, resumeSeconds, safePdfHref,
+  sha256Hex,
 } from '../public/js/lib.js';
 
 test('routes round-trip paper ids that contain colons and slashes', () => {
@@ -125,4 +128,91 @@ test('store: sign-in and missing-bundle responses are told apart', async () => {
   await withFetch(async () => { throw new TypeError('offline'); }, async () => {
     await assert.rejects(createStore().library(), (error) => error.kind === 'network');
   });
+});
+
+// ---- Listen ---------------------------------------------------------------
+
+const SHA = 'ab'.repeat(32);
+
+test('routes: Listen and one episode, ids are percent-encoded', () => {
+  assert.deepEqual(parseRoute('#/listen'), { name: 'listen' });
+  const id = '11111111-1111-4111-8111-111111111111';
+  assert.deepEqual(parseRoute(episodeHref(id)), { name: 'episode', id });
+  assert.equal(parseRoute('#/listen/a/b').name, 'notfound');
+  assert.equal(parseRoute('#/listen/%E0%A4%A').name, 'notfound');
+});
+
+test('audioSrc only builds the one URL shape the Worker serves', () => {
+  assert.equal(audioSrc(`audio/${SHA}.mp3`), `/api/audio/${SHA}.mp3`);
+  for (const bad of [null, undefined, '', 'audio/x.mp3', `audio/${SHA}.wav`, `../audio/${SHA}.mp3`, `audio/${SHA}.mp3?x=1`, `audio/${SHA.toUpperCase()}.mp3`]) {
+    assert.equal(audioSrc(bad), null, String(bad));
+  }
+});
+
+test('episodes you can play come first, newest first inside each group', () => {
+  const library = {
+    episodes: [
+      { id: 'a', created_at: '2026-10-20T00:00:00Z', audio_key: null },
+      { id: 'b', created_at: '2026-10-21T00:00:00Z', audio_key: `audio/${SHA}.mp3` },
+      { id: 'c', created_at: '2026-10-23T00:00:00Z', audio_key: null },
+      { id: 'd', created_at: '2026-10-22T00:00:00Z', audio_key: `audio/${SHA}.mp3` },
+    ],
+  };
+  assert.deepEqual(listenRows(library).map((e) => e.id), ['d', 'b', 'c', 'a']);
+  assert.deepEqual(listenRows({}), []);
+});
+
+test('a fact check is only painted onto the script it was run on', () => {
+  assert.equal(factcheckState({ fact_check: null }).kind, 'none');
+  assert.equal(factcheckState({}).kind, 'none');
+  const claims = [{ id: 1 }];
+  assert.equal(factcheckState({ fact_check: { stale: true, claims } }).kind, 'stale');
+  const done = factcheckState({ fact_check: { stale: false, claims } });
+  assert.equal(done.kind, 'done');
+  assert.deepEqual(done.claims, claims);
+  assert.deepEqual(factcheckState({ fact_check: { stale: false } }).claims, []);
+});
+
+test('resume: not the first seconds, not the last ten, never junk', () => {
+  assert.equal(resumeSeconds('62', 600), 62);
+  assert.equal(resumeSeconds(3, 600), 0);
+  assert.equal(resumeSeconds(595, 600), 0);
+  assert.equal(resumeSeconds(595, 0), 595);
+  for (const junk of [null, undefined, '', 'abc', NaN, -5]) assert.equal(resumeSeconds(junk, 600), 0, String(junk));
+});
+
+test('playback rate falls back to 1 for anything the menu does not offer', () => {
+  for (const rate of PLAYBACK_RATES) assert.equal(rateOrDefault(String(rate)), rate);
+  for (const junk of [null, '', 'fast', '3', 0, -1]) assert.equal(rateOrDefault(junk), 1, String(junk));
+});
+
+test('the notice above the text says what is missing, and is silent when nothing is', () => {
+  assert.match(readAlongNote({ hasAudio: false }), /no audio/i);
+  assert.match(readAlongNote({ hasAudio: true, timelineState: 'missing' }), /no read-along timing/i);
+  assert.match(readAlongNote({ hasAudio: true, timelineState: 'stale' }), /edited after/i);
+  assert.match(readAlongNote({ hasAudio: true, timelineState: 'current', wordLevel: false }), /only the line/i);
+  assert.equal(readAlongNote({ hasAudio: true, timelineState: 'current', wordLevel: true }), '');
+});
+
+test('episode cover letter skips the "Deep Dive:" every title starts with', () => {
+  assert.equal(episodeInitial('Deep Dive: Attention Is All You Need'), 'A');
+  assert.equal(episodeInitial('deep dive : mamba'), 'M');
+  assert.equal(episodeInitial('Plain title'), 'P');
+  assert.equal(episodeInitial('…'), 'E');
+  assert.equal(episodeInitial(null), 'E');
+});
+
+test('episode meta joins what is known', () => {
+  const meta = episodeMeta({ duration_seconds: 1500, created_at: '2026-10-22T12:00:00+00:00' }, 'Linguistic Theory');
+  assert.equal(meta, 'Linguistic Theory · 25 min · 22 Oct 2026');
+  assert.equal(episodeMeta({}, ''), '');
+});
+
+test('the page loads the shared scripts before the module, and the asset build copies them', () => {
+  const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const build = readFileSync(new URL('../scripts/build-assets.sh', import.meta.url), 'utf8');
+  const order = ['factcheck.js', 'readalong.js', 'listen-core.js'].map((name) => html.indexOf(`/static/${name}`));
+  const module = html.indexOf('/js/reader.js');
+  for (const at of order) assert.ok(at > -1 && at < module);
+  for (const name of ['factcheck.js', 'readalong.js', 'listen-core.js']) assert.ok(build.includes(name), name);
 });

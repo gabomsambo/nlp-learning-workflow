@@ -1,5 +1,6 @@
 import { ReaderError, createStore } from './data.js';
 import { emptyState, h, icon } from './dom.js';
+import { episodeView, listenView } from './episodes.js';
 import { formatDate, parseRoute } from './lib.js';
 import { lessonsView, libraryView, paperView, todayView } from './views.js';
 
@@ -9,11 +10,12 @@ const main = document.getElementById('main');
 const NAV = [
   { name: 'today', href: '#/', label: 'Today', icon: 'today' },
   { name: 'library', href: '#/library', label: 'Library', icon: 'library' },
+  { name: 'listen', href: '#/listen', label: 'Listen', icon: 'listen' },
   { name: 'lessons', href: '#/lessons', label: 'Lessons', icon: 'lessons' },
 ];
 
 function paintNav(active) {
-  const current = active === 'paper' ? 'library' : active;
+  const current = active === 'paper' ? 'library' : active === 'episode' ? 'listen' : active;
   for (const nav of document.querySelectorAll('[data-nav]')) {
     const tabs = nav.dataset.nav === 'tabs';
     nav.replaceChildren(...NAV.map((item) =>
@@ -49,6 +51,7 @@ function failure(error) {
 
 let token = 0;
 let firstRender = true;
+let mounted = null;
 
 async function render() {
   const mine = ++token;
@@ -60,13 +63,21 @@ async function render() {
     if (route.name === 'today') view = await todayView(store);
     else if (route.name === 'library') view = await libraryView(store, new URLSearchParams(query || ''));
     else if (route.name === 'lessons') view = await lessonsView(store);
+    else if (route.name === 'listen') view = await listenView(store);
+    else if (route.name === 'episode') view = await episodeView(store, route.id);
     else if (route.name === 'paper') view = await paperView(store, route.id, route.tab);
     else view = emptyState('Page not found', 'There is nothing at this address.', h('a', { class: 'btn btn-primary btn-md', href: '#/', text: 'Go to Today' }));
-    document.title = route.name === 'paper' ? 'Paper · NLP Reader' : 'NLP Reader';
+    document.title = { paper: 'Paper · NLP Reader', listen: 'Listen · NLP Reader', episode: 'Episode · NLP Reader' }[route.name] || 'NLP Reader';
   } catch (error) {
     view = failure(error);
   }
-  if (mine !== token) return; // a newer navigation won
+  if (mine !== token) {
+    if (view.dispose) view.dispose(); // built, never shown: its audio must not start
+    return; // a newer navigation won
+  }
+  // Leaving an episode stops it; the audio element goes with the page.
+  if (mounted && mounted.dispose) mounted.dispose();
+  mounted = view;
   main.replaceChildren(view);
   if (!firstRender) main.focus({ preventScroll: true });
   firstRender = false;
