@@ -149,6 +149,10 @@ test('the Worker has no outbound path beyond the Access key store', async () => 
   // worker.js: env.ASSETS.fetch; certs.js: the key endpoint via the injected fetchImpl.
   for (const call of calls) assert.match(call, /^(worker|certs)\.js:/, call);
   const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
-  assert.doesNotMatch(wrangler, /^\[ai\]|^\[\[(d1_databases|vectorize|queues|services|kv_namespaces)/m);
+  assert.doesNotMatch(wrangler, /^\[ai\]|^\[\[(vectorize|queues|services|kv_namespaces)/m);
+  // The one database is the review mailbox (reviews.js), and the bindings are exactly DOCS, REVIEWS and ASSETS.
+  assert.equal((wrangler.match(/^\[\[d1_databases\]\]/gm) || []).length, 1);
+  assert.match(wrangler, /\[\[d1_databases\]\]\s*\nbinding = "REVIEWS"/);
+  assert.deepEqual([...wrangler.matchAll(/^binding = "(\w+)"/gm)].map((m) => m[1]).sort(), ['ASSETS', 'DOCS', 'REVIEWS']);
   assert.match(wrangler, /workers_dev = false/);
 });

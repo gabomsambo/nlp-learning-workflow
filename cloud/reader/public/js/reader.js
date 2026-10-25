@@ -2,9 +2,22 @@ import { ReaderError, createStore } from './data.js';
 import { emptyState, h, icon } from './dom.js';
 import { episodeView, listenView } from './episodes.js';
 import { formatDate, parseRoute } from './lib.js';
+import { createOutbox, localStorageStorage, memoryStorage } from './outbox.js';
+import { reviewView } from './review.js';
+import { createReviews } from './reviews.js';
+import { createSync } from './sync.js';
 import { lessonsView, libraryView, paperView, todayView } from './views.js';
 
 const store = createStore();
+// Reviews are kept in localStorage for now; the offline step moves them to IndexedDB behind the same interface.
+let outboxStorage;
+try {
+  outboxStorage = localStorageStorage();
+} catch (error) {
+  outboxStorage = memoryStorage();
+}
+const outbox = createOutbox(outboxStorage);
+const reviews = createReviews({ store, outbox, sync: createSync({ outbox }) });
 const main = document.getElementById('main');
 
 const NAV = [
@@ -12,6 +25,7 @@ const NAV = [
   { name: 'library', href: '#/library', label: 'Library', icon: 'library' },
   { name: 'listen', href: '#/listen', label: 'Listen', icon: 'listen' },
   { name: 'lessons', href: '#/lessons', label: 'Lessons', icon: 'lessons' },
+  { name: 'review', href: '#/review', label: 'Review', icon: 'review' },
 ];
 
 function paintNav(active) {
@@ -32,6 +46,8 @@ async function paintFreshness() {
   } catch (error) {
     text = '';
   }
+  const waiting = outbox.waiting();
+  if (waiting > 0) text = [text, `${waiting} review${waiting === 1 ? '' : 's'} waiting to sync`].filter(Boolean).join(' · ');
   for (const el of document.querySelectorAll('[data-freshness]')) el.textContent = text;
 }
 
@@ -60,9 +76,10 @@ async function render() {
   paintNav(route.name);
   let view;
   try {
-    if (route.name === 'today') view = await todayView(store);
+    if (route.name === 'today') view = await todayView(store, reviews);
     else if (route.name === 'library') view = await libraryView(store, new URLSearchParams(query || ''));
     else if (route.name === 'lessons') view = await lessonsView(store);
+    else if (route.name === 'review') view = await reviewView(store, reviews);
     else if (route.name === 'listen') view = await listenView(store);
     else if (route.name === 'episode') view = await episodeView(store, route.id);
     else if (route.name === 'paper') view = await paperView(store, route.id, route.tab);
@@ -83,6 +100,12 @@ async function render() {
   firstRender = false;
   paintFreshness();
 }
+
+// Send what is waiting whenever there is a reason to think the connection is back.
+window.addEventListener('online', () => { reviews.flush(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reviews.flush(); });
+reviews.onChange(() => { paintFreshness(); });
+reviews.flush();
 
 window.addEventListener('hashchange', () => { window.scrollTo(0, 0); render(); });
 render();

@@ -178,6 +178,10 @@ class IngestClient:
     def put_manifest(self, data: bytes, sha256: str) -> Dict[str, Any]:
         return self._send("PUT", "/ingest/manifest", body=data, sha256=sha256)
 
+    def reviews(self, after: int, limit: int = 500) -> Dict[str, Any]:
+        """The phone's review events with ``seq`` greater than ``after`` (see ``reviews.py``)."""
+        return self._send("GET", f"/ingest/reviews?after={int(after)}&limit={int(limit)}")
+
 
 # ---------------------------------------------------------------------------
 # cloud_publish_state

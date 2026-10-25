@@ -27,7 +27,7 @@ from nlp_pillars.cloud.export import (
     run_export,
     safe_name,
 )
-from nlp_pillars.cloud.source import CloudSource, load_source
+from nlp_pillars.cloud.source import CloudSource, SourceError, load_source
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "cloud"
@@ -85,7 +85,7 @@ class FakeQuery:
         unknown = [c for c in wanted + list(self.filters) if c not in known]
         if unknown:
             return {"data": None, "error": {"code": "42703", "message": f"{self.table}: no column {unknown}"}}
-        rows = [r for r in self.rows[self.table] if all(r.get(k) == v for k, v in self.filters.items())]
+        rows = [r for r in self.rows.get(self.table, []) if all(r.get(k) == v for k, v in self.filters.items())]
         order = self.params["order"].split(",")
         rows.sort(key=lambda r: tuple(str(r.get(c)) for c in order))
         start = self.params.get("offset", 0)
@@ -249,16 +249,106 @@ def test_newest_note_and_lesson_win_and_related_is_library_only():
     assert len(paper["quiz_cards"]) == 2 and "user_id" not in paper["quiz_cards"][0]
 
 
-def test_schedule_snapshot_is_the_card_cache():
-    schedule = build_documents(raw_source(), {})["schedule.json"]
-    assert schedule["through_seq"] == 0 and schedule["source"] == "quiz_cards"
+def raw_with_reviews(rows=None) -> CloudSource:
+    source = raw_source(rows)
+    rows = rows or fixture_rows()
+    source.review_events = rows["review_logs"]
+    source.through_seq = 7
+    return source
+
+
+def test_schedule_snapshot_is_folded_from_the_review_log():
+    schedule = build_documents(raw_with_reviews(), {})["schedule.json"]
+    assert schedule["through_seq"] == 7 and schedule["source"] == "review_log"
     new, reviewed, _ = schedule["cards"]
-    assert new["state"] == "new" and new["due"] is None
+    assert new == {
+        "card_id": "a0000000-0000-4000-8000-000000000001", "paper_id": "arxiv:1706.03762",
+        "state": "new", "due": None, "stability": 0.0, "difficulty": 0.0,
+        "last_review": None, "lapses": 0, "step": None, "reps": 0,
+    }
+    # Good, Good, then Again four days late: relearning, with the step the row has no column for.
+    assert reviewed["state"] == "relearning" and reviewed["step"] == 0
+    assert reviewed["reps"] == 3 and reviewed["lapses"] == 1
+    assert reviewed["last_review"] == "2026-10-24T12:00:00+00:00"
+    assert reviewed["due"] == "2026-10-24T12:10:00+00:00"
+    # The stored row says "review"; the log, the source of truth, wins.
+    assert next(r for r in fixture_rows()["quiz_cards"] if r["id"] == reviewed["card_id"])["state"] == "review"
+
+
+def test_a_scheduled_card_with_no_events_is_published_as_its_row_says():
+    schedule = build_documents(raw_source(), {})["schedule.json"]
+    assert schedule["through_seq"] == 0
+    reviewed = schedule["cards"][1]
     assert reviewed == {
         "card_id": "a0000000-0000-4000-8000-000000000002", "paper_id": "arxiv:1706.03762",
         "state": "review", "due": "2026-10-24T12:00:00+00:00", "stability": 3.25,
         "difficulty": 5.5, "last_review": "2026-10-20T12:00:00+00:00", "lapses": 1,
+        "step": None, "reps": None,
     }
+
+
+def test_schedule_and_manifest_agree_on_through_seq(tmp_path, audio_dir):
+    out = tmp_path / "bundle"
+    export(out, audio_dir)
+    manifest = json.loads((out / "manifest.json").read_text())
+    schedule = json.loads((out / "schedule.json").read_text())
+    assert manifest["fsrs"]["through_seq"] == schedule["through_seq"] == 7
+
+
+def test_loader_reads_the_cursor_and_the_log_together():
+    source = load_source(FakeClient(fixture_rows()))
+    assert source.through_seq == 7 and len(source.review_events) == 3
+    assert set(source.review_events[0]) == {"id", "card_id", "rating", "review_timestamp"}
+
+
+def test_loader_without_migration_027_publishes_through_seq_zero():
+    rows = fixture_rows()
+    del rows["cloud_sync_state"]
+
+    class NoTable(FakeClient):
+        def table(self, name):
+            if name == "cloud_sync_state":
+                return Failing()
+            return super().table(name)
+
+    class Failing:
+        def select(self, *a, **k): return self
+        order = limit = select
+
+        def execute(self):
+            return {"data": None, "error": {"code": "PGRST205", "message": "Could not find the table 'public.cloud_sync_state' in the schema cache"}}
+
+    assert load_source(NoTable(rows)).through_seq == 0
+
+
+def test_loader_refuses_to_snapshot_a_half_applied_pull():
+    rows = fixture_rows()
+    rows["cloud_sync_state"] = [{"key": "reviews_seq", "value": 4}, {"key": "reviews_pending", "value": 9}]
+    with pytest.raises(SourceError, match="stopped half-way"):
+        load_source(FakeClient(rows))
+
+
+def test_loader_retries_when_the_cursor_moves_under_it():
+    rows = fixture_rows()
+    reads = {"n": 0}
+
+    class Moving(FakeClient):
+        def table(self, name):
+            query = super().table(name)
+            if name == "cloud_sync_state":
+                original = query.execute
+
+                def execute():
+                    reads["n"] += 1
+                    # The first pair of reads straddles a pull: the cursor moves between them.
+                    if reads["n"] == 2:
+                        rows["cloud_sync_state"] = [{"key": "reviews_seq", "value": 8}, {"key": "reviews_pending", "value": 8}]
+                    return original()
+
+                query.execute = execute
+            return query
+
+    assert load_source(Moving(rows)).through_seq == 8 and reads["n"] == 4
 
 
 def test_guard_refuses_forbidden_keys_secrets_and_local_paths():
@@ -344,7 +434,7 @@ def test_manifest_lists_every_file_with_its_hash_and_is_written_last(tmp_path, a
     manifest = json.loads((out / "manifest.json").read_text())
     assert order[-1] == "manifest.json" and order.count("manifest.json") == 1
     assert manifest["version"] == 1 and manifest["generated_at"] == "2026-10-25T12:00:00Z"
-    assert manifest["fsrs"] == {"params_version": 1, "through_seq": 0}
+    assert manifest["fsrs"] == {"params_version": 1, "through_seq": 7}
     for item in manifest["docs"] + manifest["audio"]:
         data = (out / item["key"]).read_bytes()
         assert cloud_export.sha256_hex(data) == item["sha256"] and len(data) == item["bytes"]

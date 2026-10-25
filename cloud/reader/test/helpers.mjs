@@ -154,3 +154,104 @@ export function makeIngestEnv(overrides = {}) {
     ...overrides,
   });
 }
+
+/**
+ * A D1 stand-in for the review_events statements in src/reviews.js, so the tests run on any
+ * Node. It reproduces the behaviour that matters (INSERT OR IGNORE on the unique event_id,
+ * seq that only grows) and refuses a statement it does not know, so a changed query fails
+ * loudly instead of silently matching nothing. `sqliteD1` below runs the same statements on
+ * real SQLite where Node has it.
+ */
+export function fakeD1() {
+  const rows = [];
+  let seq = 0;
+  const FULL = ['seq', 'event_id', 'card_id', 'rating', 'reviewed_at', 'device_id', 'response_time_ms', 'session_id', 'received_at'];
+  const SHORT = FULL.slice(0, 6);
+  const pick = (row, columns) => Object.fromEntries(columns.map((c) => [c, row[c]]));
+
+  function execute(sql, args) {
+    if (sql.startsWith('INSERT OR IGNORE INTO review_events')) {
+      const [event_id, card_id, rating, reviewed_at, device_id, response_time_ms, session_id, received_at] = args;
+      if (rows.some((r) => r.event_id === event_id)) return { results: [], meta: { changes: 0 } };
+      seq += 1;
+      rows.push({ seq, event_id, card_id, rating, reviewed_at, device_id, response_time_ms, session_id, received_at });
+      return { results: [], meta: { changes: 1 } };
+    }
+    if (sql.includes('FROM review_events WHERE event_id IN')) {
+      return { results: rows.filter((r) => args.includes(r.event_id)).map((r) => pick(r, SHORT)), meta: { changes: 0 } };
+    }
+    if (sql.startsWith('SELECT COALESCE(MAX(seq), 0) AS seq FROM review_events')) {
+      return { results: [{ seq: rows.reduce((m, r) => Math.max(m, r.seq), 0) }], meta: { changes: 0 } };
+    }
+    if (sql.includes('FROM review_events WHERE seq > ? ORDER BY seq LIMIT ?')) {
+      const columns = sql.includes('received_at') ? FULL : SHORT;
+      const [after, limit] = args;
+      return { results: rows.filter((r) => r.seq > after).slice(0, limit).map((r) => pick(r, columns)), meta: { changes: 0 } };
+    }
+    throw new Error(`fakeD1 does not know this statement: ${sql}`);
+  }
+
+  return {
+    rows,
+    prepare(sql) {
+      let args = [];
+      const stmt = {
+        bind(...values) { args = values; return stmt; },
+        async all() { return execute(sql, args); },
+        async first() { const out = execute(sql, args); return out.results[0] ?? null; },
+        async run() { return execute(sql, args); },
+        _execute: () => execute(sql, args),
+      };
+      return stmt;
+    },
+    // Atomic like D1's: all statements run or none (the fake's statements cannot fail midway).
+    async batch(statements) { return statements.map((s) => s._execute()); },
+  };
+}
+
+let DatabaseSync = null;
+try {
+  ({ DatabaseSync } = await import('node:sqlite'));
+} catch (error) {
+  DatabaseSync = null;
+}
+export const HAS_SQLITE = DatabaseSync !== null;
+
+/** The same interface over real SQLite (Node 22+), running the migration file as written. */
+export function sqliteD1(migrationSql) {
+  const db = new DatabaseSync(':memory:');
+  db.exec(migrationSql);
+  const run = (sql, args) => {
+    const statement = db.prepare(sql);
+    if (/^\s*(INSERT|UPDATE|DELETE)/i.test(sql)) {
+      const out = statement.run(...args);
+      return { results: [], meta: { changes: Number(out.changes) } };
+    }
+    return { results: statement.all(...args).map((row) => ({ ...row })), meta: { changes: 0 } };
+  };
+  return {
+    db,
+    prepare(sql) {
+      let args = [];
+      const stmt = {
+        bind(...values) { args = values; return stmt; },
+        async all() { return run(sql, args); },
+        async first() { return run(sql, args).results[0] ?? null; },
+        async run() { return run(sql, args); },
+        _execute: () => run(sql, args),
+      };
+      return stmt;
+    },
+    async batch(statements) {
+      db.exec('BEGIN');
+      try {
+        const out = statements.map((s) => s._execute());
+        db.exec('COMMIT');
+        return out;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+}

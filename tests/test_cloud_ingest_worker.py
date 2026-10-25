@@ -116,3 +116,64 @@ def test_a_changed_episode_replaces_the_old_audio_in_the_manifest(worker, bundle
     manifest = json.loads((bundle / "manifest.json").read_text())
     served = json.loads(reader_get(worker, "/api/manifest").content)
     assert served == manifest
+
+
+# --- the phone's reviews, from the real Worker to the review log ---------------------------------
+
+
+def phone_post(url, events):
+    """What the reader's page sends: a signed-in session posting events (the dev server signs one)."""
+    response = httpx.post(f"{url}/api/reviews", json={"events": events})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_reviews_posted_to_the_real_worker_are_pulled_into_the_log_and_the_cursor_holds():
+    from datetime import datetime, timedelta, timezone
+
+    from nlp_pillars import fsrs_fold
+    from nlp_pillars.cloud.reviews import pull_reviews
+    from nlp_pillars.services import quiz_reviews
+    from test_cloud_reviews import MemState, assert_card_matches_log, stamp
+    from test_quiz_reviews import CARD, OTHER, FakeClient, _card_row
+
+    proc = subprocess.Popen(["node", str(SERVER), "0"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        url = f"http://127.0.0.1:{json.loads(proc.stdout.readline())['port']}"
+        now = datetime.now(timezone.utc)
+
+        def event(n, card, rating, ago_minutes, device="phone-1234abcd"):
+            return {
+                "event_id": f"00000000-0000-4000-8000-{n:012d}", "card_id": card, "rating": rating,
+                "reviewed_at": stamp(now - timedelta(minutes=ago_minutes)), "device_id": device,
+            }
+
+        gone = "99999999-9999-4999-8999-999999999999"
+        sent = [event(1, CARD, 3, 60), event(2, CARD, 3, 50, "ipad-5678efgh"), event(3, OTHER, 1, 40), event(4, gone, 3, 30)]
+        answer = phone_post(url, sent)
+        assert (answer["accepted"], answer["through_seq"]) == (4, 4)
+        assert phone_post(url, sent[:2])["duplicate"] == 2, "a retried batch stores nothing new"
+
+        db = FakeClient()
+        db.rows["quiz_cards"] += [_card_row(CARD), _card_row(OTHER)]
+        state = MemState()
+        report = pull_reviews(
+            PublishConfig(url=url, client_id="x", client_secret="anything", max_bytes=1),
+            ingest=client_for(url), db_client=db, state=state,
+        )
+        assert (report.fetched, report.applied, report.duplicates) == (4, 3, 0)
+        assert [s[2] for s in report.skipped] == ["its card no longer exists"]
+        assert state.cursor.seq == 4 and not state.cursor.unfinished
+        assert [(r["origin"], r["device_id"]) for r in db.logs()] == [("cloud", "phone-1234abcd"), ("cloud", "ipad-5678efgh")]
+        assert_card_matches_log(db)
+        assert_card_matches_log(db, OTHER)
+        assert fsrs_fold.fold_events(quiz_reviews._events(db.logs())).review_count == 2
+
+        again = pull_reviews(
+            PublishConfig(url=url, client_id="x", client_secret="anything", max_bytes=1),
+            ingest=client_for(url), db_client=db, state=state,
+        )
+        assert again.fetched == 0 and len(db.logs()) == 2
+    finally:
+        proc.terminate()
+        proc.wait(5)

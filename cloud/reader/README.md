@@ -1,11 +1,11 @@
 # NLP Reader
 
-A read-only copy of the library for a phone or iPad, served from the personal
-Cloudflare account at `read.gabrielsambo.com` so it works with the computer off.
+A copy of the library for a phone or iPad, served from the personal Cloudflare
+account at `read.gabrielsambo.com` so it works with the computer off.
 It shows what `python -m nlp_pillars.cli cloud export` writes: Today, Library,
 Paper, Lessons and Listen (episodes with audio, read-along and fact-check
-highlights). `cloud publish` keeps it current. It has no reviews, no offline mode,
-and nothing that generates.
+highlights), and cards can be reviewed on it. `cloud publish` keeps it current; a review
+is the one thing that travels the other way. It has no offline mode and nothing that generates.
 
 Plan and reasoning: the cloud-reader report, sections 4, 7 and 9.
 
@@ -14,15 +14,16 @@ Plan and reasoning: the cloud-reader report, sections 4, 7 and 9.
 | Piece | Name | Notes |
 |---|---|---|
 | Worker | `nlp-reader` | `src/`, no dependencies. No `workers.dev` address, no preview URLs |
-| R2 bucket | `nlp-reader-docs` | The exported documents. Nothing else is bound |
+| R2 bucket | `nlp-reader-docs` | The exported documents |
+| D1 database | `nlp-reader-reviews` | One table, `review_events`: the phone's reviews waiting for the computer. A mailbox, not a source of truth |
 | Access app | `NLP Reader`, `read.gabrielsambo.com` | Allow the two captain emails, 30-day session. Separate from the tunnel's `NLP Learning` app |
 | Access app | `NLP Reader Ingest`, `read.gabrielsambo.com/ingest` | Service Auth only: one policy naming the `nlp-publisher` service token. No person can pass it |
 | Service token | `nlp-publisher` | Its id and secret are `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` in the desktop's `.env`. It reaches `/ingest` and nothing else |
 | DNS | one proxied `AAAA read` record | Created by the Worker's custom domain; no other record is touched |
 
-The Worker's bindings are `DOCS` (R2) and `ASSETS` (static files). It has no model,
-queue, database or service binding, and its only outbound request is the team's
-Access key endpoint (`src/certs.js`).
+The Worker's bindings are `DOCS` (R2), `REVIEWS` (D1) and `ASSETS` (static files). It has
+no model, queue or service binding, and its only outbound request is the team's Access key
+endpoint (`src/certs.js`).
 
 ## How a request is checked
 
@@ -35,13 +36,14 @@ Access key endpoint (`src/certs.js`).
 3. The email must be on the `ALLOWED_EMAILS` secret. With it unset nobody gets in
    (503). A service token is refused unless its client id is on
    `ALLOWED_SERVICE_TOKENS`, which is empty and exists only to check a deployment.
-4. Only `GET`/`HEAD`. `/api/manifest` and `/api/doc/<key>` serve R2 objects whose
-   names match what `cloud export` writes; `/api/audio/<sha256>.mp3` serves
-   `audio/<sha256>.mp3` with byte ranges. Anything else is a 404.
+4. Only `GET`/`HEAD`, and one `POST`: `/api/reviews` (below). `/api/manifest` and
+   `/api/doc/<key>` serve R2 objects whose names match what `cloud export` writes;
+   `/api/audio/<sha256>.mp3` serves `audio/<sha256>.mp3` with byte ranges. Anything else is a 404.
 5. `/ingest/*` is separate. It is checked against its own Access application's AUD
    (`INGEST_AUD`), takes service tokens only, and the token's client id must be
    `INGEST_SERVICE_TOKENS`. A signed-in person gets 401 or 403 there, and the
-   publisher's token gets 403 from Access on every reader path.
+   publisher's token gets 403 from Access on every reader path. `GET /ingest/reviews`
+   is how the computer collects the phone's reviews.
 
 Documents come with an `ETag` and are revalidated with `If-None-Match`. The page
 checks each document against the SHA-256 in the manifest, so it never shows a
@@ -103,6 +105,64 @@ verdict. The DOM and the `<audio>` element are the reader's. It remembers where 
 stopped and the playback speed in `localStorage`, and sets the lock-screen controls.
 Leaving the page stops the audio; there is no mini player yet.
 
+## Reviewing on the phone
+
+The Review page schedules cards on the device, so it works with no connection. A card is the
+computer's published snapshot (`schedule.json`) with the reviews made since folded on top.
+
+```
+phone                                   cloud                          computer
+rate a card
+  -> outbox (localStorage)
+  -> POST /api/reviews ---------------> review_events (D1)
+                                          seq 1, 2, 3 ...  <---------- cloud pull-reviews
+                                                                        (start, after each publish,
+                                                                         every 10 minutes)
+                                                                          -> review_logs (origin=cloud)
+                                                                          -> cards re-derived from the log
+                                                                          -> cloud_sync_state.reviews_seq
+              schedule.json  <-------------- cloud publish  <-----------  published with through_seq
+```
+
+- **An event** is `{event_id, card_id, rating 1-4, reviewed_at, device_id}` plus an optional
+  response time and session id. Every field has a fixed shape, an unknown field is refused,
+  and there is no free text, so nothing stored can carry an instruction. The Worker checks it
+  (`src/reviews.js`) and the computer checks it again (`nlp_pillars/cloud/reviews.py`).
+- **Idempotent.** `event_id` is unique in D1 and becomes `review_logs.id`, so an event sent or
+  pulled twice records once. The Worker answers each event separately (`accepted`, `duplicate`
+  or `rejected` with a reason), so one bad event does not hold up the others.
+- **Two devices.** Every review counts. Events are ordered by `(reviewed_at, event_id)` and the
+  card is re-folded from its whole log, so the order they arrive in does not matter and the
+  phone, the iPad and the computer land on the same card.
+- **Time window.** A review stamped more than 5 minutes ahead of when the cloud received it, or
+  more than 30 days behind, is refused: it is a wrong clock, not a review. The phone drops it
+  and says so.
+- **The outbox** (`public/js/outbox.js`) is the only data on the phone that cannot be fetched
+  again. A review is written there first and kept until the computer's snapshot includes it
+  (`through_seq`). Its storage is an interface; localStorage today, IndexedDB with the offline step.
+- **Scheduling.** `public/js/fsrs.js` is a port of py-fsrs 6.3.1's scheduler, fuzz off, held to
+  `tests/fixtures/fsrs/sequences.json` and to 400 random histories (every due date, step and state
+  identical; stability and difficulty within 1e-12). It is a port rather than ts-fsrs because
+  ts-fsrs 5.4.2 gives a different due date in 38 of the fixture's 100 reviews: it counts calendar
+  days where py-fsrs counts 24-hour periods, it does not raise stability for a same-day Hard, it
+  repeats the first step's Hard interval on later steps, and it rounds to 8 decimals after every
+  review.
+- **The computer is the authority.** When a late event sorts before one the snapshot already
+  holds, folding forward from the snapshot (what the phone does) can differ from re-folding the
+  whole log (what the computer does). The phone's view is then provisional until the next publish.
+
+On the computer: apply `docs/migrations/027_cloud_sync_state.sql` by hand, then the webui pulls
+whenever `CLOUD_PUBLISH_ENABLED=true` (same service token as publishing). By hand:
+
+```sh
+python -m nlp_pillars.cli cloud pull-reviews --dry-run     # fetch and check, write nothing
+python -m nlp_pillars.cli cloud pull-reviews
+```
+
+If a pull stops half-way (the database goes away), `cloud_sync_state.reviews_pending` stays ahead
+of `reviews_seq` and `cloud export` refuses to publish a snapshot until the next pull finishes the
+job. Events for a card that no longer exists are skipped and reported; the cursor moves past them.
+
 ## Day to day
 
 Run from the repository root. `wrangler` is pinned to 4.147.0 and run through `npx`;
@@ -137,6 +197,8 @@ npx wrangler@4.147.0 r2 bucket create nlp-reader-docs
 # two-email Allow policy and a 720h session. Put its AUD in wrangler.toml.
 npx wrangler@4.147.0 deploy
 printf '%s' 'one@example.com,two@example.com' | npx wrangler@4.147.0 secret put ALLOWED_EMAILS
+npx wrangler@4.147.0 d1 create nlp-reader-reviews          # put its id in wrangler.toml
+npx wrangler@4.147.0 d1 migrations apply nlp-reader-reviews --remote
 # Publishing: create the `nlp-publisher` service token, then a second self-hosted Access
 # application for read.gabrielsambo.com/ingest with one `non_identity` policy that includes only
 # that token. Put the application's AUD in INGEST_AUD and the token's client id in
@@ -148,14 +210,26 @@ printf '%s' 'one@example.com,two@example.com' | npx wrangler@4.147.0 secret put 
 ```sh
 node cloud/reader/scripts/dev-server.mjs /tmp/bundle 8787   # the real Worker, signing its own throwaway tokens
 node cloud/reader/scripts/dev-ingest-server.mjs 8788        # the real Worker with a writable in-memory bucket; point `cloud publish` at it
-node --test cloud/reader/test/*.test.mjs                     # JWT, Worker, key store, helpers
-cloud/reader/scripts/smoke-dev.sh                            # `wrangler dev`: refuses everything unauthenticated; serves from simulated R2 and assets
+node --test cloud/reader/test/*.test.mjs                     # JWT, Worker, reviews, the scheduler against py-fsrs, helpers
+cloud/reader/scripts/smoke-dev.sh                            # `wrangler dev`: refuses everything unauthenticated; serves from simulated R2, D1 and assets
 ```
 
 Use the glob, not `node --test cloud/reader/test/`: the directory form resolves as a
 module and fails with `MODULE_NOT_FOUND`.
 
+`dev-server.mjs` also keeps review events (in SQLite, lost when it stops) and answers `/ingest/reviews`, so
+the real pull can run against it: `CLOUD_PUBLISH_URL=http://127.0.0.1:8787 CF_ACCESS_CLIENT_ID=x
+CF_ACCESS_CLIENT_SECRET=x python -m nlp_pillars.cli cloud pull-reviews`.
+
+## Deploying
+
+`wrangler deploy` ships whatever branch it is run from, and the Worker's code and bindings come
+from that branch alone. Deploy from merged `main`, and apply the D1 migration first. A deploy
+from a branch that lacks `REVIEWS` drops the binding and `/api/reviews` answers 503 until the
+next deploy.
+
 ## Not here yet
 
-The offline service worker and install manifest, a mini player that outlives the page,
-reviewing on the phone, and the D1 event log.
+The offline service worker and install manifest (a page that is open keeps working without a
+connection; one that is closed needs it to load, and card text is fetched when the card is shown),
+and a mini player that outlives the page.

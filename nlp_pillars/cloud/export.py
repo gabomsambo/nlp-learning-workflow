@@ -26,14 +26,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from .. import fsrs_fold
+from ..services import quiz_reviews
 from . import audio as audio_tools
 from .source import CloudSource, load_source
 
 BUNDLE_VERSION = 1
 # Default FSRS-6 weights; bump when user_fsrs_parameters ever feeds the scheduler.
 FSRS_PARAMS_VERSION = 1
-# Review events folded into schedule.json. The event log arrives in a later change.
-FSRS_THROUGH_SEQ = 0
 TOMBSTONE_DAYS = 30
 MANAGED_DIRS = ("papers", "episodes", "audio")
 _TEMP_PREFIXES = (".transcode-", ".pending-")
@@ -193,6 +193,42 @@ def serialize_schedule_card(row: Mapping[str, Any]) -> Dict[str, Any]:
         "last_review": row.get("last_review_date"),
         "lapses": row.get("lapses") or 0,
     }
+
+
+def schedule_cards(source: CloudSource) -> List[Dict[str, Any]]:
+    """One scheduling snapshot per quiz card, folded from its review events.
+
+    A card with events is the py-fsrs card the fold produces: ``state``, ``due``,
+    ``stability``, ``difficulty`` and ``step`` are everything a phone needs to carry
+    on from it with ts-fsrs. A card with no events is ``new``. A card that has a
+    schedule in its row and no events (the cache is all that is left of it) is
+    published as its row says, without a ``step``.
+    """
+    by_card: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in source.review_events:
+        by_card.setdefault(str(row["card_id"]), []).append(row)
+    out = []
+    for row in sorted(source.cards, key=lambda r: str(r["id"])):
+        folded = fsrs_fold.fold_events(quiz_reviews._events(by_card.get(str(row["id"]), [])))
+        if folded is None:
+            entry = serialize_schedule_card(row)
+            entry.update({"step": None, "reps": 0 if entry["state"] == "new" else None})
+        else:
+            card = folded.card
+            entry = {
+                "card_id": row.get("id"),
+                "paper_id": row.get("paper_id"),
+                "state": fsrs_fold.cache_fields(folded)["state"],
+                "due": card.due.astimezone(timezone.utc).isoformat(),
+                "stability": card.stability,
+                "difficulty": card.difficulty,
+                "step": card.step,
+                "last_review": card.last_review.astimezone(timezone.utc).isoformat(),
+                "reps": folded.review_count,
+                "lapses": folded.lapses,
+            }
+        out.append(entry)
+    return out
 
 
 def serialize_source_material(value: Any) -> Optional[Dict[str, Any]]:
@@ -518,14 +554,14 @@ def build_documents(
         ],
     }
     docs["schedule.json"] = {
-        "through_seq": FSRS_THROUGH_SEQ,
+        # The last cloud review event every card below already includes. A phone folds
+        # the events after this onto these cards.
+        "through_seq": source.through_seq,
         "params_version": FSRS_PARAMS_VERSION,
-        # The card row's cache, until the review log becomes the source of truth.
-        "source": "quiz_cards",
-        "cards": [
-            serialize_schedule_card(c)
-            for c in sorted(source.cards, key=lambda r: str(r["id"]))
-        ],
+        # Folded from review_logs, the source of truth, so each card carries the
+        # learning `step` the quiz_cards row has no column for.
+        "source": "review_log",
+        "cards": schedule_cards(source),
     }
     return docs
 
@@ -758,7 +794,7 @@ def run_export(
     live = set(encoded) | set(entries)
     core = {
         "version": BUNDLE_VERSION,
-        "fsrs": {"params_version": FSRS_PARAMS_VERSION, "through_seq": FSRS_THROUGH_SEQ},
+        "fsrs": {"params_version": FSRS_PARAMS_VERSION, "through_seq": source.through_seq},
         "docs": doc_entries,
         "audio": audio_entries,
         "tombstones": _tombstones(previous, live, now),

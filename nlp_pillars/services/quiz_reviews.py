@@ -127,9 +127,22 @@ def _failure(card, now: datetime, message: str, event_id: Optional[str] = None) 
 
 
 def record_review(
-    request: QuizReviewRequest, *, client=None, now: Optional[datetime] = None
+    request: QuizReviewRequest,
+    *,
+    client=None,
+    now: Optional[datetime] = None,
+    origin: Optional[str] = None,
+    device_id: Optional[str] = None,
 ) -> QuizReviewResponse:
-    """Record one review and re-derive the card from its log."""
+    """Record one review and re-derive the card from its log.
+
+    ``origin`` and ``device_id`` say where the review was made. A review made in
+    this app passes neither, so the row takes the column default and a database
+    without migration 025 still takes it. ``cloud pull-reviews`` passes
+    ``origin="cloud"`` and the phone's device id, and ``now`` as the time the
+    cloud received the event, so the time window is judged against when the
+    review arrived rather than when the computer got round to pulling it.
+    """
     from .. import db
 
     now = now or fsrs_fold.now_ms()
@@ -165,7 +178,13 @@ def record_review(
 
         if not duplicate:
             scheduler = fsrs_fold.build_scheduler()
-            before = fsrs_fold.fold_events(prior, scheduler)
+            # What the card was when this review happened: the events that sort
+            # before it. A review that arrives late (a phone that was offline) sorts
+            # among older ones, and the events after it are not part of its past.
+            key = (reviewed_at, event_id)
+            before = fsrs_fold.fold_events(
+                [e for e in prior if (e.reviewed_at, e.event_id) < key], scheduler
+            )
             before_card = before.card if before else None
             due = before_card.due if before_card else None
             log = ReviewLog(
@@ -186,6 +205,8 @@ def record_review(
                 days_overdue=max(0, (reviewed_at - due).days) if due else 0,
                 session_id=request.session_id,
                 response_time_ms=request.response_time_ms,
+                device_id=device_id,
+                origin=origin,
             )
             # The log goes first. If this does not land, nothing else is touched.
             inserted = client.table("review_logs").insert(db._review_log_to_dict(log))

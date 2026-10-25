@@ -3,8 +3,8 @@
  *
  * Every request, static files included, passes the Access check here first
  * (`run_worker_first` in wrangler.toml). The Worker has an R2 binding and the
- * static-asset binding and nothing else: no model, no queue, no database, and
- * no request to anything but the team's Access key endpoint (certs.js).
+ * static-asset binding and the review mailbox (D1, reviews.js): no model, no
+ * queue, and no request to anything but the team's Access key endpoint (certs.js).
  * `/ingest/*` is the publisher's way in (ingest.js); it takes service tokens only.
  */
 
@@ -13,6 +13,7 @@ import { serveAudio } from './audio.js';
 import { createKeyStore } from './certs.js';
 import { serveDoc } from './docs.js';
 import { handleIngest } from './ingest.js';
+import { handleReviews } from './reviews.js';
 
 const SECURITY_HEADERS = {
   'content-security-policy': [
@@ -68,7 +69,9 @@ export function createHandler({ keyFor, now } = {}) {
       }));
     }
 
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
+    // The one write a signed-in reader can make is a review event.
+    const writesReview = request.method === 'POST' && requested === '/api/reviews';
+    if (request.method !== 'GET' && request.method !== 'HEAD' && !writesReview) {
       return secured(reply(405, { error: 'read only' }));
     }
 
@@ -96,6 +99,7 @@ export function createHandler({ keyFor, now } = {}) {
 
     const { pathname } = new URL(request.url);
     if (pathname === '/api/me') return secured(reply(200, { kind: identity.kind, email: identity.email || null }));
+    if (pathname === '/api/reviews') return secured(await handleReviews(request, env, identity, now ? now() : Date.now()));
     if (pathname === '/api/manifest') return secured(await serveDoc(env.DOCS, 'manifest.json', request));
     if (pathname.startsWith('/api/doc/')) {
       let key;

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from .. import db
+from .review_state import APPLY_LOCK, PostgrestSyncState, ReviewCursor, SyncStateError, SyncStateMissing
 
 _PAGE = 200
 
@@ -87,6 +88,10 @@ class CloudSource:
     concepts: List[dict] = field(default_factory=list)
     paper_concepts: List[dict] = field(default_factory=list)
     edges: List[dict] = field(default_factory=list)
+    # Every review event, for folding each card's schedule (id, card_id, rating, review_timestamp).
+    review_events: List[dict] = field(default_factory=list)
+    # Review events from the cloud that the cards above already include (cloud_sync_state).
+    through_seq: int = 0
 
 
 def _raise_for(table: str, error) -> None:
@@ -136,13 +141,57 @@ def latest_fact_checks(rows: List[dict]) -> List[dict]:
     return [newest[key] for key in sorted(newest)]
 
 
+REVIEW_LOG_COLUMNS = "id,card_id,rating,review_timestamp"
+_CONSISTENCY_TRIES = 3
+
+
+def _cursor(client) -> ReviewCursor:
+    """The review cursor; all zeros before migration 027, so export works without it."""
+    try:
+        return PostgrestSyncState(client).read()
+    except SyncStateMissing:
+        return ReviewCursor()
+    except SyncStateError as exc:
+        raise SourceError(str(exc)) from exc
+
+
+def _read_cards_and_reviews(client):
+    """The cards, their review events and the cursor, from one consistent moment.
+
+    ``through_seq`` tells the phone which cloud events the schedule already holds,
+    so it must describe exactly the cards read here. A pull applies events and then
+    moves the cursor, so a read that straddles one would pair a cursor with a card
+    set it does not match. In this process the lock rules that out; a pull in another
+    process (or one that crashed half-way) is caught by the cursor's two numbers and by
+    reading it again after the cards.
+    """
+    for _ in range(_CONSISTENCY_TRIES):
+        with APPLY_LOCK:
+            before = _cursor(client)
+            if before.unfinished:
+                raise SourceError(
+                    f"A review pull stopped half-way (applying through seq {before.pending}, "
+                    f"folded through {before.seq}). Run `cloud pull-reviews` to finish it; "
+                    "publishing waits so the phone is not told the wrong schedule."
+                )
+            cards = _read(client, "quiz_cards", *TABLES["quiz_cards"])
+            events = _read(client, "review_logs", REVIEW_LOG_COLUMNS, "id")
+            after = _cursor(client)
+        if after == before:
+            return cards, events, before.seq
+    raise SourceError("Reviews were being applied while the schedule was read, three times running; try again.")
+
+
 def load_source(client: Optional[object] = None) -> CloudSource:
     """Read everything the reader publishes. Writes nothing."""
     client = client or db.get_client()
     loaded = {
         table: _read(client, table, columns, order)
         for table, (columns, order) in TABLES.items()
+        if table != "quiz_cards"
     }
+    cards, review_events, through_seq = _read_cards_and_reviews(client)
+    loaded["quiz_cards"] = cards
     # Only the claims of the check each episode shows. Older checks of the same
     # script are superseded and would only add bytes the reader never renders.
     checks = latest_fact_checks(
@@ -166,4 +215,6 @@ def load_source(client: Optional[object] = None) -> CloudSource:
         concepts=loaded["concepts"],
         paper_concepts=loaded["paper_concepts"],
         edges=edges,
+        review_events=review_events,
+        through_seq=through_seq,
     )

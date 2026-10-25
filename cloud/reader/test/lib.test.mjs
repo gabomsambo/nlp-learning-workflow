@@ -21,7 +21,8 @@ test('routes: known pages, and anything else is not found', () => {
   assert.equal(parseRoute('#/').name, 'today');
   assert.equal(parseRoute('#/library').name, 'library');
   assert.equal(parseRoute('#/lessons').name, 'lessons');
-  for (const bad of ['#/review', '#/paper', '#/paper/x/nope', '#/paper/%E0%A4%A', '#/library/x']) {
+  assert.equal(parseRoute('#/review').name, 'review');
+  for (const bad of ['#/review/x', '#/paper', '#/paper/x/nope', '#/paper/%E0%A4%A', '#/library/x']) {
     assert.equal(parseRoute(bad).name, 'notfound', bad);
   }
 });

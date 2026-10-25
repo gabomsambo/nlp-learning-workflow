@@ -519,6 +519,16 @@ CREATE TABLE cloud_publish_state (
     published_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
 );
 
+-- docs/migrations/027_cloud_sync_state.sql (hand-applied on an existing volume).
+-- Cursors for the cloud reader's review events: reviews_seq (folded through) and
+-- reviews_pending (a pull in progress). Not a source of truth.
+CREATE TABLE cloud_sync_state (
+    key TEXT PRIMARY KEY CHECK (btrim(key) <> ''),
+    value BIGINT NOT NULL DEFAULT 0 CHECK (value >= 0),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+
+
 -- One transaction: a failed insert rolls back the delete.
 CREATE OR REPLACE FUNCTION replace_paper_text_and_chunks(
     p_paper_id TEXT,
@@ -1364,6 +1374,7 @@ COMMENT ON TABLE cloud_publish_state IS 'One row per document the cloud reader h
 COMMENT ON COLUMN cloud_publish_state.doc_key IS 'Bundle path, e.g. papers/arxiv_3a1706.03762.json or audio/<sha256>.mp3.';
 COMMENT ON COLUMN cloud_publish_state.content_hash IS 'sha256 (hex) of the bytes uploaded, as listed in the bundle manifest.';
 COMMENT ON COLUMN cloud_publish_state.byte_size IS 'Size of the uploaded object, summed to keep the bucket under its cap.';
+COMMENT ON TABLE cloud_sync_state IS 'Cursors for syncing with the cloud reader: reviews_seq (folded through) and reviews_pending (a pull in progress).';
 COMMENT ON COLUMN chunk_embeddings.embedding IS 'float4[] (PostgreSQL real[]). Chosen over bytea so the array is readable without a codec, and over pgvector so the Postgres image stays unchanged.';
 COMMENT ON COLUMN chunk_embeddings.model_id IS 'Provider model id including the pinned revision, e.g. BAAI/bge-base-en-v1.5@<onnx sha>.';
 COMMENT ON TABLE paper_vectors IS 'One float32 title+abstract vector per paper per model. Rebuildable. Not the chunk index.';
