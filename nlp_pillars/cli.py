@@ -1626,6 +1626,41 @@ def concepts_backfill(
     raise typer.Exit(0)
 
 
+@app.command("reprocess")
+def reprocess(
+    paper: Optional[str] = typer.Option(
+        None, "--paper", help="Regenerate one library paper by id."
+    ),
+    missing_only: bool = typer.Option(
+        False,
+        "--missing-only",
+        help="Only papers with no note; leave papers that have one out of the report.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="List the papers and the estimated cost. No model call, no write.",
+    ),
+):
+    """Regenerate note, lesson and quiz cards from stored paper text.
+
+    Does not download or re-ingest. A paper that already has a note is
+    reported, not regenerated. Run with --dry-run first.
+    """
+    from .reprocess import run_reprocess
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = run_reprocess(paper_id=paper, missing_only=missing_only, dry_run=dry_run)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("reprocess failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    console.print(report.render(), markup=False)
+    raise typer.Exit(1 if report.failed else 0)
+
+
 vault_app = typer.Typer(
     help="Obsidian vault projected from Postgres",
     add_completion=False,

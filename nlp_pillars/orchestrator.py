@@ -13,7 +13,7 @@ from typing import Callable, List, NamedTuple, Optional, Tuple
 
 from .schemas import (
     PillarConfig, PipelineResult,
-    PaperRef, Lesson, QuizCard, SearchQuery,
+    PaperRef, PaperNote, ParsedPaper, Lesson, QuizCard, SearchQuery,
     DiscoveryInput, SummarizerInput, SynthesisInput, QuizGeneratorInput,
     DiscoveryCandidate,
     StageName, StageStatus
@@ -623,6 +623,80 @@ class Orchestrator:
         parsed_paper = self.ingest_agent.ingest(paper_ref=paper)
         self._stage(StageName.INGEST, StageStatus.COMPLETED.value, paper.id)
 
+        paper_note, lesson, quiz_cards = self._generate_learning_content(
+            pillar_id, paper, parsed_paper
+        )
+
+        # Step 5e: Persist to database
+        logger.info(f"Step 5e: Persisting data for paper {paper.id} in pillar {pillar_id}")
+        self._stage(StageName.PERSIST, StageStatus.RUNNING.value, paper.id)
+        db.upsert_paper(pillar_id, paper)
+        self._store_learning_content(paper_note, lesson, quiz_cards)
+        # Stored text is the source of truth. Embeddings for the new chunks
+        # are the next write. Either failure raises, the in-flight PERSIST
+        # stage is marked failed, and the queue row stays unprocessed.
+        # Projection of those rows is the VECTORS stage below.
+        n_chunks = db.replace_paper_text(
+            paper.id, parsed_paper.full_text, parsed_paper.extractor,
+        )
+        try:
+            n_embedded = db.embed_paper_chunks(paper.id)
+        except EmbeddingError as exc:
+            raise EmbeddingError(
+                failure_detail(EMBEDDER_FAILED, "embedder", str(exc)),
+                written=exc.written,
+            ) from exc
+        db.mark_processed(pillar_id, paper.id)
+        self._stage(
+            StageName.PERSIST, StageStatus.COMPLETED.value,
+            f"{paper.id}: {n_chunks} text chunk(s) stored, "
+            f"{n_embedded} embedding(s)",
+        )
+
+        # Step 5f: Project stored embeddings into the local index (and cloud
+        # when configured). Local failure is this stage only: the lesson and
+        # quiz are already written, so the paper still counts as processed.
+        # A down cloud does not raise — that target stays behind.
+        logger.info(f"Step 5f: Projecting vectors for paper {paper.id} in pillar {pillar_id}")
+        self._stage(StageName.VECTORS, StageStatus.RUNNING.value, paper.id)
+        vectors.ensure_collections()
+        try:
+            chunks_upserted = vectors.upsert_text(
+                pillar_id, paper.id, parsed_paper.full_text
+            )
+        except ProjectionError as exc:
+            self._stage(StageName.VECTORS, StageStatus.FAILED.value, str(exc))
+        else:
+            # Zero is valid only for empty input. Keep this guard for mocked or
+            # third-party vector implementations that violate that contract.
+            if chunks_upserted == 0 and parsed_paper.full_text.strip():
+                self._stage(
+                    StageName.VECTORS, StageStatus.FAILED.value,
+                    "no chunks written for a non-empty paper; "
+                    "this paper will not appear in semantic search",
+                )
+            else:
+                detail = f"{chunks_upserted} chunks"
+                notices = getattr(chunks_upserted, "notices", ())
+                if notices:
+                    detail += f"; cloud copy behind: {'; '.join(notices)}"
+                self._stage(
+                    StageName.VECTORS,
+                    StageStatus.COMPLETED.value,
+                    detail,
+                )
+
+        logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
+        return lesson, quiz_cards
+
+    def _generate_learning_content(
+        self, pillar_id: str, paper: PaperRef, parsed_paper: ParsedPaper
+    ) -> tuple[PaperNote, Lesson, Optional[List[QuizCard]]]:
+        """Steps 5b-5d: summarize, synthesize and quiz one paper from its text.
+
+        Shared by ``_process_paper`` and ``reprocess``, so a regenerated paper
+        goes through exactly the calls and stage reports a new one does.
+        """
         # Step 5b: Summarize paper
         logger.info(f"Step 5b: Summarizing paper {paper.id} for pillar {pillar_id}")
         self._stage(StageName.SUMMARIZE, StageStatus.RUNNING.value, paper.id)
@@ -683,77 +757,31 @@ class Orchestrator:
             self._stage(StageName.QUIZ, StageStatus.COMPLETED.value,
                         stage_detail(QuizAgent.last_call, f"{len(quiz_cards or [])} cards"))
 
-        # Step 5e: Persist to database
-        logger.info(f"Step 5e: Persisting data for paper {paper.id} in pillar {pillar_id}")
-        self._stage(StageName.PERSIST, StageStatus.RUNNING.value, paper.id)
-        db.upsert_paper(pillar_id, paper)
-        db.insert_note(paper_note)
+        return paper_note, lesson, quiz_cards
+
+    def _store_learning_content(
+        self,
+        paper_note: PaperNote,
+        lesson: Lesson,
+        quiz_cards: Optional[List[QuizCard]],
+    ) -> Tuple[bool, bool, int]:
+        """Write the note, its concepts, the lesson and the quiz cards.
+
+        Returns ``(note stored, lesson stored, quiz cards stored)``. The db
+        inserts report failure as a return value rather than raising;
+        ``_process_paper`` has never looked at it, ``reprocess`` does.
+        """
+        note_ok = db.insert_note(paper_note)
         call = paper_note.concept_call or {}
         concept_extraction.save_paper_concepts(
-            paper.id,
+            paper_note.paper_id,
             paper_note.concepts,
             paper_note.proposed_concepts,
             str(call.get("model") or CONCEPTS_ROUTE.resolved_model()),
         )
-        db.insert_lesson(lesson)
-        if quiz_cards:
-            db.insert_quiz_cards(quiz_cards)
-        # Stored text is the source of truth. Embeddings for the new chunks
-        # are the next write. Either failure raises, the in-flight PERSIST
-        # stage is marked failed, and the queue row stays unprocessed.
-        # Projection of those rows is the VECTORS stage below.
-        n_chunks = db.replace_paper_text(
-            paper.id, parsed_paper.full_text, parsed_paper.extractor,
-        )
-        try:
-            n_embedded = db.embed_paper_chunks(paper.id)
-        except EmbeddingError as exc:
-            raise EmbeddingError(
-                failure_detail(EMBEDDER_FAILED, "embedder", str(exc)),
-                written=exc.written,
-            ) from exc
-        db.mark_processed(pillar_id, paper.id)
-        self._stage(
-            StageName.PERSIST, StageStatus.COMPLETED.value,
-            f"{paper.id}: {n_chunks} text chunk(s) stored, "
-            f"{n_embedded} embedding(s)",
-        )
-
-        # Step 5f: Project stored embeddings into the local index (and cloud
-        # when configured). Local failure is this stage only: the lesson and
-        # quiz are already written, so the paper still counts as processed.
-        # A down cloud does not raise — that target stays behind.
-        logger.info(f"Step 5f: Projecting vectors for paper {paper.id} in pillar {pillar_id}")
-        self._stage(StageName.VECTORS, StageStatus.RUNNING.value, paper.id)
-        vectors.ensure_collections()
-        try:
-            chunks_upserted = vectors.upsert_text(
-                pillar_id, paper.id, parsed_paper.full_text
-            )
-        except ProjectionError as exc:
-            self._stage(StageName.VECTORS, StageStatus.FAILED.value, str(exc))
-        else:
-            # Zero is valid only for empty input. Keep this guard for mocked or
-            # third-party vector implementations that violate that contract.
-            if chunks_upserted == 0 and parsed_paper.full_text.strip():
-                self._stage(
-                    StageName.VECTORS, StageStatus.FAILED.value,
-                    "no chunks written for a non-empty paper; "
-                    "this paper will not appear in semantic search",
-                )
-            else:
-                detail = f"{chunks_upserted} chunks"
-                notices = getattr(chunks_upserted, "notices", ())
-                if notices:
-                    detail += f"; cloud copy behind: {'; '.join(notices)}"
-                self._stage(
-                    StageName.VECTORS,
-                    StageStatus.COMPLETED.value,
-                    detail,
-                )
-
-        logger.info(f"Completed paper processing for {paper.id} in pillar {pillar_id}")
-        return lesson, quiz_cards
+        lesson_ok = db.insert_lesson(lesson)
+        cards_added = db.insert_quiz_cards(quiz_cards) if quiz_cards else 0
+        return note_ok, lesson_ok, cards_added
 
     def _get_pillar_config(self, pillar_id: str) -> PillarConfig:
         """Get pillar configuration from database or fallback to static config."""
