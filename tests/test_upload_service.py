@@ -478,7 +478,10 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
         with patch.object(service.ingest_agent, 'ingest', return_value=self._parsed()), \
              patch('nlp_pillars.services.upload_service.db') as mock_db, \
              patch('nlp_pillars.services.upload_service.SummarizerAgent') as summarizer, \
-             patch('nlp_pillars.services.upload_service.vectors') as mock_vectors:
+             patch('nlp_pillars.services.upload_service.vectors') as mock_vectors, \
+             patch('nlp_pillars.concept_extraction.probe_migration', return_value=None), \
+             patch('nlp_pillars.concept_extraction.load_vocabulary', return_value=[]), \
+             patch('nlp_pillars.concept_extraction.save_paper_concepts', return_value={}):
             mock_db.get_recent_notes.return_value = []
             summarizer.run.side_effect = RuntimeError("model refused")
             mock_vectors.upsert_text.return_value = 12
@@ -520,7 +523,10 @@ class TestAFailedPipelineIsNotReportedAsASuccessfulUpload:
              patch('nlp_pillars.services.upload_service.QuizAgent') as quiz, \
              patch.object(UploadService, '_get_pillar_config',
                           return_value=self._pillar_config()), \
-             patch('nlp_pillars.services.upload_service.vectors') as mock_vectors:
+             patch('nlp_pillars.services.upload_service.vectors') as mock_vectors, \
+             patch('nlp_pillars.concept_extraction.probe_migration', return_value=None), \
+             patch('nlp_pillars.concept_extraction.load_vocabulary', return_value=[]), \
+             patch('nlp_pillars.concept_extraction.save_paper_concepts', return_value={}):
             mock_db.get_recent_notes.return_value = []
             summarizer.run.return_value = self._note()
             quiz.run.return_value = [Mock()]

@@ -187,6 +187,21 @@ class PaperNote(BaseIOSchema):
     limitations: List[str] = Field(..., description="Limitations identified")
     future_work: List[str] = Field(..., description="Future research directions")
     key_terms: List[str] = Field(..., description="Important technical terms")
+    concepts: List[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Exact names selected from the supplied concept vocabulary",
+    )
+    proposed_concepts: List[str] = Field(
+        default_factory=list,
+        max_length=2,
+        description="New concept names proposed only when the vocabulary has no match",
+    )
+    concept_call: SkipJsonSchema[Optional[Dict[str, Any]]] = Field(
+        default=None,
+        exclude=True,
+        description="Server-side token/cost record for the summarizer call",
+    )
     related_papers: List[str] = Field(default_factory=list, description="Related paper IDs")
     confidence_score: float = Field(default=0.8, ge=0.0, le=1.0, description="Extraction confidence")
     # Kept on the row the app reads back, and omitted from the schema the model
@@ -575,6 +590,10 @@ class SummarizerInput(BaseIOSchema):
     parsed_paper: ParsedPaper = Field(..., description="Parsed paper content")
     pillar_id: str = Field(..., description="Target pillar ID (slug)")
     recent_notes: List[str] = Field(default_factory=list, description="Recent paper summaries for consistency")
+    concept_vocabulary: List[str] = Field(
+        default_factory=list,
+        description="Canonical concept names the summarizer should reuse first",
+    )
 
 
 class SynthesisInput(BaseIOSchema):

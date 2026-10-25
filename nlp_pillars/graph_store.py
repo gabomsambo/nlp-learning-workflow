@@ -22,6 +22,7 @@ from .paper_vectors import MIGRATION as PAPER_VECTORS_MIGRATION
 logger = logging.getLogger(__name__)
 
 MIGRATION = "docs/migrations/020_knowledge_graph.sql"
+MASTERY_MIGRATION = "docs/migrations/024_vocabulary_concepts.sql"
 _PAGE = 200
 
 
@@ -280,17 +281,51 @@ def load_graph_rows() -> Dict[str, list]:
     }
 
 
+def load_concept_mastery(
+    *, user_id: str = "default_user", pillar: Optional[str] = None
+) -> List[dict]:
+    """Current FSRS retrievability aggregated by the Postgres query."""
+    response = db.get_client().rpc(
+        "concept_mastery",
+        {"p_user_id": user_id or "default_user", "p_pillar_id": pillar},
+    )
+    if response["error"]:
+        text = str(response["error"]).lower()
+        if "concept_mastery" in text or "pgrst202" in text or "schema cache" in text:
+            raise GraphStoreError(
+                f"Concept mastery is not available ({response['error']}). "
+                f"Apply {MASTERY_MIGRATION} by hand."
+            )
+        raise GraphStoreError(f"Could not read concept mastery: {response['error']}")
+    return response["data"] or []
+
+
 def graph_view(
     *,
     pillar: Optional[str] = None,
     depth: int = 1,
     center: Optional[str] = None,
+    user_id: str = "default_user",
 ) -> dict:
     """Load the stored graph and return one bounded neighbourhood."""
     rows = load_graph_rows()
-    return slice_graph(
+    view = slice_graph(
         **rows,
         pillar=pillar or None,
         depth=depth,
         center=center or None,
     )
+    mastery = {
+        str(row.get("name")): row
+        for row in load_concept_mastery(user_id=user_id, pillar=pillar or None)
+        if row.get("name")
+    }
+    for node in view["nodes"]:
+        if node.get("kind") != "concept":
+            continue
+        row = mastery.get(str(node.get("id")), {})
+        value = row.get("retrievability")
+        node["retrievability"] = None if value is None else float(value)
+        node["card_count"] = int(row.get("card_count") or 0)
+        node["reviewed_card_count"] = int(row.get("reviewed_card_count") or 0)
+    return view

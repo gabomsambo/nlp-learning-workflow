@@ -16,10 +16,11 @@ def _client():
 def test_graph_route_returns_nodes_and_edges(monkeypatch):
     seen = {}
 
-    def fake(*, pillar, depth, center):
+    def fake(*, pillar, depth, center, user_id="default_user"):
         seen["pillar"] = pillar
         seen["depth"] = depth
         seen["center"] = center
+        seen["user_id"] = user_id
         return {
             "nodes": [{"id": "arxiv:1", "kind": "paper", "label": "Attention"}],
             "edges": [],
@@ -43,6 +44,7 @@ def test_graph_route_returns_nodes_and_edges(monkeypatch):
         "pillar": "neural-architectures-language",
         "depth": 2,
         "center": "arxiv:1",
+        "user_id": "default_user",
     }
 
 

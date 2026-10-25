@@ -41,6 +41,8 @@ from ..agents.summarizer_agent import SummarizerAgent
 from ..agents.synthesis_agent import SynthesisAgent
 from ..db import add_paper
 from ..embeddings import EmbeddingError
+from .. import concept_extraction
+from ..config import get_settings
 
 # _first_line is imported rather than copied: it strips tenacity's RetryError
 # wrapper, httpx's ' for url …' tail and instructor's dangling tag, and a second
@@ -723,6 +725,9 @@ class UploadService:
             stages.start(StageName.SUMMARIZE, "Generating structured notes")
             logger.info(f"Step 5b: Summarizing {paper.id} for {pillar_id}")
             try:
+                # Refuse before the paid call when migration 024 is absent.
+                concept_extraction.probe_migration()
+                concept_vocabulary = concept_extraction.load_vocabulary()
                 # Get recent notes for context (following orchestrator pattern)
                 recent_notes = db.get_recent_notes(pillar_id, limit=5)
 
@@ -734,18 +739,28 @@ class UploadService:
                 summarizer_input = SummarizerInput(
                     parsed_paper=parsed_paper,
                     pillar_id=pillar_id,
-                    recent_notes=note_context
+                    recent_notes=note_context,
+                    concept_vocabulary=concept_vocabulary,
                 )
 
                 paper_note = SummarizerAgent.run(summarizer_input)
 
                 # Persist the paper note
                 db.insert_note(paper_note)
+                call = paper_note.concept_call or {}
+                concept_extraction.save_paper_concepts(
+                    paper.id,
+                    paper_note.concepts,
+                    paper_note.proposed_concepts,
+                    str(call.get("model") or get_settings().default_model),
+                )
                 actions_triggered.append("summarizer")
                 stages.done(
                     StageName.SUMMARIZE,
                     f"{len(paper_note.findings)} finding(s), "
-                    f"{len(paper_note.key_terms)} key term(s)",
+                    f"{len(paper_note.key_terms)} key term(s), "
+                    f"{len(paper_note.concepts) + len(paper_note.proposed_concepts)} concept(s), "
+                    f"cost_usd {float(call.get('cost_usd') or 0):.6f}",
                 )
             except Exception as e:
                 logger.error(f"Summarizer failed for {paper.id}: {e}")

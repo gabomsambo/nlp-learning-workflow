@@ -151,6 +151,11 @@ those writes fail the persist stage and name `docs/migrations/017_paper_text.sql
 before `python -m nlp_pillars.cli graph build` or `GET /api/graph` can succeed.
 Until it is, those calls name `docs/migrations/020_knowledge_graph.sql`.
 Applied on the captain's volume on 2026-10-24.
+**024 (`replace_paper_concepts` / `concept_mastery`, plus llm-row guards in
+`replace_derived_graph`) must be applied by hand** before the vocabulary-aware
+summarizer, `python -m nlp_pillars.cli concepts backfill`, or concept mastery on
+`GET /api/graph` can run. Until it is, the summarizer and backfill refuse before
+the paid call and name `docs/migrations/024_vocabulary_concepts.sql`.
 **022 (`podcast_fact_checks` / `podcast_claims`) must be applied by hand**
 before `python -m nlp_pillars.cli factcheck run` can save. Until it is, the
 command names `docs/migrations/022_podcast_fact_checks.sql`. `--dry-run` only

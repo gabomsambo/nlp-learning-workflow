@@ -8,6 +8,7 @@ It is not applied here.
 
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
@@ -40,6 +41,7 @@ def _note() -> PaperNote:
         limitations=["Quadratic cost."],
         future_work=["Restricted attention."],
         key_terms=["attention"],
+        concepts=["attention"],
         created_at=INVENTED,
     )
 
@@ -90,11 +92,23 @@ def test_llm_supplied_created_at_is_ignored():
         chunks=["Attention is all you need."],
     )
     summarizer = SummarizerAgentImpl(Mock(), "gpt-4o-mini")
-    summarizer.client.chat.completions.create.return_value = _note()
-    summarized = summarizer.run(SummarizerInput(parsed_paper=parsed, pillar_id="neural-architectures-language"))
+    completion = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20)
+    )
+    summarizer.client.chat.completions.create_with_completion.return_value = (
+        _note(),
+        completion,
+    )
+    summarized = summarizer.run(
+        SummarizerInput(
+            parsed_paper=parsed,
+            pillar_id="neural-architectures-language",
+            concept_vocabulary=["attention"],
+        )
+    )
     assert summarized.created_at != INVENTED
     assert summarized.created_at.year != 2023
-    assert summarizer.client.chat.completions.create.call_args.kwargs["response_model"] is PaperNote
+    assert summarizer.client.chat.completions.create_with_completion.call_args.kwargs["response_model"] is PaperNote
 
     synthesis = SynthesisAgentImpl(Mock(), "gpt-4o-mini")
     synthesis.client.chat.completions.create.return_value = _lesson()

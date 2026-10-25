@@ -3,6 +3,7 @@
 Extracts structured information from research papers into PaperNote objects.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -11,6 +12,8 @@ import instructor
 from openai import OpenAI
 
 from ..config import get_settings
+from ..concept_cost import call_from_completion, call_from_exception, require_price
+from ..concept_extraction import ConceptExtractionError, normalize_concepts
 from ..schemas import PaperNote, SummarizerInput
 from .discovery_agent import SystemPromptGenerator
 
@@ -20,7 +23,9 @@ logger = logging.getLogger(__name__)
 class SummarizerValidationError(Exception):
     """Raised when summarization fails validation."""
 
-    pass
+    def __init__(self, message: str, *, call=None):
+        super().__init__(message)
+        self.call = call
 
 
 class SummarizerAgentImpl:
@@ -49,7 +54,7 @@ class SummarizerAgentImpl:
                 "You have deep expertise in NLP, machine learning, and linguistics."
             ],
             steps=[
-                "Extract: problem, method, findings, limitations, future_work, key_terms",
+                "Extract: problem, method, findings, limitations, future_work, key_terms, concepts, proposed_concepts",
                 "Focus on specific metrics and results when mentioned",
                 "Identify technical innovations and contributions"
             ],
@@ -80,11 +85,20 @@ class SummarizerAgentImpl:
         """
         logger.info(f"Starting summarization for paper: {input_data.parsed_paper.paper_ref.title}")
 
+        require_price(self.model)
         try:
             result = self._attempt_summarization(input_data)
         except Exception as e:
             logger.error(f"Summarization failed: {e}")
-            raise SummarizerValidationError(f"Instructor completion failed: {e}") from e
+            call = getattr(e, "call", None) or call_from_exception(
+                purpose="summarizer",
+                paper_id=input_data.parsed_paper.paper_ref.id,
+                model=self.model,
+                error=e,
+            )
+            raise SummarizerValidationError(
+                f"Instructor completion failed: {e}", call=call
+            ) from e
 
         logger.info("Summarization completed successfully")
         return result
@@ -102,7 +116,7 @@ class SummarizerAgentImpl:
         system_message = self._build_system_message()
         user_message = self._build_user_message(input_data)
 
-        result = self.client.chat.completions.create(
+        result, completion = self.client.chat.completions.create_with_completion(
             model=self.model,
             response_model=PaperNote,
             temperature=0.2,
@@ -117,6 +131,25 @@ class SummarizerAgentImpl:
         result.paper_id = input_data.parsed_paper.paper_ref.id
         result.pillar_id = input_data.pillar_id
         result.created_at = datetime.now(timezone.utc)
+
+        call = call_from_completion(
+            purpose="summarizer",
+            paper_id=result.paper_id,
+            model=self.model,
+            completion=completion,
+        )
+        try:
+            concepts, proposed = normalize_concepts(
+                result.concepts,
+                result.proposed_concepts,
+                input_data.concept_vocabulary,
+            )
+        except ConceptExtractionError as exc:
+            exc.call = call
+            raise
+        result.concepts = concepts
+        result.proposed_concepts = proposed
+        result.concept_call = call.as_dict()
 
         return result
 
@@ -163,6 +196,21 @@ class SummarizerAgentImpl:
             "Paper Content:",
             content
         ]
+
+        vocabulary = input_data.concept_vocabulary
+        parts.extend(
+            [
+                "",
+                "Concept vocabulary (copy exact names into concepts):",
+                json.dumps(vocabulary, ensure_ascii=False),
+                (
+                    "Choose at most 8 concepts from that vocabulary. Prefer an "
+                    "existing name whenever it fits. If an important concept has "
+                    "no match, put a concise canonical name in proposed_concepts; "
+                    "at most 2. Never put a new name in concepts."
+                ),
+            ]
+        )
 
         # Add recent notes context if provided
         if input_data.recent_notes:
@@ -226,7 +274,8 @@ SummarizerAgent = _LazySummarizerAgent()
 def summarize(
     parsed_paper,
     pillar_id: str,
-    recent_notes: Optional[List[str]] = None
+    recent_notes: Optional[List[str]] = None,
+    concept_vocabulary: Optional[List[str]] = None,
 ) -> PaperNote:
     """Convenience function for summarization.
 
@@ -247,6 +296,7 @@ def summarize(
     input_data = SummarizerInput(
         parsed_paper=parsed_paper,
         pillar_id=pillar_id,
-        recent_notes=recent_notes or []
+        recent_notes=recent_notes or [],
+        concept_vocabulary=concept_vocabulary or [],
     )
     return SummarizerAgent.run(input_data)

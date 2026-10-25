@@ -48,6 +48,18 @@ def _no_live_semantic_scholar(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_live_concept_store(monkeypatch):
+    """probe/load/save dial PostgREST; the per-test db mock cannot cover them."""
+    store = Mock()
+    store.probe_migration.return_value = None
+    store.load_vocabulary.return_value = []
+    store.save_paper_concepts.return_value = {}
+    monkeypatch.setattr(
+        "nlp_pillars.orchestrator.concept_extraction", store
+    )
+
+
 @pytest.fixture
 def paper():
     return PaperRef(

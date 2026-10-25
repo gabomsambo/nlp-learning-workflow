@@ -23,6 +23,7 @@ def get_graph(
     pillar: Optional[str] = Query(default=None),
     depth: int = Query(default=1, ge=0, le=MAX_DEPTH),
     center: Optional[str] = Query(default=None),
+    user: str = Query(default="default_user", min_length=1),
 ):
     """Nodes and edges around a pillar or a center id.
 
@@ -33,7 +34,12 @@ def get_graph(
     pillar_id = pillar.strip() if isinstance(pillar, str) and pillar.strip() else None
     center_id = center.strip() if isinstance(center, str) and center.strip() else None
     try:
-        view = graph_view(pillar=pillar_id, depth=depth, center=center_id)
+        view = graph_view(
+            pillar=pillar_id,
+            depth=depth,
+            center=center_id,
+            user_id=user.strip() or "default_user",
+        )
     except GraphStoreError as exc:
         logger.warning("Graph read failed: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc

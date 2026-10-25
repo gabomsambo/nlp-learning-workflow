@@ -28,6 +28,7 @@ from .tools.arxiv_tool import ArXivTool
 from .tools.semantic_scholar_tool import SemanticScholarTool
 from .tools.vector_search_tool import VectorSearchTool
 from .config import get_settings, get_pillar_config
+from . import concept_extraction
 from .paper_ids import resolvable_pdf_url
 from . import db
 from . import vectors
@@ -619,11 +620,16 @@ class Orchestrator:
         # Step 5b: Summarize paper
         logger.info(f"Step 5b: Summarizing paper {paper.id} for pillar {pillar_id}")
         self._stage(StageName.SUMMARIZE, StageStatus.RUNNING.value, paper.id)
+        # Probe 024 before the paid call. A model response that cannot be
+        # stored is spend without a result.
+        concept_extraction.probe_migration()
+        concept_vocabulary = concept_extraction.load_vocabulary()
         recent_notes = db.get_recent_notes(pillar_id, limit=5)
         summarizer_input = SummarizerInput(
             parsed_paper=parsed_paper,
             pillar_id=pillar_id,
-            recent_notes=[note.problem + " " + note.method for note in recent_notes[-3:]]
+            recent_notes=[note.problem + " " + note.method for note in recent_notes[-3:]],
+            concept_vocabulary=concept_vocabulary,
         )
         paper_note = SummarizerAgent.run(summarizer_input)
         self._stage(StageName.SUMMARIZE, StageStatus.COMPLETED.value, paper.id)
@@ -663,6 +669,13 @@ class Orchestrator:
         self._stage(StageName.PERSIST, StageStatus.RUNNING.value, paper.id)
         db.upsert_paper(pillar_id, paper)
         db.insert_note(paper_note)
+        call = paper_note.concept_call or {}
+        concept_extraction.save_paper_concepts(
+            paper.id,
+            paper_note.concepts,
+            paper_note.proposed_concepts,
+            str(call.get("model") or get_settings().default_model),
+        )
         db.insert_lesson(lesson)
         if quiz_cards:
             db.insert_quiz_cards(quiz_cards)
