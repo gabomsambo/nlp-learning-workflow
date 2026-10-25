@@ -12,7 +12,16 @@ run_worker_first = true
 binding = "DOCS"
 bucket_name = "nlp-reader-docs"
 
+# A local D1 (SQLite under workerd) so the real binding runs the real migration and statements.
+[[d1_databases]]
+binding = "REVIEWS"
+database_name = "nlp-reader-reviews"
+database_id = "smoke-local"
+migrations_dir = "../migrations"
+
 [vars]
 TEAM_DOMAIN = "soft-wave-31cb.cloudflareaccess.com"
 ACCESS_AUD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ALLOWED_EMAILS = "dev@example.com"
+INGEST_AUD = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+INGEST_SERVICE_TOKENS = "smoke.access"

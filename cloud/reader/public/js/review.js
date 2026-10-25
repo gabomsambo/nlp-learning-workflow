@@ -66,12 +66,15 @@ export async function reviewView(store, reviews, { now = Date.now, newId = () =>
     const counts = summarize(states, at);
     progress.textContent = `${plural(counts.due, 'card')} due · ${counts.fresh} new`;
 
+    let unreachable = 0;
     for (const state of queue) {
       let content;
       try {
         content = await contentFor(store, library, state);
       } catch (error) {
-        content = null;
+        // The document is not on this device and the network will not give it: try again later.
+        unreachable += 1;
+        continue;
       }
       if (mine !== token) return;
       if (content) {
@@ -79,11 +82,11 @@ export async function reviewView(store, reviews, { now = Date.now, newId = () =>
         paintCard();
         return;
       }
-      // The text is not here (a card that was regenerated, or a document this device cannot reach yet).
+      // The paper has no such card any more (it was regenerated): never show it.
       session.skipped.add(state.card_id);
     }
     current = null;
-    paintEnd(states, at);
+    paintEnd(states, at, unreachable);
   }
 
   function paintCard() {
@@ -131,15 +134,18 @@ export async function reviewView(store, reviews, { now = Date.now, newId = () =>
     show();
   }
 
-  function paintEnd(states, at) {
+  function paintEnd(states, at, unreachable = 0) {
     const upcoming = nextDueAt(states, at);
     const [again, hard, good, easy] = session.tally;
     const soon = upcoming !== null && upcoming - at <= WAIT_FOR_MS;
     body.removeAttribute('aria-labelledby');
     body.replaceChildren(
-      h('h2', { class: 'review-end-title', text: session.reviewed ? 'Session complete' : 'Nothing to review right now' }),
+      h('h2', { class: 'review-end-title', text: unreachable > 0 && !session.reviewed ? 'Cards could not be loaded' : session.reviewed ? 'Session complete' : 'Nothing to review right now' }),
       session.reviewed ? h('p', { class: 'review-end-count', text: `You reviewed ${plural(session.reviewed, 'card')}.` }) : null,
       session.reviewed ? h('p', { class: 'review-tally', text: `Again ${again} · Hard ${hard} · Good ${good} · Easy ${easy}` }) : null,
+      unreachable > 0
+        ? h('p', { class: 'review-next', text: `${plural(unreachable, 'card')} could not be loaded without a connection. They will appear when you are back online.` })
+        : null,
       upcoming !== null
         ? h('p', { class: 'review-next', text: soon ? 'The next card is due in a few minutes. It will appear here.' : `Next card due in ${formatInterval(upcoming - at)}.` })
         : h('p', { class: 'review-next', text: 'No other cards are scheduled.' }),
@@ -172,6 +178,10 @@ export async function reviewView(store, reviews, { now = Date.now, newId = () =>
   }
   // Fetch a fresh snapshot and other devices' reviews behind the page; the queue is recomputed
   // from whatever is held the next time a card is shown.
-  reviews.sync().then(() => { paintSync(); });
+  reviews.sync().then(() => {
+    paintSync();
+    // Idle (nothing on screen) and something may have changed: other devices' reviews, or text that can load now.
+    if (page.isConnected && !current) show();
+  });
   return page;
 }
