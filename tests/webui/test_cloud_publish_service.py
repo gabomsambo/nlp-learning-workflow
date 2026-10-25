@@ -314,3 +314,38 @@ def test_a_failed_publish_does_not_turn_the_page_chip_red():
     ]
     assert not any(status.counts_as_down(c) for c in checks)
     assert status.public_summary(checks) == "All services up"
+
+
+# --- a review is a change the reader should hear about ---------------------------
+
+
+def test_a_review_notifies_once_and_a_replayed_review_or_failure_does_not(monkeypatch):
+    from datetime import datetime, timezone
+
+    from fastapi import FastAPI
+
+    from nlp_pillars.schemas import QuizReviewResponse
+    from webui.routers.api import quiz as quiz_api
+
+    outcome = {"success": True, "duplicate": False}
+
+    def fake_review(request):
+        return QuizReviewResponse(
+            success=outcome["success"], card=None,
+            next_review_date=datetime(2026, 3, 12, tzinfo=timezone.utc),
+            message="ok", event_id="e", duplicate=outcome["duplicate"],
+        )
+
+    monkeypatch.setattr("nlp_pillars.db.review_quiz_card_fsrs", fake_review)
+    heard = []
+    spy = SimpleNamespace(notify=heard.append)
+    app = FastAPI()
+    app.include_router(quiz_api.router)
+    client = TestClient(app)
+    with patch.object(service, "_instance", spy):
+        assert client.post("/api/quiz/review", json={"card_id": "c1", "rating": 3}).status_code == 200
+        outcome["duplicate"] = True
+        assert client.post("/api/quiz/review", json={"card_id": "c1", "rating": 3}).status_code == 200
+        outcome.update(success=False, duplicate=False)
+        assert client.post("/api/quiz/review", json={"card_id": "c1", "rating": 3}).status_code == 400
+    assert heard == ["review"]
