@@ -550,7 +550,11 @@ class PostgrestClient:
         return self._shape_run(data[0])
 
     async def list_pipeline_runs(
-        self, pillar_id: Optional[str] = None, limit: int = 20
+        self,
+        pillar_id: Optional[str] = None,
+        limit: int = 20,
+        kind: Optional[str] = None,
+        script_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Recent runs, newest first. Stages are not embedded — this is a summary.
 
@@ -559,12 +563,14 @@ class PostgrestClient:
         them on a history page is a lot of JSON for a view that shows a status and a
         timestamp. Anything wanting the payload reads the single run.
 
-        Three scalars ARE projected out of it with PostgREST's ``->>`` operator.
+        Four scalars ARE projected out of it with PostgREST's ``->>`` operator.
         Title and added are what the pillar page's "Recent Uploads" list needs: an
         upload row that cannot name its paper or say whether the paper was added has
         nothing useful to show, and it used to print the run's UUID and
         "Done — added "the paper"". paper_id is what Activity links to
-        ``/papers/{id}`` with. Three text fields cost nothing next to the payload.
+        ``/papers/{id}`` with. ``script_id`` lets Listen find the latest fact-check
+        attempt for the selected script without downloading every run payload. Four
+        text fields cost nothing next to the payload.
         """
         params: Dict[str, Any] = {
             "select": (
@@ -572,16 +578,26 @@ class PostgrestClient:
                 "papers_processed,papers_failed,error,created_at,started_at,"
                 "finished_at,heartbeat_at,"
                 "result_title:result->>title,result_added:result->>added,"
-                "result_paper_id:result->>paper_id"
+                "result_paper_id:result->>paper_id,"
+                "result_script_id:result->>script_id"
             ),
             "order": "created_at.desc",
             "limit": limit,
         }
         if pillar_id:
             params["pillar_id"] = f"eq.{pillar_id}"
+        if kind:
+            params["kind"] = f"eq.{kind}"
+        if script_id:
+            params["result->>script_id"] = f"eq.{script_id}"
         try:
             data, _ = await self._get("pipeline_runs", params=params)
         except httpx.HTTPError as e:
+            if script_id:
+                # Listen uses this filtered lookup to distinguish no check from a
+                # running or failed one. Returning [] here would turn a database
+                # outage into "not checked", which is state the user may act on.
+                raise
             # History is decoration, not state the UI acts on — an empty list is an
             # acceptable degradation. Logged so it is not silent.
             logger.warning(f"Could not list pipeline runs: {e}")

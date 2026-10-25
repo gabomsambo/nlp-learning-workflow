@@ -39,11 +39,27 @@ async def get_active_run(
 @router.get("")
 async def list_runs(
     pillar_id: Optional[str] = Query(None, description="Restrict to one pillar"),
+    kind: Optional[str] = Query(None, description="Restrict to one run kind"),
+    script_id: Optional[str] = Query(
+        None, description="Restrict to a script id stored in the run result"
+    ),
     limit: int = Query(20, ge=1, le=100),
 ) -> List[Dict[str, Any]]:
     """Recent runs, newest first, without stage detail. The run history view."""
     client = PostgrestClient()
-    return await client.list_pipeline_runs(pillar_id=pillar_id, limit=limit)
+    try:
+        return await client.list_pipeline_runs(
+            pillar_id=pillar_id,
+            limit=limit,
+            kind=kind,
+            script_id=script_id,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Could not read filtered pipeline runs: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not read fact-check run status. Try reloading.",
+        ) from exc
 
 
 @router.get("/{run_id}")

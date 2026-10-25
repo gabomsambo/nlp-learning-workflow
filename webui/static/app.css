@@ -3335,6 +3335,225 @@ html[data-theme="cockpit"] .player-title {
   white-space: pre-wrap;
 }
 
+.factcheck-panel {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+
+.factcheck-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.factcheck-head .section-title { margin: 0; }
+
+.factcheck-status,
+.factcheck-summary p,
+.factcheck-meta {
+  margin: var(--space-1) 0 0;
+}
+
+.factcheck-status,
+.factcheck-meta {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.factcheck-status.is-error { color: var(--danger); }
+.factcheck-status.is-warn { color: var(--warn); }
+
+.factcheck-summary {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.factcheck-summary > p:first-child {
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.factcheck-alert,
+.factcheck-audio-warning {
+  margin: var(--space-3) 0 0;
+}
+
+.factcheck-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.factcheck-toggle input { margin: 0; }
+
+.factcheck-layout {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+/* The script takes the room it needs; the issues panel is a fixed column that
+   disappears with the panel. A grid track would keep reserving its width for a
+   hidden panel and squeeze the script for nothing. */
+.factcheck-script { flex: 1 1 auto; min-width: 0; }
+
+.factcheck-issues {
+  position: sticky;
+  top: var(--space-4);
+  flex: 0 0 19rem;
+  max-height: 28rem;
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+
+.factcheck-issues .section-title { margin-top: 0; }
+
+.factcheck-issue {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+}
+
+.factcheck-issue.is-high { border-left-color: var(--danger); }
+.factcheck-issue.is-medium { border-left-color: var(--warn); }
+
+.factcheck-issue-line {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.factcheck-issue > strong { padding-right: var(--space-7); }
+.factcheck-issue q { font-weight: 600; }
+.factcheck-issue p,
+.factcheck-issue blockquote { margin: 0; }
+.factcheck-issue blockquote { color: var(--muted); }
+.factcheck-jump { justify-self: start; }
+
+.script-body .script-line {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  min-height: 1.55em;
+  border-radius: var(--r-control);
+}
+
+.script-line-number {
+  padding-right: var(--space-3);
+  color: var(--muted);
+  font-size: 0.85em;
+  text-align: right;
+  user-select: none;
+}
+
+.script-line-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script-line.is-target {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+  background: var(--warn-soft);
+}
+
+.factcheck-mark {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid var(--muted);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.factcheck-mark.is-high { border-bottom-style: solid; border-bottom-color: var(--danger); }
+.factcheck-mark.is-medium { border-bottom-style: dashed; border-bottom-color: var(--warn); }
+.factcheck-mark.is-low,
+.factcheck-mark.is-neutral,
+.factcheck-mark.is-supported { border-bottom-style: dotted; border-bottom-color: var(--muted); }
+
+.factcheck-mark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.factcheck-popover {
+  grid-column: 2;
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.factcheck-popover p,
+.factcheck-popover blockquote,
+.factcheck-popover hr { margin: 0; }
+
+.factcheck-popover blockquote {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+}
+
+.factcheck-popover blockquote small,
+.factcheck-judges { display: block; margin-top: var(--space-1); color: var(--muted); }
+.factcheck-popover-title.is-high { color: var(--danger); }
+.factcheck-popover-title.is-medium { color: var(--warn); }
+
+.factcheck-popover-close {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-2);
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.factcheck-evidence-missing { color: var(--muted); font-style: italic; }
+
 .cue-host {
   color: var(--accent);
   font-weight: 700;
@@ -3356,6 +3575,9 @@ html[data-theme="cockpit"] .player-title {
   .episode-actions .btn { min-height: 40px; }
   .player-card { grid-template-columns: minmax(0, 1fr); }
   .player-cover { width: 72px; height: 72px; }
+  .factcheck-layout { flex-direction: column; }
+  .factcheck-issues { position: static; flex: 1 1 auto; width: 100%; max-height: none; }
+  .script-body .script-line { grid-template-columns: 2.75rem minmax(0, 1fr); }
 }
 
 /* Activity history and the shell status chip.

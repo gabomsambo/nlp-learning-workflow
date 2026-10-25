@@ -110,6 +110,14 @@ async def test_the_history_list_degrades_to_empty():
     assert await _client(handler).list_pipeline_runs() == []
 
 
+async def test_a_script_filtered_history_lookup_does_not_hide_an_outage():
+    def handler(request):
+        raise httpx.ConnectError("down", request=request)
+
+    with pytest.raises(httpx.RequestError):
+        await _client(handler).list_pipeline_runs(script_id="script-1", limit=1)
+
+
 async def test_the_history_list_does_not_embed_stages_or_payloads():
     """It is a summary view.
 
@@ -129,7 +137,7 @@ async def test_the_history_list_does_not_embed_stages_or_payloads():
     assert "status" in captured["select"].split(",")
 
 
-async def test_the_history_list_projects_the_two_scalars_an_upload_row_needs():
+async def test_the_history_list_projects_summary_scalars_without_the_payload():
     """The whole `result` payload stays out, but a bare upload row cannot name its
     paper or say whether the paper was added — it printed the run's UUID and
     "Done — added "the paper"". These two text fields cost nothing next to it."""
@@ -143,6 +151,24 @@ async def test_the_history_list_projects_the_two_scalars_an_upload_row_needs():
     assert "result_title:result->>title" in captured["select"]
     assert "result_added:result->>added" in captured["select"]
     assert "result_paper_id:result->>paper_id" in captured["select"]
+    assert "result_script_id:result->>script_id" in captured["select"]
+
+
+async def test_the_history_list_can_filter_one_scripts_factcheck_runs():
+    captured = {}
+
+    def handler(request):
+        captured.update(dict(request.url.params))
+        return httpx.Response(200, json=[])
+
+    await _client(handler).list_pipeline_runs(
+        limit=1,
+        kind="podcast_factcheck",
+        script_id="script-1",
+    )
+    assert captured["kind"] == "eq.podcast_factcheck"
+    assert captured["result->>script_id"] == "eq.script-1"
+    assert captured["limit"] == "1"
 
 
 # ----------------------------------------------------------------- route mapping
@@ -187,7 +213,7 @@ def test_route_answers_503_when_the_database_is_unreachable(app_client, monkeypa
     assert "run itself is unaffected" in res.json()["detail"]
 
 
-def test_active_route_is_reachable_and_not_captured_as_a_run_id(app_client, monkeypatch):
+def test_the_active_route_is_not_captured_as_a_run_id(app_client, monkeypatch):
     """/active is registered before /{run_id}; if that ordering regresses, "active"
     is parsed as a run id and this route becomes unreachable."""
     async def active(self, pillar_id=None):
@@ -197,3 +223,28 @@ def test_active_route_is_reachable_and_not_captured_as_a_run_id(app_client, monk
     res = app_client.get("/api/pipeline-runs/active")
     assert res.status_code == 200
     assert res.json()["id"] == "run-1"
+
+
+def test_list_route_forwards_factcheck_filters(app_client, monkeypatch):
+    seen = {}
+
+    async def listed(self, pillar_id=None, limit=20, kind=None, script_id=None):
+        seen.update({
+            "pillar_id": pillar_id,
+            "limit": limit,
+            "kind": kind,
+            "script_id": script_id,
+        })
+        return []
+
+    monkeypatch.setattr(PostgrestClient, "list_pipeline_runs", listed)
+    res = app_client.get(
+        "/api/pipeline-runs?kind=podcast_factcheck&script_id=script-1&limit=1"
+    )
+    assert res.status_code == 200
+    assert seen == {
+        "pillar_id": None,
+        "limit": 1,
+        "kind": "podcast_factcheck",
+        "script_id": "script-1",
+    }
