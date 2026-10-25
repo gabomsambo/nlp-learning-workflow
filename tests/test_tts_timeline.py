@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
 
 from nlp_pillars.schemas import AudioMetadata
 from nlp_pillars.tts import aligner

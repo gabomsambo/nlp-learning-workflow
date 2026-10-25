@@ -3597,6 +3597,240 @@ html[data-theme="cockpit"] .player-title {
   font-style: italic;
 }
 
+/* Read along: the script set as a page to read.
+   Reference points (see the PR): Apple Podcasts' transcript for the quiet
+   surrounding text and the single bright passage, Speechify / ElevenReader /
+   Apple Books for a soft chip on the spoken word, Spotify's transcript for
+   timestamps you can tap and a way back to "now". Colours and fonts are the
+   shell's tokens; nothing here introduces a new one. */
+.script-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.script-head .section-title { margin: 0; }
+
+.view-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.view-switch-btn {
+  min-height: 32px;
+  margin: 0;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-switch-btn[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-card);
+}
+
+.view-switch-btn:focus-visible,
+.readalong-ctl:focus-visible,
+.readalong-now:focus-visible,
+.readalong-seek:focus-visible,
+.readalong-surface:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.readalong {
+  --read-quiet: color-mix(in srgb, var(--text) 68%, var(--surface));
+  margin: var(--space-3) 0 var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.readalong-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+
+.readalong-surface {
+  max-height: min(66vh, 40rem);
+  padding: var(--space-7) var(--space-5);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-family: var(--font-read);
+  font-size: 21px;
+  line-height: 1.7;
+  scrollbar-width: thin;
+  /* Text fades in and out at the edges instead of being cut off. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 28px, black calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, black 28px, black calc(100% - 28px), transparent 100%);
+}
+
+.readalong-line {
+  display: grid;
+  grid-template-columns: 3.4rem minmax(0, 1fr);
+  max-width: calc(var(--read-max) + 3.4rem);
+  margin: 0 auto;
+  padding: 0.3rem var(--space-2);
+  border-radius: var(--r-control);
+  color: var(--read-quiet);
+  transition: color 200ms ease, background-color 200ms ease;
+}
+
+.readalong-line.is-current {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--text);
+}
+
+.readalong-line.is-target {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+}
+
+.readalong-text {
+  grid-column: 2;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.readalong-seek {
+  grid-column: 1;
+  align-self: start;
+  justify-self: start;
+  margin: 0;
+  padding: 0.55em 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.7;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.readalong-seek:hover,
+.readalong-line.is-current .readalong-seek { color: var(--accent); opacity: 1; }
+
+.readalong-break {
+  margin: var(--space-4) 0;
+  color: var(--muted);
+  font-size: 0.7em;
+  letter-spacing: 0.6em;
+  text-align: center;
+}
+
+.ra-w {
+  margin: 0 -0.14em;
+  padding: 0.05em 0.14em;
+  border-radius: 6px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 120ms ease;
+}
+
+.readalong-surface.is-timed .readalong-line,
+.readalong-surface.is-timed .ra-w { cursor: pointer; }
+
+.readalong-surface.is-timed .ra-w:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+.ra-w.is-now,
+.readalong-surface.is-timed .ra-w.is-now {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--text);
+}
+
+/* A wrapped mark is underlined where its words are, not along the bottom of
+   the line box, which is what the Script view's border does at 1.7 leading. */
+.readalong .factcheck-mark {
+  border-bottom: 0;
+  text-decoration: underline dotted var(--muted) 2px;
+  text-underline-offset: 0.2em;
+}
+
+.readalong .factcheck-mark.is-high { text-decoration-style: solid; text-decoration-color: var(--danger); }
+.readalong .factcheck-mark.is-medium { text-decoration-style: dashed; text-decoration-color: var(--warn); }
+.readalong-line .factcheck-popover { grid-column: 1 / -1; margin-top: var(--space-2); }
+.factcheck-playfrom { justify-self: start; }
+
+.readalong-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.readalong-ctl {
+  min-width: 44px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.readalong-play {
+  min-width: 76px;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.readalong-time {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.readalong-now {
+  min-height: 40px;
+  margin: 0 0 0 auto;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readalong-line,
+  .ra-w { transition: none; }
+}
+
 .script-warnings { margin-top: var(--space-3); }
 .script-warnings strong { display: block; margin-bottom: var(--space-2); }
 .script-warnings ul { margin: 0; padding-left: 1.2rem; }
@@ -3611,6 +3845,13 @@ html[data-theme="cockpit"] .player-title {
   .factcheck-layout { flex-direction: column; }
   .factcheck-issues { position: static; flex: 1 1 auto; width: 100%; max-height: none; }
   .script-body .script-line { grid-template-columns: 2.75rem minmax(0, 1fr); }
+  .readalong-surface { padding: var(--space-6) var(--space-3); font-size: 19px; line-height: 1.68; }
+  .readalong-line { grid-template-columns: minmax(0, 1fr); padding: 0.25rem var(--space-2); }
+  .readalong-seek { grid-column: 1; padding: 0.3em 0 0; line-height: 1.2; }
+  .readalong-text { grid-column: 1; }
+  .readalong-bar { gap: var(--space-2); padding: var(--space-3); }
+  .readalong-ctl { min-height: 44px; }
+  .readalong-now { min-height: 44px; margin-left: 0; width: 100%; }
 }
 
 /* Activity history and the shell status chip.

@@ -336,3 +336,38 @@ async def test_loader_treats_a_failed_read_as_unknown(monkeypatch):
     assert view.streak is None
     assert view.glance[0].papers is None
     assert view.glance[0].due is None
+
+
+@pytest.mark.asyncio
+async def test_loader_does_not_pull_the_read_along_timeline_for_the_episode_card(monkeypatch):
+    class Fake:
+        def __init__(self):
+            self.calls = []
+
+        async def fetch_rows(self, table, params):
+            self.calls.append((table, params))
+            if table == "podcast_scripts":
+                return [{
+                    "id": "s1", "paper_id": "p1", "pillar_id": "ml-systems-production",
+                    "title": "Deep Dive", "created_at": "2026-10-22T13:50:00+00:00", "word_count": 1900,
+                    "audio_file": "episode.mp3", "audio_seconds": 654.7,
+                }], 1
+            return [], 0
+
+        async def get_active_pipeline_run(self, pillar_id=None):
+            return None
+
+        async def get_quick_stats(self):
+            return _stats()
+
+        async def counts_for_pillar(self, pillar_id):
+            return {"papers": 0, "lessons": 0, "quiz_cards": 0}
+
+    monkeypatch.setattr("webui.services.today.get_pillars_or_empty", lambda limit=100: [_pillar()])
+    fake = Fake()
+    view = await load_today_view(fake, now=NOW, tz=BERLIN)
+    select = next(p for t, p in fake.calls if t == "podcast_scripts")["select"]
+    assert "audio_metadata->file_name" in select
+    assert "audio_metadata," not in select and not select.endswith("audio_metadata")
+    assert view.episode is not None
+    assert view.episode.src == "/api/podcast/audio/episode.mp3"

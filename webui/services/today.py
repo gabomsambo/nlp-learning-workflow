@@ -959,7 +959,13 @@ async def load_today_view(
         "limit": 10,
     }
     episode_params = {
-        "select": "id,paper_id,pillar_id,title,created_at,word_count,audio_metadata",
+        # Two keys of audio_metadata, not the object: it carries the read-along
+        # timeline now, which runs to 250 KB an episode and Today needs none of it.
+        "select": (
+            "id,paper_id,pillar_id,title,created_at,word_count,"
+            "audio_file:audio_metadata->file_name,"
+            "audio_seconds:audio_metadata->duration_seconds"
+        ),
         "order": "created_at.desc",
         "limit": 20,
     }
@@ -1002,6 +1008,12 @@ async def load_today_view(
     review_rows, _review_truncated = _rows(review_raw)
     lessons, _ = _rows(lessons_raw)
     episodes, _ = _rows(episodes_raw)
+    for row in episodes or []:
+        if "audio_file" in row or "audio_seconds" in row:
+            row["audio_metadata"] = {
+                "file_name": row.pop("audio_file", None),
+                "duration_seconds": row.pop("audio_seconds", None),
+            }
     runs, _ = _rows(runs_raw)
     activity_papers, _ = _rows(papers_raw)
     activity_quiz, _ = _rows(quiz_act_raw)
