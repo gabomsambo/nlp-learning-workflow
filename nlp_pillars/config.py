@@ -143,6 +143,17 @@ class Settings(BaseSettings):
         env="INDEXTTS_START_COMMAND",
     )
     voices_dir: str = Field("/voices", env="VOICES_DIR")
+    # Cloud reader publishing (nlp_pillars/cloud/publish.py). Off unless
+    # CLOUD_PUBLISH_ENABLED is true; the three below must then all be set. The
+    # client id and secret are the Access service token that may reach /ingest
+    # and nothing else. The bundle directory keeps the transcoded audio between
+    # runs, so it belongs on the uploads volume.
+    cloud_publish_enabled: bool = Field(False, env="CLOUD_PUBLISH_ENABLED")
+    cloud_publish_url: Optional[str] = Field(None, env="CLOUD_PUBLISH_URL")
+    cf_access_client_id: Optional[str] = Field(None, env="CF_ACCESS_CLIENT_ID")
+    cf_access_client_secret: Optional[str] = Field(None, env="CF_ACCESS_CLIENT_SECRET")
+    cloud_publish_max_bytes: int = Field(5_000_000_000, env="CLOUD_PUBLISH_MAX_BYTES", gt=0)
+    cloud_bundle_dir: str = Field("/app/data/cloud-bundle", env="CLOUD_BUNDLE_DIR")
     podcast_audio_dir: str = Field("/app/data/podcast_audio", env="PODCAST_AUDIO_DIR")
     tts_download_dir: str = Field("/app/data/tts-downloads", env="TTS_DOWNLOAD_DIR")
     tts_preview_dir: str = Field("/app/data/tts-previews", env="TTS_PREVIEW_DIR")

@@ -102,3 +102,55 @@ export function makeEnv(overrides = {}) {
     ...overrides,
   };
 }
+
+export const INGEST_AUD = 'c'.repeat(64);
+export const PUBLISHER = 'publisher123.access';
+
+/** A writable R2 bucket: get, put, list (with custom metadata), delete. */
+export function fakeStore(initial = {}) {
+  const objects = new Map();
+  const put = (key, body, options = {}, uploaded = Date.UTC(2026, 9, 25, 12, 0, 0)) => {
+    const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : new Uint8Array(body);
+    objects.set(key, { bytes, customMetadata: options.customMetadata || {}, uploaded: new Date(uploaded) });
+  };
+  for (const [key, value] of Object.entries(initial)) put(key, value.body, { customMetadata: value.customMetadata }, value.uploaded);
+  return {
+    objects,
+    seed: put,
+    async put(key, body, options = {}) {
+      // R2 checks the checksum it is given and refuses a body that does not match.
+      if (options.sha256 && createHash('sha256').update(Buffer.from(body)).digest('hex') !== options.sha256) {
+        throw new Error('put: The SHA-256 checksum you specified did not match what we received. (10037)');
+      }
+      put(key, body, options, NOW_MS);
+    },
+    async get(key) {
+      const held = objects.get(key);
+      if (!held) return null;
+      return { key, size: held.bytes.length, httpEtag: `"${key}"`, body: new Blob([held.bytes]).stream() };
+    },
+    async list({ cursor, limit = 1000 } = {}) {
+      const keys = Array.from(objects.keys()).sort();
+      const start = cursor ? Number(cursor) : 0;
+      const page = keys.slice(start, start + limit);
+      return {
+        objects: page.map((key) => ({
+          key, size: objects.get(key).bytes.length, uploaded: objects.get(key).uploaded,
+          customMetadata: objects.get(key).customMetadata,
+        })),
+        truncated: start + limit < keys.length,
+        cursor: String(start + limit),
+      };
+    },
+    async delete(keys) { for (const key of [].concat(keys)) objects.delete(key); },
+  };
+}
+
+export function makeIngestEnv(overrides = {}) {
+  return makeEnv({
+    INGEST_AUD,
+    INGEST_SERVICE_TOKENS: PUBLISHER,
+    DOCS: fakeStore(),
+    ...overrides,
+  });
+}

@@ -1796,6 +1796,57 @@ def cloud_export(
     raise typer.Exit(0)
 
 
+@cloud_app.command("publish")
+def cloud_publish(
+    bundle: Optional[Path] = typer.Option(
+        None,
+        "--bundle",
+        help="Bundle directory. Defaults to CLOUD_BUNDLE_DIR; keeps the transcoded audio between runs.",
+    ),
+    full: bool = typer.Option(
+        False, "--full", help="Upload every object again, even ones the cloud already holds."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Export locally, ask the cloud what it holds, print what would be uploaded. Writes nothing there.",
+    ),
+):
+    """Export the bundle and send what changed to the cloud reader.
+
+    Uploads audio and documents the cloud lacks, then the manifest last. Needs
+    CLOUD_PUBLISH_URL, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET, and
+    migration 026 applied. Safe to run again after any failure.
+    """
+    from .cloud.publish import PublishConfig, PublishError, run_publish
+    from .cloud.source import SourceError
+    from .config import get_settings
+
+    _log_env_path()
+    _setup_logging()
+    settings = get_settings()
+    try:
+        config = PublishConfig.from_settings(settings)
+        report = run_publish(
+            config,
+            bundle or Path(settings.cloud_bundle_dir),
+            full=full,
+            dry_run=dry_run,
+            on_progress=lambda message: console.print(f"  {message}", markup=False),
+        )
+    except (PublishError, SourceError) as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("cloud publish failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("cloud publish failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
 vectors_app = typer.Typer(
     help="Project chunk embeddings from Postgres into Qdrant",
     add_completion=False,

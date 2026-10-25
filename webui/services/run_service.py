@@ -50,6 +50,7 @@ from nlp_pillars.schemas import (
 )
 from nlp_pillars.services.upload_service import get_upload_service
 from webui.services import (
+    cloud_publish_service,
     podcast_audio_service,
     podcast_factcheck_service,
     podcast_script_service,
@@ -262,6 +263,11 @@ def execute_run(
 
     finally:
         cancel_events.pop(run_id, None)
+        # A discovery shows candidates and changes nothing the reader holds. Every
+        # other kind may. notify() only records the fact and cannot raise, so a
+        # cloud problem can never change how this run ended.
+        if kind != KIND_DISCOVER:
+            cloud_publish_service.notify(f"run:{kind}")
 
 
 def _finish_pipeline(run_id: str, result) -> None:

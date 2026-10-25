@@ -231,6 +231,16 @@ services:
       # host.docker.internal reaches the captain's machine from inside Docker.
       INDEXTTS_URL: "${INDEXTTS_URL:-http://host.docker.internal:7860}"
       INDEXTTS_START_COMMAND: "${INDEXTTS_START_COMMAND:-cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860}"
+      # Cloud reader publishing (see cloud/reader/README.md). Off unless
+      # CLOUD_PUBLISH_ENABLED=true. The
+      # service token can reach /ingest and nothing else. The bundle directory
+      # holds the transcoded audio between runs, on the uploads volume.
+      CLOUD_PUBLISH_ENABLED: "${CLOUD_PUBLISH_ENABLED:-false}"
+      CLOUD_PUBLISH_URL: "${CLOUD_PUBLISH_URL:-}"
+      CF_ACCESS_CLIENT_ID: "${CF_ACCESS_CLIENT_ID:-}"
+      CF_ACCESS_CLIENT_SECRET: "${CF_ACCESS_CLIENT_SECRET:-}"
+      CLOUD_PUBLISH_MAX_BYTES: "${CLOUD_PUBLISH_MAX_BYTES:-5000000000}"
+      CLOUD_BUNDLE_DIR: "/app/data/cloud-bundle"
       VOICES_DIR: "/voices"
       PODCAST_AUDIO_DIR: "/app/data/podcast_audio"
       TTS_DOWNLOAD_DIR: "/app/data/tts-downloads"
