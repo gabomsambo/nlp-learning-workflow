@@ -310,6 +310,7 @@ class TestLockedRulesSurviveEveryConfiguration:
             "Use ONLY information found in the provided paper and the Ground Pack.",
             "If the paper is silent on something, write: [VERIFY]: detail not specified in the paper.",
             "Include numbers/metrics ONLY if present in the paper; otherwise keep it qualitative.",
+            "Never assign a number from a flattened or garbled table when missing row or column labels make its meaning ambiguous.",
             "Prefer the exact phrasing of named datasets, tasks, and metrics from the paper.",
             "No external facts, no web knowledge.",
             "Use ONLY the speaker label [HOST] for all dialogue lines.",
@@ -354,6 +355,11 @@ class TestCallFourNoLongerLiesToItself:
         prompt = render_all()["4-system"]
         assert "no \"Limitations\" section at all" in prompt
         assert "Two real weaknesses beat four invented ones." in prompt
+
+    def test_it_verifies_a_claimed_absence_against_the_whole_paper(self):
+        prompt = render_all()["4-system"]
+        assert "search the whole paper and verify that it is truly absent" in prompt
+        assert "If the paper addresses it anywhere, do not present it as absent." in prompt
 
     def test_call_three_reports_missing_data_rather_than_filling_it_in(self):
         assert 'write "Not reported"' in render_all()["3-system"]
