@@ -212,6 +212,9 @@
                 {% if episode.words and episode.when %} · {% endif %}
                 {% if episode.when %}{{ episode.when }}{% endif %}
               </p>
+              <div class="episode-factcheck" data-factcheck-script="{{ episode.id }}" aria-live="polite">
+                <p class="episode-factcheck-status">Fact check status loads with JavaScript. Until it does, nothing here says the script was checked.</p>
+              </div>
             </li>
             {% endfor %}
           </ul>
@@ -230,6 +233,7 @@
         {% for episode in page.episodes %}
         <p><a href="{{ episode.href }}">{{ episode.title }}</a></p>
         <p class="list-row-meta">Open in Listen{% if episode.words %} · {{ episode.words }}{% endif %}</p>
+        <p class="list-row-meta" data-factcheck-chip="{{ episode.id }}" hidden></p>
         {% endfor %}
         {% elif page.episodes_unavailable %}
         <p class="paper-muted">Episodes could not be loaded.</p>
@@ -275,6 +279,7 @@
 {% endblock %}
 {% block scripts %}
 {% if found %}
+<script src="/static/factcheck.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/paper-page.js?v={{ asset_v | default('1', true) }}"></script>
 {% endif %}
 {% endblock %}

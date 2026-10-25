@@ -2672,6 +2672,37 @@ html[data-theme="cockpit"] .paper-panel h2 { font-weight: 600; }
 
 .episode-list { list-style: none; margin: 0; padding: 0; }
 .episode-list li { margin-bottom: var(--space-4); }
+.episode-factcheck {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.episode-factcheck p { margin: 0 0 var(--space-2); }
+.episode-factcheck-title { font-weight: 600; font-size: var(--fs-ui); }
+.episode-factcheck-summary,
+.episode-factcheck-status,
+.episode-factcheck-detail { font-size: var(--fs-caption); color: var(--muted); }
+.episode-factcheck-summary { color: var(--text); }
+.episode-factcheck-status.is-error { color: var(--danger); }
+.episode-factcheck-status.is-warn { color: var(--warn); }
+.episode-factcheck-items { list-style: none; margin: 0; padding: 0; }
+.episode-factcheck-item {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+}
+.episode-factcheck-item > strong { padding-right: var(--space-7); }
+.episode-factcheck-item q { font-weight: 600; }
+.episode-factcheck-item blockquote { margin: 0; color: var(--muted); }
+.episode-factcheck-link { justify-self: start; color: var(--accent); }
+
 .episode-link {
   color: var(--accent);
   font-family: var(--font-read);
@@ -3433,8 +3464,10 @@ html[data-theme="cockpit"] .player-title {
   line-height: 1.45;
 }
 
-.factcheck-issue.is-high { border-left-color: var(--danger); }
-.factcheck-issue.is-medium { border-left-color: var(--warn); }
+.factcheck-issue.is-high,
+.episode-factcheck-item.is-high { border-left-color: var(--danger); }
+.factcheck-issue.is-medium,
+.episode-factcheck-item.is-medium { border-left-color: var(--warn); }
 
 .factcheck-issue-line {
   position: absolute;
