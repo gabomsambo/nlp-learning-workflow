@@ -1,0 +1,1833 @@
+{
+  "format": 1,
+  "about": "Review histories and the card py-fsrs derives from them. Fold each case's events ordered by (reviewed_at, event_id), counting a repeated event_id once, starting from an empty card, and compare with `expected` (and `after_each`, one entry per distinct event in fold order). due_ms and last_review_ms are epoch milliseconds; stability and difficulty are exact doubles.",
+  "scheduler": {
+    "library": "py-fsrs",
+    "version": "6.3.1",
+    "enable_fuzzing": false,
+    "desired_retention": 0.9,
+    "maximum_interval": 36500,
+    "learning_steps_seconds": [
+      60,
+      600
+    ],
+    "relearning_steps_seconds": [
+      600
+    ],
+    "parameters": [
+      0.212,
+      1.2931,
+      2.3065,
+      8.2956,
+      6.4133,
+      0.8334,
+      3.0194,
+      0.001,
+      1.8722,
+      0.1666,
+      0.796,
+      1.4835,
+      0.0614,
+      0.2629,
+      1.6483,
+      0.6014,
+      1.8729,
+      0.5425,
+      0.0912,
+      0.0658,
+      0.1542
+    ]
+  },
+  "state_codes": {
+    "1": "Learning",
+    "2": "Review",
+    "3": "Relearning"
+  },
+  "cases": [
+    {
+      "name": "six_good_on_due",
+      "note": "Good every time, each review exactly when due.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000600000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-04T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-15T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000004",
+          "rating": 3,
+          "reviewed_at": "2026-04-30T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000005",
+          "rating": 3,
+          "reviewed_at": "2026-10-10T09:10:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:10:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772615400000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 10.971048263078135,
+          "difficulty": 2.1043313908464483,
+          "due": "2026-03-15T09:10:00+00:00",
+          "last_review": "2026-03-04T09:10:00+00:00",
+          "due_ms": 1773565800000,
+          "last_review_ms": 1772615400000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 46.316858440073425,
+          "difficulty": 2.0974554287524403,
+          "due": "2026-04-30T09:10:00+00:00",
+          "last_review": "2026-03-15T09:10:00+00:00",
+          "due_ms": 1777540200000,
+          "last_review_ms": 1773565800000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 162.99981577472244,
+          "difficulty": 2.0905863426205262,
+          "due": "2026-10-10T09:10:00+00:00",
+          "last_review": "2026-04-30T09:10:00+00:00",
+          "due_ms": 1791623400000,
+          "last_review_ms": 1777540200000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 497.8765551245907,
+          "difficulty": 2.083724125574744,
+          "due": "2028-02-20T09:10:00+00:00",
+          "last_review": "2026-10-10T09:10:00+00:00",
+          "due_ms": 1834650600000,
+          "last_review_ms": 1791623400000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 497.8765551245907,
+        "difficulty": 2.083724125574744,
+        "due": "2028-02-20T09:10:00+00:00",
+        "last_review": "2026-10-10T09:10:00+00:00",
+        "due_ms": 1834650600000,
+        "last_review_ms": 1791623400000,
+        "review_count": 6,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "mixed_with_lapse",
+      "note": "Good, Hard, Good, Again at due, then relearn.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000800000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000001",
+          "rating": 2,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:20:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-03T09:20:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000004",
+          "rating": 1,
+          "reviewed_at": "2026-03-08T09:20:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000005",
+          "rating": 3,
+          "reviewed_at": "2026-03-08T09:30:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000006",
+          "rating": 3,
+          "reviewed_at": "2026-03-09T09:30:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000007",
+          "rating": 4,
+          "reviewed_at": "2026-03-11T09:30:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 1.3333787168039835,
+          "difficulty": 4.752858488532557,
+          "due": "2026-03-02T09:20:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772443200000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1.3747341809338107,
+          "difficulty": 4.743333999340863,
+          "due": "2026-03-03T09:20:00+00:00",
+          "last_review": "2026-03-02T09:20:00+00:00",
+          "due_ms": 1772529600000,
+          "last_review_ms": 1772443200000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 4.846857664636012,
+          "difficulty": 4.733819034638361,
+          "due": "2026-03-08T09:20:00+00:00",
+          "last_review": "2026-03-03T09:20:00+00:00",
+          "due_ms": 1772961600000,
+          "last_review_ms": 1772529600000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 0.9427950680130674,
+          "difficulty": 8.25427049601303,
+          "due": "2026-03-08T09:30:00+00:00",
+          "last_review": "2026-03-08T09:20:00+00:00",
+          "due_ms": 1772962200000,
+          "last_review_ms": 1772961600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.9944610945862091,
+          "difficulty": 8.241244594813855,
+          "due": "2026-03-09T09:30:00+00:00",
+          "last_review": "2026-03-08T09:30:00+00:00",
+          "due_ms": 1773048600000,
+          "last_review_ms": 1772962200000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.4797966418086417,
+          "difficulty": 8.228231719515879,
+          "due": "2026-03-11T09:30:00+00:00",
+          "last_review": "2026-03-09T09:30:00+00:00",
+          "due_ms": 1773221400000,
+          "last_review_ms": 1773048600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 7.573071666015076,
+          "difficulty": 7.621417693876794,
+          "due": "2026-03-19T09:30:00+00:00",
+          "last_review": "2026-03-11T09:30:00+00:00",
+          "due_ms": 1773912600000,
+          "last_review_ms": 1773221400000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 7.573071666015076,
+        "difficulty": 7.621417693876794,
+        "due": "2026-03-19T09:30:00+00:00",
+        "last_review": "2026-03-11T09:30:00+00:00",
+        "due_ms": 1773912600000,
+        "last_review_ms": 1773221400000,
+        "review_count": 8,
+        "lapses": 1
+      }
+    },
+    {
+      "name": "again_then_good",
+      "note": "Again on a new card, then Good.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000300000000",
+          "rating": 1,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:05:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:17:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-04T09:17:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 0,
+          "stability": 0.212,
+          "difficulty": 6.4133,
+          "due": "2026-03-02T09:01:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442060000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 0.24668918777567272,
+          "difficulty": 6.402115069296838,
+          "due": "2026-03-02T09:15:00+00:00",
+          "last_review": "2026-03-02T09:05:00+00:00",
+          "due_ms": 1772442900000,
+          "last_review_ms": 1772442300000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.2842063592758949,
+          "difficulty": 6.3909413235243795,
+          "due": "2026-03-03T09:17:00+00:00",
+          "last_review": "2026-03-02T09:17:00+00:00",
+          "due_ms": 1772529420000,
+          "last_review_ms": 1772443020000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.832753410952738,
+          "difficulty": 6.379778751497693,
+          "due": "2026-03-07T09:17:00+00:00",
+          "last_review": "2026-03-04T09:17:00+00:00",
+          "due_ms": 1772875020000,
+          "last_review_ms": 1772615820000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 2.832753410952738,
+        "difficulty": 6.379778751497693,
+        "due": "2026-03-07T09:17:00+00:00",
+        "last_review": "2026-03-04T09:17:00+00:00",
+        "due_ms": 1772875020000,
+        "last_review_ms": 1772615820000,
+        "review_count": 4,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "easy_three_times",
+      "note": "Easy on a new card, repeated on due.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000300000000",
+          "rating": 4,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000001",
+          "rating": 4,
+          "reviewed_at": "2026-03-10T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000002",
+          "rating": 4,
+          "reviewed_at": "2026-05-15T09:00:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 2,
+          "step": null,
+          "stability": 8.2956,
+          "difficulty": 1.0,
+          "due": "2026-03-10T09:00:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1773133200000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 65.62422616189994,
+          "difficulty": 1.0,
+          "due": "2026-05-15T09:00:00+00:00",
+          "last_review": "2026-03-10T09:00:00+00:00",
+          "due_ms": 1778835600000,
+          "last_review_ms": 1773133200000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 396.7750233497581,
+          "difficulty": 1.0,
+          "due": "2027-06-16T09:00:00+00:00",
+          "last_review": "2026-05-15T09:00:00+00:00",
+          "due_ms": 1813136400000,
+          "last_review_ms": 1778835600000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 396.7750233497581,
+        "difficulty": 1.0,
+        "due": "2027-06-16T09:00:00+00:00",
+        "last_review": "2026-05-15T09:00:00+00:00",
+        "due_ms": 1813136400000,
+        "last_review_ms": 1778835600000,
+        "review_count": 3,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "hard_at_first_step",
+      "note": "Hard keeps a new card on its first learning step.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000500000000",
+          "rating": 2,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000001",
+          "rating": 2,
+          "reviewed_at": "2026-03-02T09:02:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:06:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:17:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000004",
+          "rating": 3,
+          "reviewed_at": "2026-03-05T09:17:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 0,
+          "stability": 1.2931,
+          "difficulty": 5.112170705601056,
+          "due": "2026-03-02T09:05:30+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442330000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 1,
+          "step": 0,
+          "stability": 0.7765494494075704,
+          "difficulty": 6.7404595108297,
+          "due": "2026-03-02T09:07:30+00:00",
+          "last_review": "2026-03-02T09:02:00+00:00",
+          "due_ms": 1772442450000,
+          "last_review_ms": 1772442120000
+        },
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 0.8296275051643506,
+          "difficulty": 6.728947420615708,
+          "due": "2026-03-02T09:16:00+00:00",
+          "last_review": "2026-03-02T09:06:00+00:00",
+          "due_ms": 1772442960000,
+          "last_review_ms": 1772442360000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.8824859202445107,
+          "difficulty": 6.717446842491931,
+          "due": "2026-03-03T09:17:00+00:00",
+          "last_review": "2026-03-02T09:17:00+00:00",
+          "due_ms": 1772529420000,
+          "last_review_ms": 1772443020000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 5.267835150892759,
+          "difficulty": 6.705957764946278,
+          "due": "2026-03-10T09:17:00+00:00",
+          "last_review": "2026-03-05T09:17:00+00:00",
+          "due_ms": 1773134220000,
+          "last_review_ms": 1772702220000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 5.267835150892759,
+        "difficulty": 6.705957764946278,
+        "due": "2026-03-10T09:17:00+00:00",
+        "last_review": "2026-03-05T09:17:00+00:00",
+        "due_ms": 1773134220000,
+        "last_review_ms": 1772702220000,
+        "review_count": 5,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "same_day_burst",
+      "note": "Several reviews inside one day, then a long gap.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000600000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:03:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000002",
+          "rating": 2,
+          "reviewed_at": "2026-03-02T09:43:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T13:03:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000600000004",
+          "rating": 3,
+          "reviewed_at": "2026-03-08T13:03:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:03:00+00:00",
+          "last_review": "2026-03-02T09:03:00+00:00",
+          "due_ms": 1772614980000,
+          "last_review_ms": 1772442180000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1.3333787168039835,
+          "difficulty": 4.748284761594571,
+          "due": "2026-03-03T09:43:00+00:00",
+          "last_review": "2026-03-02T09:43:00+00:00",
+          "due_ms": 1772530980000,
+          "last_review_ms": 1772444580000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1.3747341809338107,
+          "difficulty": 4.738764846129815,
+          "due": "2026-03-03T13:03:00+00:00",
+          "last_review": "2026-03-02T13:03:00+00:00",
+          "due_ms": 1772542980000,
+          "last_review_ms": 1772456580000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 11.850525362533467,
+          "difficulty": 4.729254450580523,
+          "due": "2026-03-20T13:03:00+00:00",
+          "last_review": "2026-03-08T13:03:00+00:00",
+          "due_ms": 1774011780000,
+          "last_review_ms": 1772974980000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 11.850525362533467,
+        "difficulty": 4.729254450580523,
+        "due": "2026-03-20T13:03:00+00:00",
+        "last_review": "2026-03-08T13:03:00+00:00",
+        "due_ms": 1774011780000,
+        "last_review_ms": 1772974980000,
+        "review_count": 5,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "late_review",
+      "note": "A review 20 days after it was due.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000700000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000700000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000700000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-03T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000700000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-27T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000700000004",
+          "rating": 3,
+          "reviewed_at": "2026-05-26T09:10:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:10:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772615400000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 7.319186097840142,
+          "difficulty": 2.1043313908464483,
+          "due": "2026-03-10T09:10:00+00:00",
+          "last_review": "2026-03-03T09:10:00+00:00",
+          "due_ms": 1773133800000,
+          "last_review_ms": 1772529000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 59.46204684519751,
+          "difficulty": 2.0974554287524403,
+          "due": "2026-05-25T09:10:00+00:00",
+          "last_review": "2026-03-27T09:10:00+00:00",
+          "due_ms": 1779700200000,
+          "last_review_ms": 1774602600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 204.79264291941263,
+          "difficulty": 2.0905863426205262,
+          "due": "2026-12-17T09:10:00+00:00",
+          "last_review": "2026-05-26T09:10:00+00:00",
+          "due_ms": 1797498600000,
+          "last_review_ms": 1779786600000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 204.79264291941263,
+        "difficulty": 2.0905863426205262,
+        "due": "2026-12-17T09:10:00+00:00",
+        "last_review": "2026-05-26T09:10:00+00:00",
+        "due_ms": 1797498600000,
+        "last_review_ms": 1779786600000,
+        "review_count": 5,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "relearning_steps",
+      "note": "Lapse a graduated card, then walk its relearning step.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000800000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-03T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000003",
+          "rating": 1,
+          "reviewed_at": "2026-03-06T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000004",
+          "rating": 2,
+          "reviewed_at": "2026-03-06T09:21:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000005",
+          "rating": 3,
+          "reviewed_at": "2026-03-06T09:51:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000800000006",
+          "rating": 3,
+          "reviewed_at": "2026-03-08T09:51:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:10:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772615400000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 7.319186097840142,
+          "difficulty": 2.1043313908464483,
+          "due": "2026-03-10T09:10:00+00:00",
+          "last_review": "2026-03-03T09:10:00+00:00",
+          "due_ms": 1773133800000,
+          "last_review_ms": 1772529000000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 1.1485632549486482,
+          "difficulty": 7.389975788014609,
+          "due": "2026-03-06T09:20:00+00:00",
+          "last_review": "2026-03-06T09:10:00+00:00",
+          "due_ms": 1772788800000,
+          "last_review_ms": 1772788200000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 0.6951509520288657,
+          "difficulty": 8.252572670252656,
+          "due": "2026-03-06T09:36:00+00:00",
+          "last_review": "2026-03-06T09:21:00+00:00",
+          "due_ms": 1772789760000,
+          "last_review_ms": 1772788860000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.7480962356927199,
+          "difficulty": 8.23954846687924,
+          "due": "2026-03-07T09:51:00+00:00",
+          "last_review": "2026-03-06T09:51:00+00:00",
+          "due_ms": 1772877060000,
+          "last_review_ms": 1772790660000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.9188562477852926,
+          "difficulty": 8.2265372877092,
+          "due": "2026-03-11T09:51:00+00:00",
+          "last_review": "2026-03-08T09:51:00+00:00",
+          "due_ms": 1773222660000,
+          "last_review_ms": 1772963460000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 2.9188562477852926,
+        "difficulty": 8.2265372877092,
+        "due": "2026-03-11T09:51:00+00:00",
+        "last_review": "2026-03-08T09:51:00+00:00",
+        "due_ms": 1773222660000,
+        "last_review_ms": 1772963460000,
+        "review_count": 7,
+        "lapses": 1
+      }
+    },
+    {
+      "name": "ends_mid_learning",
+      "note": "A new card rated Good once: still Learning, on step 1.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-001000000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        }
+      ],
+      "expected": {
+        "state": 1,
+        "step": 1,
+        "stability": 2.3065,
+        "difficulty": 2.118103970459016,
+        "due": "2026-03-02T09:10:00+00:00",
+        "last_review": "2026-03-02T09:00:00+00:00",
+        "due_ms": 1772442600000,
+        "last_review_ms": 1772442000000,
+        "review_count": 1,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "ends_in_relearning",
+      "note": "A graduated card that lapses on the last event.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-001100000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-001100000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-001100000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-03T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-001100000003",
+          "rating": 1,
+          "reviewed_at": "2026-03-06T09:10:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:10:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772615400000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 7.319186097840142,
+          "difficulty": 2.1043313908464483,
+          "due": "2026-03-10T09:10:00+00:00",
+          "last_review": "2026-03-03T09:10:00+00:00",
+          "due_ms": 1773133800000,
+          "last_review_ms": 1772529000000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 1.1485632549486482,
+          "difficulty": 7.389975788014609,
+          "due": "2026-03-06T09:20:00+00:00",
+          "last_review": "2026-03-06T09:10:00+00:00",
+          "due_ms": 1772788800000,
+          "last_review_ms": 1772788200000
+        }
+      ],
+      "expected": {
+        "state": 3,
+        "step": 0,
+        "stability": 1.1485632549486482,
+        "difficulty": 7.389975788014609,
+        "due": "2026-03-06T09:20:00+00:00",
+        "last_review": "2026-03-06T09:10:00+00:00",
+        "due_ms": 1772788800000,
+        "last_review_ms": 1772788200000,
+        "review_count": 4,
+        "lapses": 1
+      }
+    },
+    {
+      "name": "tied_timestamps",
+      "note": "Two events with the same timestamp fold in event_id order.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000900000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000900000001",
+          "rating": 1,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000900000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000900000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-04T09:10:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 1,
+          "step": 0,
+          "stability": 0.7750839828558984,
+          "difficulty": 7.394502741279718,
+          "due": "2026-03-02T09:11:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772442660000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 0.8281648000472626,
+          "difficulty": 7.382336607835277,
+          "due": "2026-03-02T09:20:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772443200000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 3.7548584413401396,
+          "difficulty": 7.37018264052428,
+          "due": "2026-03-08T09:10:00+00:00",
+          "last_review": "2026-03-04T09:10:00+00:00",
+          "due_ms": 1772961000000,
+          "last_review_ms": 1772615400000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 3.7548584413401396,
+        "difficulty": 7.37018264052428,
+        "due": "2026-03-08T09:10:00+00:00",
+        "last_review": "2026-03-04T09:10:00+00:00",
+        "due_ms": 1772961000000,
+        "last_review_ms": 1772615400000,
+        "review_count": 4,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "listed_out_of_order",
+      "note": "The events are listed out of order; the fold sorts them.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000500000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-12T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000002",
+          "rating": 2,
+          "reviewed_at": "2026-03-04T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000500000004",
+          "rating": 3,
+          "reviewed_at": "2026-04-07T09:10:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:10:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772615400000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 7.517359325415191,
+          "difficulty": 4.748284761594571,
+          "due": "2026-03-12T09:10:00+00:00",
+          "last_review": "2026-03-04T09:10:00+00:00",
+          "due_ms": 1773306600000,
+          "last_review_ms": 1772615400000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 26.427128255446185,
+          "difficulty": 4.738764846129815,
+          "due": "2026-04-07T09:10:00+00:00",
+          "last_review": "2026-03-12T09:10:00+00:00",
+          "due_ms": 1775553000000,
+          "last_review_ms": 1773306600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 77.49266530808168,
+          "difficulty": 4.729254450580523,
+          "due": "2026-06-23T09:10:00+00:00",
+          "last_review": "2026-04-07T09:10:00+00:00",
+          "due_ms": 1782205800000,
+          "last_review_ms": 1775553000000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 77.49266530808168,
+        "difficulty": 4.729254450580523,
+        "due": "2026-06-23T09:10:00+00:00",
+        "last_review": "2026-04-07T09:10:00+00:00",
+        "due_ms": 1782205800000,
+        "last_review_ms": 1775553000000,
+        "review_count": 5,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "duplicate_delivery",
+      "note": "One event delivered twice counts once.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-000300000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-04T09:10:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-000300000001",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:10:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.3065,
+          "difficulty": 2.111214235785395,
+          "due": "2026-03-04T09:10:00+00:00",
+          "last_review": "2026-03-02T09:10:00+00:00",
+          "due_ms": 1772615400000,
+          "last_review_ms": 1772442600000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 10.971048263078135,
+          "difficulty": 2.1043313908464483,
+          "due": "2026-03-15T09:10:00+00:00",
+          "last_review": "2026-03-04T09:10:00+00:00",
+          "due_ms": 1773565800000,
+          "last_review_ms": 1772615400000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 10.971048263078135,
+        "difficulty": 2.1043313908464483,
+        "due": "2026-03-15T09:10:00+00:00",
+        "last_review": "2026-03-04T09:10:00+00:00",
+        "due_ms": 1773565800000,
+        "last_review_ms": 1772615400000,
+        "review_count": 3,
+        "lapses": 0
+      }
+    },
+    {
+      "name": "forty_reviews",
+      "note": "A seeded history of 40 reviews, early and late.",
+      "events": [
+        {
+          "event_id": "00000000-0000-4000-8000-090000000000",
+          "rating": 3,
+          "reviewed_at": "2026-03-02T09:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000001",
+          "rating": 2,
+          "reviewed_at": "2026-03-03T01:15:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000002",
+          "rating": 3,
+          "reviewed_at": "2026-03-03T10:00:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000003",
+          "rating": 3,
+          "reviewed_at": "2026-03-05T04:35:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000004",
+          "rating": 3,
+          "reviewed_at": "2026-03-09T08:34:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000005",
+          "rating": 3,
+          "reviewed_at": "2026-03-25T01:26:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000006",
+          "rating": 3,
+          "reviewed_at": "2026-05-11T23:16:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000007",
+          "rating": 3,
+          "reviewed_at": "2026-09-20T03:34:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000008",
+          "rating": 4,
+          "reviewed_at": "2027-08-15T07:43:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000009",
+          "rating": 1,
+          "reviewed_at": "2030-09-15T10:44:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000010",
+          "rating": 3,
+          "reviewed_at": "2030-09-15T10:45:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000011",
+          "rating": 2,
+          "reviewed_at": "2030-09-24T04:43:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000012",
+          "rating": 1,
+          "reviewed_at": "2030-10-08T08:39:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000013",
+          "rating": 3,
+          "reviewed_at": "2030-10-08T08:40:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000014",
+          "rating": 3,
+          "reviewed_at": "2030-10-10T04:31:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000015",
+          "rating": 3,
+          "reviewed_at": "2030-10-12T14:48:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000016",
+          "rating": 4,
+          "reviewed_at": "2030-10-16T17:50:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000017",
+          "rating": 3,
+          "reviewed_at": "2030-10-26T02:23:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000018",
+          "rating": 3,
+          "reviewed_at": "2030-11-10T09:04:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000019",
+          "rating": 3,
+          "reviewed_at": "2030-12-03T11:13:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000020",
+          "rating": 2,
+          "reviewed_at": "2031-01-09T12:16:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000021",
+          "rating": 3,
+          "reviewed_at": "2031-03-01T10:05:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000022",
+          "rating": 3,
+          "reviewed_at": "2031-05-12T04:45:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000023",
+          "rating": 3,
+          "reviewed_at": "2031-08-22T03:22:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000024",
+          "rating": 2,
+          "reviewed_at": "2032-01-10T11:50:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000025",
+          "rating": 1,
+          "reviewed_at": "2032-07-02T20:46:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000026",
+          "rating": 4,
+          "reviewed_at": "2032-07-02T20:47:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000027",
+          "rating": 2,
+          "reviewed_at": "2032-07-10T08:13:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000028",
+          "rating": 2,
+          "reviewed_at": "2032-07-18T23:16:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000029",
+          "rating": 4,
+          "reviewed_at": "2032-07-30T00:44:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000030",
+          "rating": 3,
+          "reviewed_at": "2032-08-18T03:20:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000031",
+          "rating": 3,
+          "reviewed_at": "2032-09-13T16:28:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000032",
+          "rating": 1,
+          "reviewed_at": "2032-10-21T13:26:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000033",
+          "rating": 2,
+          "reviewed_at": "2032-10-21T19:26:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000034",
+          "rating": 2,
+          "reviewed_at": "2032-10-21T22:41:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000035",
+          "rating": 1,
+          "reviewed_at": "2032-10-21T22:42:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000036",
+          "rating": 3,
+          "reviewed_at": "2032-10-21T22:43:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000037",
+          "rating": 3,
+          "reviewed_at": "2032-10-23T11:26:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000038",
+          "rating": 2,
+          "reviewed_at": "2032-10-24T17:32:00.000Z"
+        },
+        {
+          "event_id": "00000000-0000-4000-8000-090000000039",
+          "rating": 2,
+          "reviewed_at": "2032-10-25T15:17:00.000Z"
+        }
+      ],
+      "after_each": [
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 2.3065,
+          "difficulty": 2.118103970459016,
+          "due": "2026-03-02T09:10:00+00:00",
+          "last_review": "2026-03-02T09:00:00+00:00",
+          "due_ms": 1772442600000,
+          "last_review_ms": 1772442000000
+        },
+        {
+          "state": 1,
+          "step": 1,
+          "stability": 1.3333787168039835,
+          "difficulty": 4.752858488532557,
+          "due": "2026-03-03T01:25:00+00:00",
+          "last_review": "2026-03-03T01:15:00+00:00",
+          "due_ms": 1772501100000,
+          "last_review_ms": 1772500500000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1.3747341809338107,
+          "difficulty": 4.743333999340863,
+          "due": "2026-03-04T10:00:00+00:00",
+          "last_review": "2026-03-03T10:00:00+00:00",
+          "due_ms": 1772618400000,
+          "last_review_ms": 1772532000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 4.846857664636012,
+          "difficulty": 4.733819034638361,
+          "due": "2026-03-10T04:35:00+00:00",
+          "last_review": "2026-03-05T04:35:00+00:00",
+          "due_ms": 1773117300000,
+          "last_review_ms": 1772685300000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 15.780134778779395,
+          "difficulty": 4.724313584900561,
+          "due": "2026-03-25T08:34:00+00:00",
+          "last_review": "2026-03-09T08:34:00+00:00",
+          "due_ms": 1774427640000,
+          "last_review_ms": 1773045240000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 48.2690891645889,
+          "difficulty": 4.714817640612499,
+          "due": "2026-05-12T01:26:00+00:00",
+          "last_review": "2026-03-25T01:26:00+00:00",
+          "due_ms": 1778549160000,
+          "last_review_ms": 1774401960000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 132.32937036504472,
+          "difficulty": 4.705331192268725,
+          "due": "2026-09-20T23:16:00+00:00",
+          "last_review": "2026-05-11T23:16:00+00:00",
+          "due_ms": 1789946160000,
+          "last_review_ms": 1778541360000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 329.7635320732572,
+          "difficulty": 4.695854230373294,
+          "due": "2027-08-16T03:34:00+00:00",
+          "last_review": "2026-09-20T03:34:00+00:00",
+          "due_ms": 1818387240000,
+          "last_review_ms": 1789875240000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1126.8215806657156,
+          "difficulty": 2.908684256653753,
+          "due": "2030-09-15T07:43:00+00:00",
+          "last_review": "2027-08-15T07:43:00+00:00",
+          "due_ms": 1915688580000,
+          "last_review_ms": 1818315780000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 8.757086820872201,
+          "difficulty": 7.6543611054059815,
+          "due": "2030-09-15T10:54:00+00:00",
+          "last_review": "2030-09-15T10:44:00+00:00",
+          "due_ms": 1915700040000,
+          "last_review_ms": 1915699440000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 8.757086820872201,
+          "difficulty": 7.641935113597414,
+          "due": "2030-09-24T10:45:00+00:00",
+          "last_review": "2030-09-15T10:45:00+00:00",
+          "due_ms": 1916477100000,
+          "last_review_ms": 1915699500000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 14.975151222940879,
+          "difficulty": 8.419835011879094,
+          "due": "2030-10-09T04:43:00+00:00",
+          "last_review": "2030-09-24T04:43:00+00:00",
+          "due_ms": 1917751380000,
+          "last_review_ms": 1916455380000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 1.6329847259969856,
+          "difficulty": 9.465838882823416,
+          "due": "2030-10-08T08:49:00+00:00",
+          "last_review": "2030-10-08T08:39:00+00:00",
+          "due_ms": 1917679740000,
+          "last_review_ms": 1917679140000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1.661326730012379,
+          "difficulty": 9.45160141323743,
+          "due": "2030-10-10T08:40:00+00:00",
+          "last_review": "2030-10-08T08:40:00+00:00",
+          "due_ms": 1917852000000,
+          "last_review_ms": 1917679200000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 2.5294231717222084,
+          "difficulty": 9.43737818112103,
+          "due": "2030-10-13T04:31:00+00:00",
+          "last_review": "2030-10-10T04:31:00+00:00",
+          "due_ms": 1918096260000,
+          "last_review_ms": 1917837060000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 4.0650608325580615,
+          "difficulty": 9.423169172236747,
+          "due": "2030-10-16T14:48:00+00:00",
+          "last_review": "2030-10-12T14:48:00+00:00",
+          "due_ms": 1918392480000,
+          "last_review_ms": 1918046880000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 9.126540761894976,
+          "difficulty": 9.21564755921168,
+          "due": "2030-10-25T17:50:00+00:00",
+          "last_review": "2030-10-16T17:50:00+00:00",
+          "due_ms": 1919181000000,
+          "last_review_ms": 1918403400000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 15.136309523378314,
+          "difficulty": 9.201660280949307,
+          "due": "2030-11-10T02:23:00+00:00",
+          "last_review": "2030-10-26T02:23:00+00:00",
+          "due_ms": 1920507780000,
+          "last_review_ms": 1919211780000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 24.40222400351171,
+          "difficulty": 9.187686989965195,
+          "due": "2030-12-04T09:04:00+00:00",
+          "last_review": "2030-11-10T09:04:00+00:00",
+          "due_ms": 1922605440000,
+          "last_review_ms": 1920531840000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 37.81198258317994,
+          "difficulty": 9.173727672272067,
+          "due": "2031-01-10T11:13:00+00:00",
+          "last_review": "2030-12-03T11:13:00+00:00",
+          "due_ms": 1925809980000,
+          "last_review_ms": 1922526780000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 49.839307274855045,
+          "difficulty": 9.436710293860564,
+          "due": "2031-02-28T12:16:00+00:00",
+          "last_review": "2031-01-09T12:16:00+00:00",
+          "due_ms": 1930047360000,
+          "last_review_ms": 1925727360000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 71.77713132636649,
+          "difficulty": 9.422501952863541,
+          "due": "2031-05-12T10:05:00+00:00",
+          "last_review": "2031-03-01T10:05:00+00:00",
+          "due_ms": 1936346700000,
+          "last_review_ms": 1930125900000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 101.47758922098788,
+          "difficulty": 9.408307820207515,
+          "due": "2031-08-21T04:45:00+00:00",
+          "last_review": "2031-05-12T04:45:00+00:00",
+          "due_ms": 1945053900000,
+          "last_review_ms": 1936327500000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 141.64757085089556,
+          "difficulty": 9.394127881684145,
+          "due": "2032-01-11T03:22:00+00:00",
+          "last_review": "2031-08-22T03:22:00+00:00",
+          "due_ms": 1957404120000,
+          "last_review_ms": 1945135320000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 173.83362818173632,
+          "difficulty": 9.583022223518059,
+          "due": "2032-07-02T11:50:00+00:00",
+          "last_review": "2032-01-10T11:50:00+00:00",
+          "due_ms": 1972381800000,
+          "last_review_ms": 1957348200000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 4.396059992132545,
+          "difficulty": 9.848170609616103,
+          "due": "2032-07-02T20:56:00+00:00",
+          "last_review": "2032-07-02T20:46:00+00:00",
+          "due_ms": 1972414560000,
+          "last_review_ms": 1972413960000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 7.208450742978721,
+          "difficulty": 9.782664671896235,
+          "due": "2032-07-09T20:47:00+00:00",
+          "last_review": "2032-07-02T20:47:00+00:00",
+          "due_ms": 1973018820000,
+          "last_review_ms": 1972414020000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 9.211809430902639,
+          "difficulty": 9.840951050675269,
+          "due": "2032-07-19T08:13:00+00:00",
+          "last_review": "2032-07-10T08:13:00+00:00",
+          "due_ms": 1973837580000,
+          "last_review_ms": 1973059980000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 11.36886625256344,
+          "difficulty": 9.879644265054042,
+          "due": "2032-07-29T23:16:00+00:00",
+          "last_review": "2032-07-18T23:16:00+00:00",
+          "due_ms": 1974755760000,
+          "last_review_ms": 1973805360000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 19.74082376834761,
+          "difficulty": 9.824655356309188,
+          "due": "2032-08-19T00:44:00+00:00",
+          "last_review": "2032-07-30T00:44:00+00:00",
+          "due_ms": 1976489040000,
+          "last_review_ms": 1974761040000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 27.14022071865871,
+          "difficulty": 9.810059070249716,
+          "due": "2032-09-14T03:20:00+00:00",
+          "last_review": "2032-08-18T03:20:00+00:00",
+          "due_ms": 1978744800000,
+          "last_review_ms": 1976412000000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 36.87462102903425,
+          "difficulty": 9.795477380476305,
+          "due": "2032-10-20T16:28:00+00:00",
+          "last_review": "2032-09-13T16:28:00+00:00",
+          "due_ms": 1981902480000,
+          "last_review_ms": 1978705680000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 2.4337098873124607,
+          "difficulty": 9.918003175013212,
+          "due": "2032-10-21T13:36:00+00:00",
+          "last_review": "2032-10-21T13:26:00+00:00",
+          "due_ms": 1981978560000,
+          "last_review_ms": 1981977960000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 1.4019570741559517,
+          "difficulty": 9.930795055818562,
+          "due": "2032-10-21T19:41:00+00:00",
+          "last_review": "2032-10-21T19:26:00+00:00",
+          "due_ms": 1982000460000,
+          "last_review_ms": 1981999560000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 0.837455943990221,
+          "difficulty": 9.9392869023988,
+          "due": "2032-10-21T22:56:00+00:00",
+          "last_review": "2032-10-21T22:41:00+00:00",
+          "due_ms": 1982012160000,
+          "last_review_ms": 1982011260000
+        },
+        {
+          "state": 3,
+          "step": 0,
+          "stability": 0.3008213893554609,
+          "difficulty": 9.965272386964386,
+          "due": "2032-10-21T22:52:00+00:00",
+          "last_review": "2032-10-21T22:42:00+00:00",
+          "due_ms": 1982011920000,
+          "last_review_ms": 1982011320000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.342076431639761,
+          "difficulty": 9.95053548387426,
+          "due": "2032-10-22T22:43:00+00:00",
+          "last_review": "2032-10-21T22:43:00+00:00",
+          "due_ms": 1982097780000,
+          "last_review_ms": 1982011380000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.7931765970588738,
+          "difficulty": 9.935813317687224,
+          "due": "2032-10-24T11:26:00+00:00",
+          "last_review": "2032-10-23T11:26:00+00:00",
+          "due_ms": 1982229960000,
+          "last_review_ms": 1982143560000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 1.1271273114368183,
+          "difficulty": 9.942618258478221,
+          "due": "2032-10-25T17:32:00+00:00",
+          "last_review": "2032-10-24T17:32:00+00:00",
+          "due_ms": 1982338320000,
+          "last_review_ms": 1982251920000
+        },
+        {
+          "state": 2,
+          "step": null,
+          "stability": 0.6830233471469214,
+          "difficulty": 9.947135695285526,
+          "due": "2032-10-26T15:17:00+00:00",
+          "last_review": "2032-10-25T15:17:00+00:00",
+          "due_ms": 1982416620000,
+          "last_review_ms": 1982330220000
+        }
+      ],
+      "expected": {
+        "state": 2,
+        "step": null,
+        "stability": 0.6830233471469214,
+        "difficulty": 9.947135695285526,
+        "due": "2032-10-26T15:17:00+00:00",
+        "last_review": "2032-10-25T15:17:00+00:00",
+        "due_ms": 1982416620000,
+        "last_review_ms": 1982330220000,
+        "review_count": 40,
+        "lapses": 4
+      }
+    }
+  ]
+}

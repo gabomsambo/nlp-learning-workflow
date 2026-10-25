@@ -161,6 +161,8 @@ def page_client(monkeypatch):
     from webui.routers import quiz as quiz_router
 
     monkeypatch.setattr(quiz_router, "get_pillars_or_empty", lambda limit=100: [_pillar()])
+    # No review history: every card previews from its row, and nothing dials the database.
+    monkeypatch.setattr(quiz_router, "get_card_review_events", lambda ids: {})
     monkeypatch.setattr(
         quiz_router,
         "preview_schedule",
@@ -280,3 +282,42 @@ def test_fsrs_fallback_is_visible_and_does_not_print_the_enum(page_client, monke
     assert payload["cards"][0]["difficulty"] == 1
     assert payload["cards"][0]["intervals"][0]["interval"] is None
     assert "Fallback question" in body
+
+
+def test_intervals_come_from_the_review_log_when_the_log_is_readable(page_client, monkeypatch):
+    """A card on learning step 1 graduates on Good; the row alone would say ten minutes."""
+    from nlp_pillars import fsrs_fold
+    from webui.routers import quiz as quiz_router
+
+    started = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=11)
+    history = [fsrs_fold.FoldEvent("e1", 3, started)]
+    monkeypatch.setattr(quiz_router, "get_cards_for_review", lambda **kwargs: [_card()])
+    monkeypatch.setattr(quiz_router, "get_card_review_events", lambda ids: {"card-1": history})
+
+    payload = _payload(page_client.get("/quiz/").text)
+    intervals = {item["rating"]: item["interval"] for item in payload["cards"][0]["intervals"]}
+
+    assert intervals[3].endswith("d")  # graduated to review, not a learning step in minutes
+    assert intervals[1] in {"<1m", "1m"}  # Again goes back to the first learning step
+    assert payload["fsrsFallback"] is False
+
+
+def test_unreadable_review_log_falls_back_to_the_rows_without_failing_the_page(page_client, monkeypatch):
+    from webui.routers import quiz as quiz_router
+
+    def unreadable(ids):
+        raise RuntimeError("log unreadable")
+
+    monkeypatch.setattr(quiz_router, "get_cards_for_review", lambda **kwargs: [_card()])
+    monkeypatch.setattr(quiz_router, "get_card_review_events", unreadable)
+
+    payload = _payload(page_client.get("/quiz/").text)
+    assert [i["interval"] for i in payload["cards"][0]["intervals"]] == ["8m", "1h", "1d", "6d"]
+
+
+def test_a_card_the_log_does_not_cover_previews_from_its_row(monkeypatch):
+    from webui.routers import quiz as quiz_router
+
+    monkeypatch.setattr(quiz_router, "preview_schedule", lambda card, rating: NOW + timedelta(days=rating))
+    schedule = quiz_router.schedule_from_log({"other": []}, NOW)
+    assert schedule(_card(), 2) == NOW + timedelta(days=2)

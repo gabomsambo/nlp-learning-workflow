@@ -1626,6 +1626,41 @@ def concepts_backfill(
     raise typer.Exit(0)
 
 
+quiz_app = typer.Typer(
+    help="Quiz scheduling derived from the review log",
+    add_completion=False,
+)
+app.add_typer(quiz_app, name="quiz")
+
+
+@quiz_app.command("reconcile")
+def quiz_reconcile(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report the cards whose row differs from their review log. Write nothing.",
+    ),
+):
+    """Re-derive every card's schedule from its review log.
+
+    The review log is the source of truth; quiz_cards is a cache of it. This
+    fixes any row a half-finished review left behind. Cards with a schedule but
+    no log are reported and left alone. Safe to re-run.
+    """
+    from .services.quiz_reviews import reconcile_cards
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = reconcile_cards(dry_run=dry_run)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("quiz reconcile failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
 @app.command("reprocess")
 def reprocess(
     paper: Optional[str] = typer.Option(

@@ -2,11 +2,15 @@
 Quiz API endpoints for FSRS-based spaced repetition.
 """
 
+import uuid
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from nlp_pillars import fsrs_fold
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 
@@ -16,6 +20,10 @@ class ReviewRequest(BaseModel):
     rating: int  # 1-4: Again, Hard, Good, Easy
     response_time_ms: Optional[int] = None
     session_id: Optional[str] = None
+    # Both optional. Sending the same event_id again records the review once;
+    # reviewed_at (with a UTC offset) places a late review where it happened.
+    event_id: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
 
 
 class OptimizationRequest(BaseModel):
@@ -43,13 +51,26 @@ async def review_card(review_request: ReviewRequest) -> JSONResponse:
         
         if not fsrs_rating:
             raise HTTPException(status_code=400, detail="Invalid rating. Must be 1-4.")
-        
+
+        if review_request.event_id is not None:
+            try:
+                uuid.UUID(review_request.event_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="event_id must be a UUID.")
+        if review_request.reviewed_at is not None:
+            try:
+                fsrs_fold.validate_reviewed_at(review_request.reviewed_at, datetime.now(timezone.utc))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid reviewed_at: {exc}.")
+
         # Create FSRS review request
         fsrs_request = QuizReviewRequest(
             card_id=review_request.card_id,
             rating=fsrs_rating,
             response_time_ms=review_request.response_time_ms,
-            session_id=review_request.session_id
+            session_id=review_request.session_id,
+            event_id=review_request.event_id,
+            reviewed_at=review_request.reviewed_at,
         )
         
         # Process the review
@@ -60,7 +81,9 @@ async def review_card(review_request: ReviewRequest) -> JSONResponse:
                 "success": True,
                 "message": result.message,
                 "next_review_date": result.next_review_date.isoformat(),
-                "card_state": result.card.state.value if result.card else None
+                "card_state": result.card.state.value if result.card else None,
+                "event_id": result.event_id,
+                "duplicate": result.duplicate,
             })
         else:
             return JSONResponse({

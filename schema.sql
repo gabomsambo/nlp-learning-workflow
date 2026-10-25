@@ -233,8 +233,9 @@ CREATE TABLE podcast_scripts (
 -- One row per quiz card review. Feeds FSRS parameter optimisation.
 -- ==========================================
 -- Source: nlp_pillars/db.py _review_log_to_dict() / _dict_to_review_log(),
--- inserted at db.py:1006 after every FSRS review and read back by
--- get_review_logs() for optimisation.
+-- inserted by services/quiz_reviews.py before the card row is touched, read
+-- back to fold a card's schedule (fsrs_fold.py) and by get_review_logs() for
+-- optimisation. This table, not quiz_cards, is the source of truth.
 CREATE TABLE review_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- No FK to quiz_cards: see the FOREIGN KEY section below for why the
@@ -255,7 +256,11 @@ CREATE TABLE review_logs (
     previous_due_date TIMESTAMP WITH TIME ZONE,
     days_overdue INTEGER DEFAULT 0,
     session_id TEXT,
-    response_time_ms INTEGER
+    response_time_ms INTEGER,
+    -- Where the review was made. Added by docs/migrations/025_review_log_origin.sql.
+    -- id is also the review's idempotency key: the API inserts its event_id here.
+    device_id TEXT,  -- NULL for the desktop app
+    origin TEXT NOT NULL DEFAULT 'desktop' CHECK (origin IN ('desktop', 'cloud'))
 );
 
 -- ==========================================
@@ -1271,6 +1276,8 @@ CREATE INDEX idx_review_logs_card_id ON review_logs(card_id);
 -- get_review_logs() filters by user_id and optionally pillar_id.
 CREATE INDEX idx_review_logs_user_pillar ON review_logs(user_id, pillar_id);
 CREATE INDEX idx_review_logs_timestamp ON review_logs(review_timestamp);
+-- The fold reads one card's events in (review_timestamp, id) order.
+CREATE INDEX idx_review_logs_card_fold ON review_logs(card_id, review_timestamp, id);
 
 -- Paper citations indexes
 -- get_citations_for_paper() filters on paper_id, optionally + citation_direction.
