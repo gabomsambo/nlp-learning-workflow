@@ -199,6 +199,7 @@ You are given the WHOLE paper, not only its closing sections, and many papers ha
 
 - Where the authors state a limitation themselves, attribute it to them.
 - Where you see a weakness the authors do not discuss, say so in the bullet ("The authors do not discuss ...").
+- Before claiming that the paper does not report, test, discuss, compare, or validate something, search the whole paper and verify that it is truly absent. If the paper addresses it anywhere, do not present it as absent.
 - If the paper does not discuss its limitations at all, say exactly that, and keep the list to what the paper's own content genuinely supports. Two real weaknesses beat four invented ones.
 
 Instructions: Identify up to 4 critical weaknesses or open questions, covering these where the paper supports them:
@@ -242,6 +243,7 @@ GROUNDING RULES (STRICT)
 - Use ONLY information found in the provided paper and the Ground Pack.
 - If the paper is silent on something, write: [VERIFY]: detail not specified in the paper.
 - Include numbers/metrics ONLY if present in the paper; otherwise keep it qualitative.
+- Never assign a number from a flattened or garbled table when missing row or column labels make its meaning ambiguous. Say only that the figure appears in a table but cannot be attributed safely, or omit it; do not guess.
 - Prefer the exact phrasing of named datasets, tasks, and metrics from the paper.
 - No external facts, no web knowledge.
 
