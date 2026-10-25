@@ -14,10 +14,13 @@ from nlp_pillars import db
 from nlp_pillars.config import get_settings
 from nlp_pillars.schemas import AudioMetadata, StageStatus
 from nlp_pillars.orchestrator import RunCancelledError
+from nlp_pillars.tts.alignment import AlignmentError
+from nlp_pillars.tts.aligner import AlignerError
 from nlp_pillars.tts.audio_assembler import encode_mp3, wav_duration_seconds
 from nlp_pillars.tts.cue_parser import parse_podcast_script, plan_synthesis_chunks
 from nlp_pillars.tts.engine import TtsEngineStatus, ChunkSynthesisError
 from nlp_pillars.tts.indextts_client import IndexTtsClient
+from nlp_pillars.tts.timeline import compute_timeline
 from nlp_pillars.tts.voice_library import (
     VoiceUsability,
     extract_preview_clip,
@@ -213,6 +216,37 @@ def run_podcast_audio_job(
     encode_mp3(assembled_wav, mp3_path)
     on_stage("tts_encode", StageStatus.COMPLETED.value, filename)
 
+    # Read-along timing. The recording is already on disk, so a recogniser that
+    # cannot run, or audio that does not match the script, costs the episode
+    # its word highlighting and nothing else: the stage says why and the run
+    # carries on to save the audio.
+    on_stage("tts_align", StageStatus.RUNNING.value, "Timing every word for read-along")
+    timeline: Optional[dict] = None
+    try:
+        timeline = compute_timeline(script.script, mp3_path)
+        detail = (
+            f"{timeline['word_count']} words, {timeline['matched_ratio']:.0%} heard"
+            if timeline["word_level"]
+            else f"Line timing only, {timeline['matched_ratio']:.0%} of words heard"
+        )
+        on_stage("tts_align", StageStatus.COMPLETED.value, detail)
+    except (AlignerError, AlignmentError) as exc:
+        reason = str(exc).strip() or type(exc).__name__
+        logger.warning("Read-along timing failed for script %s: %s", script_id, reason)
+        on_stage(
+            "tts_align",
+            StageStatus.FAILED.value,
+            f"No read-along timing: {reason} The audio is saved; "
+            "`python -m nlp_pillars.cli timeline backfill` retries it.",
+        )
+    except Exception as exc:  # noqa: BLE001 - the audio must still be saved
+        logger.exception("Read-along timing crashed for script %s", script_id)
+        on_stage(
+            "tts_align",
+            StageStatus.FAILED.value,
+            f"No read-along timing: {type(exc).__name__}: {exc}. The audio is saved.",
+        )
+
     on_stage("tts_save", StageStatus.RUNNING.value, "Saving metadata")
     metadata = AudioMetadata(
         engine="indextts",
@@ -223,6 +257,7 @@ def run_podcast_audio_job(
         duration_seconds=duration,
         generated_at=datetime.now(timezone.utc),
         chunk_count=len(plans),
+        timeline=timeline,
     )
     db.update_podcast_audio_metadata(script_id, metadata)
     on_stage("tts_save", StageStatus.COMPLETED.value, "Saved")

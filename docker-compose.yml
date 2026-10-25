@@ -195,6 +195,9 @@ services:
       # Postgres and projects those; it does not embed inside the projector.
       EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-local}"
       EMBEDDING_CACHE_DIR: /app/data/embedding-models
+      # faster-whisper base.en (about 145 MB, pinned) that times each word of a
+      # recorded episode for read-along. Same reasoning: on the uploads volume.
+      ALIGNER_CACHE_DIR: /app/data/aligner-models
       #
       # The three database variables below ARE overridden, and all three are
       # needed. Nothing is deleted from .env — these only shadow it for this

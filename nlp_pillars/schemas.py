@@ -498,6 +498,10 @@ class AudioMetadata(BaseModel):
     duration_seconds: Optional[float] = Field(None, description="Final audio duration")
     generated_at: Optional[datetime] = Field(None, description="When audio was generated")
     chunk_count: Optional[int] = Field(None, description="Number of synthesis chunks")
+    timeline: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Word and line times for read-along; see nlp_pillars/tts/alignment.py",
+    )
 
     @property
     def has_audio(self) -> bool:
@@ -855,6 +859,7 @@ class StageName(str, Enum):
     TTS_SYNTHESIZE = "tts_synthesize"
     TTS_ASSEMBLE = "tts_assemble"
     TTS_ENCODE = "tts_encode"
+    TTS_ALIGN = "tts_align"
     TTS_SAVE = "tts_save"
 
     # Podcast *script* generation (Ground Pack + synthesis). Prefixed so they do
@@ -949,6 +954,7 @@ PODCAST_AUDIO_STAGES: List[StageName] = [
     StageName.TTS_SYNTHESIZE,
     StageName.TTS_ASSEMBLE,
     StageName.TTS_ENCODE,
+    StageName.TTS_ALIGN,
     StageName.TTS_SAVE,
 ]
 
