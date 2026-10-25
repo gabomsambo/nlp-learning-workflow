@@ -531,3 +531,24 @@ def test_cli_without_credentials_says_which_are_missing(monkeypatch):
     monkeypatch.setattr("nlp_pillars.config.get_settings", lambda: Cfg())
     result = CliRunner().invoke(app, ["cloud", "pull-reviews"])
     assert result.exit_code == 1 and "CLOUD_PUBLISH_URL" in result.output
+
+
+def test_events_that_cannot_move_the_cursor_stop_the_pull_instead_of_looping(db):
+    class Stuck(FakeCloud):
+        def reviews(self, after, limit=500):
+            return {"events": [{"event_id": "x"}], "through_seq": 9, "more": True}
+
+    with pytest.raises(PullError, match="without a usable seq"):
+        pull(Stuck(), db)
+
+
+def test_a_cursor_that_cannot_be_saved_is_a_pull_error_not_a_crash(db):
+    from nlp_pillars.cloud.review_state import SyncStateError
+
+    class Broken(MemState):
+        def write(self, key, value):
+            raise SyncStateError("Could not save reviews_pending: HTTP 503")
+
+    with pytest.raises(PullError, match="Could not save reviews_pending"):
+        pull(FakeCloud([cloud_event(1)]), db, Broken())
+    assert db.logs() == [], "nothing is applied before the marker is down"

@@ -281,13 +281,16 @@ def pull_reviews(
                     break
                 report.fetched += len(events)
                 top = _apply_page(events, report, db_client, state, dry_run, tip)
-                after = report.cursor_after = max(after, top)
+                if top <= after:
+                    # Events that do not move the cursor would be asked for again, and again.
+                    raise PullError("The cloud reader sent reviews without a usable seq; stopping.", report)
+                after = report.cursor_after = top
                 report.more = bool(data.get("more"))
                 if not report.more:
                     break
             else:
                 report.more = True
-        except PublishError as exc:
+        except (PublishError, SyncStateError) as exc:
             raise PullError(str(exc), report) from exc
         return report
     finally:

@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 
 import { createHandler } from '../src/worker.js';
 import {
-  AUD, INGEST_AUD, KID, NOW_MS, PUBLISHER, TEAM, fakeAssets, fakeStore, makeKeyPair, serviceClaims, signJwt, userClaims,
+  AUD, INGEST_AUD, KID, NOW_MS, PUBLISHER, TEAM, fakeAssets, fakeD1, fakeStore, makeKeyPair, serviceClaims, signJwt, userClaims,
 } from '../test/helpers.mjs';
 
 const port = Number(process.argv[2] || 0);
@@ -28,6 +28,7 @@ const env = {
   INGEST_SERVICE_TOKENS: PUBLISHER,
   INGEST_MAX_BYTES: process.env.INGEST_MAX_BYTES || '5000000000',
   DOCS: store,
+  REVIEWS: fakeD1(),
   ASSETS: fakeAssets(),
 };
 
