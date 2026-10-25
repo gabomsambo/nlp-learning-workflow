@@ -19,10 +19,20 @@ directory = "./public"
 binding = "ASSETS"
 run_worker_first = true
 
-# The published bundle. This and ASSETS are the Worker's only bindings.
+# The published bundle.
 [[r2_buckets]]
 binding = "DOCS"
 bucket_name = "nlp-reader-docs"
+
+# The phone's review events, the one thing the reader can write (src/reviews.js).
+# It is a mailbox the computer empties, not a source of truth. Apply the table with
+#   wrangler d1 migrations apply nlp-reader-reviews --remote
+# These three bindings (DOCS, REVIEWS, ASSETS) are all the Worker has.
+[[d1_databases]]
+binding = "REVIEWS"
+database_name = "nlp-reader-reviews"
+database_id = "764ed429-9d7b-490a-9379-8636dc40818b"
+migrations_dir = "migrations"
 
 [vars]
 TEAM_DOMAIN = "soft-wave-31cb.cloudflareaccess.com"
