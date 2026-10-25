@@ -27,6 +27,7 @@ from webui.services import (
 from webui.services.podcast_factcheck_service import (
     FactcheckAlreadyRunning,
     public_factcheck,
+    script_sha256,
 )
 from webui.services.run_service import RunAlreadyActiveError
 
@@ -410,6 +411,10 @@ async def get_podcast(script_id: str):
                 # for no visible reason.
                 "options": script.options.model_dump(),
                 "audio_metadata": script.audio_metadata.model_dump(mode="json"),
+                # The hash the fact-check engine stored for this script's text.
+                # Without it the view cannot tell a fresh check from one that
+                # was run against an older version of the script.
+                "script_sha256": script_sha256(script.script),
                 "created_at": script.created_at.isoformat() if script.created_at else None
             }
         })

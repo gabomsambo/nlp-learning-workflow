@@ -20,7 +20,7 @@ from nlp_pillars.factcheck.constants import (
     TRIGGER_AUTO,
     TRIGGER_UI,
 )
-from nlp_pillars.factcheck.engine import execute_factcheck
+from nlp_pillars.factcheck.engine import execute_factcheck, sha256_text
 from nlp_pillars.factcheck.errors import FactcheckCancelled, FactcheckError
 from nlp_pillars.orchestrator import RunCancelledError, _first_line
 from nlp_pillars.schemas import FACTCHECK_STAGES, StageName, StageStatus
@@ -159,6 +159,22 @@ def _claim_payload(row: Dict[str, Any]) -> Dict[str, Any]:
         "dismissed_at": _json_time(row.get("dismissed_at")),
         "dismissed_note": row.get("dismissed_note"),
     }
+
+
+def script_sha256(script_text: str) -> str:
+    """Return the hash the fact-check engine stored for a script's text.
+
+    A fact check is only ever about the text it was run against, and
+    ``podcast_fact_checks.script_sha256`` is how a stored check is matched to
+    the script it graded. The view needs the same hash for the script it is
+    showing, to tell a fresh check from a stale one.
+
+    The browser cannot compute it: ``crypto.subtle`` only exists in a secure
+    context, so a plain-HTTP host — the usual way to reach a self-hosted stack
+    from another machine — could never compare anything and would have to hide
+    every highlight instead.
+    """
+    return sha256_text(script_text or "")
 
 
 def public_factcheck(row: Dict[str, Any]) -> Dict[str, Any]:

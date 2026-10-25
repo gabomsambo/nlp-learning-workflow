@@ -103,6 +103,260 @@
     return out;
   }
 
+  /*
+   * The lines the fact-check engine numbered.
+   *
+   * The engine numbers claims by the index of `script.splitlines()`, and the
+   * TTS assembler walks the same list, so this has to agree with Python
+   * exactly — a line off by one paints every highlight on the wrong words.
+   * Python's splitlines() breaks on more than \n and \r (vertical tab, form
+   * feed, the file/group/record/unit separators, NEL, and the two Unicode
+   * line separators), and it leaves no trailing empty line for a trailing
+   * newline. An empty script has no lines at all.
+   */
+  function scriptLines(text) {
+    var source = text == null ? '' : String(text);
+    if (!source) return [];
+    var lines = source.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/);
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  }
+
+  var FACTCHECK_SEVERITY = { high: 3, medium: 2, low: 1 };
+
+  var TONE_ICONS = { high: '▲', medium: '◆', low: '○', neutral: '○' };
+
+  function claimTone(claim) {
+    claim = claim || {};
+    if (claim.verdict === 'supported') return 'supported';
+    if (claim.verdict === 'not_checkable') return 'neutral';
+    return FACTCHECK_SEVERITY[claim.severity] ? claim.severity : 'neutral';
+  }
+
+  /*
+   * One claim, one bucket. The summary bar and the issues panel both count from
+   * this, so they can never disagree about what a verdict means.
+   *
+   *   contradicted  the paper says something incompatible (high severity)
+   *   misattributed the paper says something else, or the claim is not the
+   *                 authors' to make (contradicted background, wrong attribution)
+   *   not_in_paper  the paper does not address it, and the claim is about the paper
+   *   overstated    the core is right and a detail is not
+   *   outside       probably true of the world, absent from the paper
+   *   unchecked     an opinion, a prediction, a hedge — not a checkable claim
+   *   supported     the paper states it
+   *   unclassified  a verdict this build does not know; shown, never folded away
+   */
+  function claimBucket(claim) {
+    claim = claim || {};
+    if (claim.verdict === 'supported') return 'supported';
+    if (claim.verdict === 'not_checkable') return 'unchecked';
+    if (claim.verdict === 'contradicted') {
+      return claim.severity === 'high' ? 'contradicted' : 'misattributed';
+    }
+    if (claim.verdict === 'unsupported') {
+      return claim.severity === 'low' ? 'outside' : 'not_in_paper';
+    }
+    if (claim.verdict === 'partially_supported') {
+      return claim.error_type === 'wrong_attribution' ? 'misattributed' : 'overstated';
+    }
+    return 'unclassified';
+  }
+
+  function claimPresentation(claim) {
+    claim = claim || {};
+    var bucket = claimBucket(claim);
+    if (bucket === 'supported') {
+      return { tone: 'supported', icon: '✓', label: 'Supported by the paper' };
+    }
+    if (bucket === 'unchecked') {
+      return { tone: 'neutral', icon: '○', label: 'Opinion · not checked' };
+    }
+    if (bucket === 'contradicted') {
+      return { tone: 'high', icon: '▲', label: 'Contradicts the paper' };
+    }
+    if (bucket === 'misattributed') {
+      return { tone: 'medium', icon: '◆', label: 'Not what the authors say' };
+    }
+    if (bucket === 'not_in_paper') {
+      return { tone: 'high', icon: '▲', label: 'Not in the paper' };
+    }
+    if (bucket === 'overstated') {
+      // Grey, not amber, when the engine called it low severity: an overstatement
+      // the paper does not contradict is not the same as a wrong number. The
+      // icon follows the tone, so colour and shape always agree.
+      var tone = claim.severity === 'medium' ? 'medium' : 'low';
+      return { tone: tone, icon: TONE_ICONS[tone], label: 'Overstated' };
+    }
+    if (bucket === 'outside') {
+      return { tone: 'low', icon: '○', label: 'Outside the paper' };
+    }
+    return { tone: 'neutral', icon: '○', label: 'Not classified' };
+  }
+
+  /*
+   * Where a claim's highlight sits in its line.
+   *
+   * The engine stores character offsets into the line as Python counts them —
+   * code points. JavaScript counts UTF-16 code units. The two agree until a
+   * character outside the Basic Multilingual Plane turns up, and a script with
+   * one emoji in it would then paint every highlight after it one character to
+   * the left. When the stored offsets do not produce the claim's own span
+   * text, look the text up in the line instead.
+   *
+   * Returns null when the span cannot be placed at all: a claim whose text is
+   * not in the line is not highlighted rather than highlighted in the wrong
+   * place.
+   */
+  function resolveSpan(line, claim) {
+    line = String(line == null ? '' : line);
+    claim = claim || {};
+    var start = Number(claim.span_start);
+    var end = Number(claim.span_end);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
+    if (start < 0 || end <= start || end > line.length) return null;
+    var text = claim.span_text == null ? '' : String(claim.span_text);
+    if (text && line.slice(start, end) !== text) {
+      var at = line.indexOf(text);
+      if (at === -1) return null;
+      if (line.indexOf(text, at + 1) === -1) {
+        start = at;
+        end = at + text.length;
+      }
+    }
+    return { start: start, end: end };
+  }
+
+  function visibleClaimSpans(line, claims, showSupported) {
+    line = String(line == null ? '' : line);
+    var result = [];
+    (claims || []).forEach(function (claim, index) {
+      if (!claim || (claim.verdict === 'supported' && !showSupported)) return;
+      var span = resolveSpan(line, claim);
+      if (!span) return;
+      result.push({ claim: claim, index: index, start: span.start, end: span.end });
+    });
+    return result;
+  }
+
+  /*
+   * Split one script line on every claim boundary. Overlapping claims therefore
+   * share the middle segment instead of one mark swallowing the other. Each
+   * returned segment retains every covering claim for the evidence popover.
+   */
+  function claimSegments(line, claims, showSupported) {
+    line = line == null ? '' : String(line);
+    var spans = visibleClaimSpans(line, claims, showSupported);
+    if (!spans.length) return [{ start: 0, end: line.length, text: line, claims: [] }];
+    var boundaries = [0, line.length];
+    spans.forEach(function (span) {
+      boundaries.push(span.start, span.end);
+    });
+    boundaries = boundaries.filter(function (value, index, all) {
+      return all.indexOf(value) === index;
+    }).sort(function (a, b) { return a - b; });
+    var out = [];
+    for (var i = 0; i < boundaries.length - 1; i++) {
+      var start = boundaries[i];
+      var end = boundaries[i + 1];
+      if (end <= start) continue;
+      var covering = spans.filter(function (span) {
+        return span.start <= start && span.end >= end;
+      }).map(function (span) { return span.claim; });
+      out.push({ start: start, end: end, text: line.slice(start, end), claims: covering });
+    }
+    return out;
+  }
+
+  var TONE_RANK = { high: 3, medium: 2, low: 1, neutral: 0, supported: -1 };
+
+  function strongestClaim(claims) {
+    var best = null;
+    var bestRank = -2;
+    (claims || []).forEach(function (claim) {
+      var rank = TONE_RANK[claimTone(claim)];
+      if (rank === undefined) rank = 0;
+      if (rank > bestRank) {
+        best = claim;
+        bestRank = rank;
+      }
+    });
+    return best;
+  }
+
+  function issueClaims(claims) {
+    return (claims || []).filter(function (claim) {
+      if (!claim) return false;
+      var bucket = claimBucket(claim);
+      // Supported claims and opinions are not issues. Anything else is — a claim
+      // this build cannot classify is shown as unclassified, never dropped.
+      return bucket !== 'supported' && bucket !== 'unchecked';
+    }).slice().sort(function (a, b) {
+      var severity = (FACTCHECK_SEVERITY[b.severity] || 0) - (FACTCHECK_SEVERITY[a.severity] || 0);
+      if (severity) return severity;
+      var line = Number(a.line_index) - Number(b.line_index);
+      if (line) return line;
+      return Number(a.span_start) - Number(b.span_start);
+    });
+  }
+
+  var SUMMARY_LABELS = {
+    contradicted: 'contradict the paper',
+    not_in_paper: 'not in the paper',
+    misattributed: 'not what the authors say',
+    overstated: 'overstated',
+    outside: 'outside the paper',
+    unchecked: 'opinion (not checked)',
+    unclassified: 'not classified',
+    supported: 'supported',
+  };
+
+  var SUMMARY_ORDER = [
+    'contradicted',
+    'not_in_paper',
+    'misattributed',
+    'overstated',
+    'outside',
+    'unchecked',
+    'unclassified',
+    'supported',
+  ];
+
+  /*
+   * The honest one-liner: how many claims were graded, and how they came out.
+   *
+   * Every bucket is counted, including the opinions that were not checked and
+   * the claims the paper supports. A summary that only named the problems
+   * would let the unmentioned lines read as verified, which is the point the
+   * research makes about the implied-truth effect.
+   */
+  function factcheckSummary(claims) {
+    claims = claims || [];
+    var counts = {};
+    SUMMARY_ORDER.forEach(function (bucket) { counts[bucket] = 0; });
+    claims.forEach(function (claim) {
+      if (!claim) return;
+      var bucket = claimBucket(claim);
+      counts[bucket] = (counts[bucket] || 0) + 1;
+    });
+    var parts = [claims.length + ' claim' + (claims.length === 1 ? '' : 's') + ' checked'];
+    SUMMARY_ORDER.forEach(function (bucket) {
+      if (!counts[bucket]) return;
+      parts.push(counts[bucket] + ' ' + SUMMARY_LABELS[bucket]);
+    });
+    return parts.join(' · ');
+  }
+
+  function isFactcheckStale(expectedHash, currentHash) {
+    return !!(expectedHash && currentHash && expectedHash !== currentHash);
+  }
+
+  function requestedLine(value, lineCount) {
+    if (value == null || !/^\d+$/.test(String(value))) return null;
+    var line = Number(value);
+    return line >= 0 && line < lineCount ? line : null;
+  }
+
   function groupEpisodes(rows) {
     var ordered = (rows || []).slice().sort(function (a, b) {
       var as = String((a && a.created_sort) || '');
@@ -168,21 +422,6 @@
     };
   }
 
-  function paintScript(container, text) {
-    if (!container) return;
-    container.replaceChildren();
-    scriptSegments(text).forEach(function (seg) {
-      if (seg.kind === 'text') {
-        container.appendChild(document.createTextNode(seg.text));
-        return;
-      }
-      var el = document.createElement(seg.kind === 'host' ? 'strong' : 'em');
-      el.className = seg.kind === 'host' ? 'cue-host' : 'cue-mark';
-      el.textContent = seg.text;
-      container.appendChild(el);
-    });
-  }
-
   function boot() {
     var catalogNode = document.getElementById('listen-catalog');
     var catalog = { papers: {}, pillars: {} };
@@ -206,6 +445,18 @@
     var keyPoints = document.getElementById('key-points');
     var keyPointsList = document.getElementById('key-points-list');
     var scriptContent = document.getElementById('script-content');
+    var factcheckPanel = document.getElementById('factcheck-panel');
+    var factcheckStatus = document.getElementById('factcheck-status');
+    var factcheckSummaryEl = document.getElementById('factcheck-summary');
+    var factcheckSummaryText = document.getElementById('factcheck-summary-text');
+    var factcheckMeta = document.getElementById('factcheck-meta');
+    var factcheckAlert = document.getElementById('factcheck-alert');
+    var factcheckBtn = document.getElementById('factcheck-btn');
+    var supportedControl = document.getElementById('factcheck-supported-control');
+    var showSupported = document.getElementById('factcheck-show-supported');
+    var factcheckIssues = document.getElementById('factcheck-issues');
+    var factcheckIssuesList = document.getElementById('factcheck-issues-list');
+    var factcheckAudioWarning = document.getElementById('factcheck-audio-warning');
     var downloadBtn = document.getElementById('download-btn');
     var warningsEl = document.getElementById('script-warnings');
     var settingsEl = document.getElementById('script-settings');
@@ -252,6 +503,20 @@
     var audioRunId = null;
     var scriptRunId = null;
     var scrubbing = false;
+    var currentScriptText = '';
+    var currentFactcheck = null;
+    var currentScriptHash = '';
+    var factcheckRunId = null;
+    var factcheckPollTimer = null;
+    var factcheckPollController = null;
+    var factcheckLoadToken = 0;
+    var factcheckButtonAction = 'start';
+    var factcheckState = 'none';
+    var factcheckHighCount = 0;
+    var activeFactcheckPopover = null;
+    var factcheckPopoverSeq = 0;
+    var currentTargetLine = null;
+    var requestedLineFollowed = false;
     var customValue = generateForm ? (generateForm.getAttribute('data-custom-value') || '') : '';
 
     var scriptEls = {
@@ -353,6 +618,673 @@
       warningsEl.hidden = false;
     }
 
+    function appendCueText(parent, text) {
+      scriptSegments(text).forEach(function (seg) {
+        if (seg.kind === 'text') {
+          parent.appendChild(document.createTextNode(seg.text));
+          return;
+        }
+        var el = document.createElement(seg.kind === 'host' ? 'strong' : 'em');
+        el.className = seg.kind === 'host' ? 'cue-host' : 'cue-mark';
+        el.textContent = seg.text;
+        parent.appendChild(el);
+      });
+    }
+
+    function closeFactcheckPopover(returnFocus) {
+      if (!activeFactcheckPopover) return;
+      var trigger = activeFactcheckPopover.trigger;
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.removeAttribute('aria-controls');
+      activeFactcheckPopover.node.remove();
+      activeFactcheckPopover = null;
+      if (returnFocus) trigger.focus();
+    }
+
+    function appendClaimExplanation(parent, claim) {
+      var presentation = claimPresentation(claim);
+      var heading = document.createElement('strong');
+      heading.className = 'factcheck-popover-title is-' + presentation.tone;
+      heading.textContent = presentation.icon + ' ' + presentation.label;
+      parent.appendChild(heading);
+
+      if (claim.claim) {
+        var stated = document.createElement('p');
+        stated.className = 'factcheck-claim';
+        stated.textContent = '“' + claim.claim + '”';
+        parent.appendChild(stated);
+      }
+      if (claim.rationale) {
+        var rationale = document.createElement('p');
+        rationale.textContent = claim.rationale;
+        parent.appendChild(rationale);
+      }
+      var evidence = Array.isArray(claim.evidence) ? claim.evidence : [];
+      if (evidence.length) {
+        evidence.forEach(function (item) {
+          if (!item || !item.quote) return;
+          var quote = document.createElement('blockquote');
+          quote.textContent = '“' + item.quote + '”';
+          if (item.chunk_index != null) {
+            var cite = document.createElement('small');
+            cite.textContent = 'Paper text · chunk ' + item.chunk_index;
+            quote.appendChild(cite);
+          }
+          parent.appendChild(quote);
+        });
+      } else if (claim.verdict !== 'not_checkable') {
+        var absent = document.createElement('p');
+        absent.className = 'factcheck-evidence-missing';
+        absent.textContent = 'No evidence quote was located in the stored paper text.';
+        parent.appendChild(absent);
+      }
+      var trail = Array.isArray(claim.judge_trail) ? claim.judge_trail : [];
+      if (trail.length) {
+        var models = document.createElement('small');
+        models.className = 'factcheck-judges';
+        models.textContent = 'Checked by ' + trail.map(function (item) {
+          return (item && item.model) || '';
+        }).filter(Boolean).join(' → ');
+        parent.appendChild(models);
+      }
+    }
+
+    function openFactcheckPopover(trigger, claims, lineRow) {
+      // A second click on the same mark closes it. A popover that only opens
+      // is a trap for the mouse.
+      if (activeFactcheckPopover && activeFactcheckPopover.trigger === trigger) {
+        closeFactcheckPopover(false);
+        return;
+      }
+      closeFactcheckPopover(false);
+      var popover = document.createElement('div');
+      var popoverId = 'factcheck-popover-' + (++factcheckPopoverSeq);
+      popover.id = popoverId;
+      popover.className = 'factcheck-popover';
+      popover.setAttribute('role', 'dialog');
+      popover.setAttribute('aria-label', 'Claim evidence');
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'factcheck-popover-close';
+      close.setAttribute('aria-label', 'Close evidence');
+      close.textContent = '×';
+      close.addEventListener('click', function () { closeFactcheckPopover(true); });
+      popover.appendChild(close);
+      claims.forEach(function (claim, index) {
+        if (index) popover.appendChild(document.createElement('hr'));
+        appendClaimExplanation(popover, claim);
+      });
+      trigger.setAttribute('aria-expanded', 'true');
+      trigger.setAttribute('aria-controls', popoverId);
+      lineRow.appendChild(popover);
+      activeFactcheckPopover = { node: popover, trigger: trigger };
+    }
+
+    /*
+     * Put one line in view.
+     *
+     * The script scrolls inside its own box, and the page scrolls around it.
+     * `scrollIntoView` on the row sorts out both at once and fights itself
+     * when they disagree, so the two are moved separately: the box is set to
+     * the line, and the page is set to the box.
+     *
+     * `instant` is for the deep link. A smooth scroll is a long animation, and
+     * the fact check arriving mid-animation would restart the page and leave
+     * the line half-way down the box.
+     */
+    function scrollScriptToLine(line, instant) {
+      var target = document.getElementById('script-line-' + line);
+      if (!target || !scriptContent) return;
+      var boxRect = scriptContent.getBoundingClientRect();
+      var targetRect = target.getBoundingClientRect();
+      var offset = targetRect.top - boxRect.top + scriptContent.scrollTop;
+      var top = Math.max(0, offset - (scriptContent.clientHeight - targetRect.height) / 2);
+      if (instant || !scriptContent.scrollTo) {
+        scriptContent.scrollTop = top;
+      } else {
+        scriptContent.scrollTo({ top: top, behavior: 'smooth' });
+      }
+      var pageTop = window.pageYOffset + boxRect.top -
+        Math.max(0, (window.innerHeight - boxRect.height) / 2);
+      if (window.scrollTo) {
+        window.scrollTo({ top: pageTop, behavior: instant ? 'auto' : 'smooth' });
+      }
+    }
+
+    function jumpToScriptLine(line, updateUrl) {
+      var target = document.getElementById('script-line-' + line);
+      if (!target) return;
+      document.querySelectorAll('.script-line.is-target').forEach(function (row) {
+        row.classList.remove('is-target');
+      });
+      target.classList.add('is-target');
+      currentTargetLine = line;
+      scrollScriptToLine(line, false);
+      if (updateUrl && currentScriptId) {
+        try {
+          var url = new URL(global.location.href);
+          url.searchParams.set('script', currentScriptId);
+          url.searchParams.set('line', String(line));
+          global.history.replaceState({}, '', url);
+        } catch (e) { /* a line jump still works without history */ }
+      }
+    }
+
+    /*
+     * A deep link names one line: /podcast/?script=<id>&line=<n>.
+     *
+     * The line is scrolled to once, when the script first paints. Every later
+     * repaint — the fact check arriving, the supported toggle, a re-check —
+     * keeps the line highlighted but does not yank the reader back to it.
+     */
+    function followRequestedLine() {
+      if (requestedLineFollowed) {
+        markTargetLine();
+        return;
+      }
+      var lines = scriptLines(currentScriptText);
+      var value = new URLSearchParams(global.location.search).get('line');
+      var line = requestedLine(value, lines.length);
+      if (line == null) return;
+      requestedLineFollowed = true;
+      currentTargetLine = line;
+      global.requestAnimationFrame(function () { markTargetLine(true); });
+    }
+
+    function markTargetLine(scroll) {
+      if (currentTargetLine == null) return;
+      var target = document.getElementById('script-line-' + currentTargetLine);
+      if (!target) return;
+      document.querySelectorAll('.script-line.is-target').forEach(function (row) {
+        row.classList.remove('is-target');
+      });
+      target.classList.add('is-target');
+      if (scroll) {
+        scrollScriptToLine(currentTargetLine, true);
+        return;
+      }
+      // A repaint rebuilds the script, so the reader's place in it is kept by
+      // restoring the scroll offset. If the linked line is still off-screen —
+      // the rebuild put it there — it is scrolled back into view. If it is
+      // already visible, the reader is left alone.
+      if (!scriptContent) return;
+      var line = target.getBoundingClientRect();
+      var view = scriptContent.getBoundingClientRect();
+      if (line.top >= view.top && line.bottom <= view.bottom) return;
+      scrollScriptToLine(currentTargetLine, true);
+    }
+
+    function paintAddressableScript(text, claims) {
+      if (!scriptContent) return;
+      closeFactcheckPopover(false);
+      // Rebuilding the script resets its scroll offset, which would throw the
+      // reader back to the top every time the fact check arrives or the
+      // supported toggle is flipped.
+      var keepScroll = scriptContent.scrollTop;
+      scriptContent.replaceChildren();
+      var lines = scriptLines(text);
+      var byLine = {};
+      (claims || []).forEach(function (claim) {
+        var line = Number(claim && claim.line_index);
+        if (!Number.isInteger(line) || line < 0 || line >= lines.length) return;
+        if (!byLine[line]) byLine[line] = [];
+        byLine[line].push(claim);
+      });
+      lines.forEach(function (textLine, lineIndex) {
+        var row = document.createElement('div');
+        row.className = 'script-line';
+        row.id = 'script-line-' + lineIndex;
+        row.setAttribute('data-line', String(lineIndex));
+        var number = document.createElement('span');
+        number.className = 'script-line-number';
+        number.textContent = 'L' + lineIndex;
+        number.setAttribute('aria-hidden', 'true');
+        row.appendChild(number);
+        var body = document.createElement('span');
+        body.className = 'script-line-text';
+        claimSegments(textLine, byLine[lineIndex] || [], !!(showSupported && showSupported.checked)).forEach(function (segment) {
+          if (!segment.claims.length) {
+            appendCueText(body, segment.text || '\u00a0');
+            return;
+          }
+          var primary = strongestClaim(segment.claims) || segment.claims[0];
+          var presentation = claimPresentation(primary);
+          var mark = document.createElement('button');
+          mark.type = 'button';
+          mark.className = 'factcheck-mark is-' + presentation.tone;
+          mark.setAttribute('aria-expanded', 'false');
+          mark.setAttribute('aria-label', presentation.label + ': ' + segment.text);
+          appendCueText(mark, segment.text);
+          mark.addEventListener('focus', function () {
+            openFactcheckPopover(mark, segment.claims, row);
+          });
+          mark.addEventListener('click', function () {
+            openFactcheckPopover(mark, segment.claims, row);
+          });
+          body.appendChild(mark);
+        });
+        row.appendChild(body);
+        scriptContent.appendChild(row);
+      });
+      scriptContent.scrollTop = keepScroll;
+      followRequestedLine();
+    }
+
+    function renderFactcheckIssues(claims) {
+      if (!factcheckIssues || !factcheckIssuesList) return;
+      factcheckIssuesList.replaceChildren();
+      var issues = issueClaims(claims);
+      if (!issues.length) {
+        var empty = document.createElement('p');
+        empty.className = 'field-help';
+        empty.textContent = 'No high, medium, or low severity flags. Opinions and supported claims are counted separately above.';
+        factcheckIssuesList.appendChild(empty);
+      }
+      issues.forEach(function (claim) {
+        var presentation = claimPresentation(claim);
+        var card = document.createElement('article');
+        card.className = 'factcheck-issue is-' + presentation.tone;
+        var title = document.createElement('strong');
+        title.textContent = presentation.icon + ' ' + presentation.label;
+        card.appendChild(title);
+        var line = document.createElement('span');
+        line.className = 'factcheck-issue-line';
+        line.textContent = 'L' + claim.line_index;
+        card.appendChild(line);
+        var span = document.createElement('q');
+        span.textContent = claim.span_text || claim.claim || '';
+        card.appendChild(span);
+        if (claim.rationale) {
+          var reason = document.createElement('p');
+          reason.textContent = claim.rationale;
+          card.appendChild(reason);
+        }
+        var evidence = Array.isArray(claim.evidence) ? claim.evidence : [];
+        if (evidence.length && evidence[0].quote) {
+          var quote = document.createElement('blockquote');
+          quote.textContent = 'Paper: “' + evidence[0].quote + '”';
+          card.appendChild(quote);
+        } else if (claim.verdict !== 'not_checkable') {
+          var noQuote = document.createElement('p');
+          noQuote.className = 'factcheck-evidence-missing';
+          noQuote.textContent = 'Evidence quote not located.';
+          card.appendChild(noQuote);
+        }
+        var jump = document.createElement('button');
+        jump.type = 'button';
+        jump.className = 'btn btn-ghost btn-sm factcheck-jump';
+        jump.textContent = 'Jump to line';
+        jump.addEventListener('click', function () {
+          jumpToScriptLine(Number(claim.line_index), true);
+        });
+        card.appendChild(jump);
+        factcheckIssuesList.appendChild(card);
+      });
+      factcheckIssues.hidden = false;
+    }
+
+    function clearFactcheckDetails() {
+      currentFactcheck = null;
+      if (factcheckSummaryEl) factcheckSummaryEl.hidden = true;
+      if (factcheckAlert) factcheckAlert.hidden = true;
+      if (supportedControl) supportedControl.hidden = true;
+      if (showSupported) showSupported.checked = false;
+      if (factcheckIssues) factcheckIssues.hidden = true;
+      if (factcheckIssuesList) factcheckIssuesList.replaceChildren();
+      factcheckState = 'loading';
+      factcheckHighCount = 0;
+      updateAudioWarning();
+      paintAddressableScript(currentScriptText, []);
+    }
+
+    /*
+     * What the recording button should say about the fact check.
+     *
+     * The audio warning never blocks: the research says a warning, not a
+     * gate. But it has to name the state, because "no warning" would read as
+     * "nothing is wrong" for a script that was never checked at all.
+     */
+    var AUDIO_NOTES = {
+      none: 'This script has not been fact-checked, so no claim in it has been graded. Recording is still available.',
+      loading: '',
+      running: 'A fact check is running. Recording is still available.',
+      failed: 'The fact check failed, so no claim in this script has been graded. Recording is still available.',
+      stale: 'The script changed after its fact check. Re-check it before recording audio.',
+      unavailable: 'Fact-check results are unavailable, so no claim in this script has been graded. Recording is still available.',
+      done: '',
+    };
+
+    function updateAudioWarning() {
+      if (!factcheckAudioWarning) return;
+      var note = AUDIO_NOTES[factcheckState] || '';
+      if (factcheckState === 'done' && factcheckHighCount > 0) {
+        note = factcheckHighCount + ' high-severity claim' +
+               (factcheckHighCount === 1 ? ' needs' : 's need') +
+               ' review before recording. Audio generation is still available.';
+      }
+      factcheckAudioWarning.textContent = note;
+      factcheckAudioWarning.hidden = !note;
+    }
+
+    function showFactcheckState(message, options) {
+      options = options || {};
+      factcheckButtonAction = options.action || 'start';
+      factcheckState = options.state || 'none';
+      if (options.highCount != null) factcheckHighCount = options.highCount;
+      updateAudioWarning();
+      if (factcheckPanel) factcheckPanel.hidden = false;
+      if (factcheckStatus) {
+        factcheckStatus.textContent = message;
+        factcheckStatus.className = 'factcheck-status' + (options.tone ? ' is-' + options.tone : '');
+      }
+      if (factcheckBtn) {
+        factcheckBtn.hidden = !!options.hideButton;
+        factcheckBtn.disabled = !!options.disableButton;
+        factcheckBtn.textContent = options.buttonLabel || 'Check facts';
+      }
+      if (options.alert && factcheckAlert) {
+        factcheckAlert.textContent = options.alert;
+        factcheckAlert.classList.toggle('callout-error', options.tone === 'error');
+        factcheckAlert.classList.toggle('callout-warn', options.tone !== 'error');
+        factcheckAlert.hidden = false;
+      }
+    }
+
+    function formatFactcheckMeta(check) {
+      var parts = [];
+      var date = formatCreated(check && check.created_at);
+      if (date) parts.push('Checked ' + date);
+      var cost = Number(check && check.cost_usd);
+      if (isFinite(cost) && cost > 0) parts.push('$' + cost.toFixed(2));
+      return parts.join(' · ');
+    }
+
+    function renderFactcheck(check, latestRun, runHistoryError) {
+      var claims = Array.isArray(check.claims) ? check.claims : [];
+      currentFactcheck = check;
+      factcheckButtonAction = 'start';
+      if (factcheckPanel) factcheckPanel.hidden = false;
+      if (factcheckStatus) {
+        factcheckStatus.textContent = 'Completed against the stored paper text.';
+        factcheckStatus.className = 'factcheck-status';
+      }
+      if (factcheckBtn) {
+        factcheckBtn.hidden = false;
+        factcheckBtn.disabled = false;
+        factcheckBtn.textContent = 'Re-check';
+      }
+      if (factcheckSummaryText) factcheckSummaryText.textContent = factcheckSummary(claims);
+      if (factcheckMeta) factcheckMeta.textContent = formatFactcheckMeta(check);
+      if (factcheckSummaryEl) factcheckSummaryEl.hidden = false;
+      if (supportedControl) supportedControl.hidden = false;
+      paintAddressableScript(currentScriptText, claims);
+      renderFactcheckIssues(claims);
+
+      var high = claims.filter(function (claim) {
+        return claim && claim.severity === 'high' && !claim.dismissed_at;
+      }).length;
+      factcheckState = 'done';
+      factcheckHighCount = high;
+      updateAudioWarning();
+
+      var alertText = '';
+      var alertTone = 'warn';
+      if (latestRun && ['failed', 'cancelled', 'interrupted'].indexOf(latestRun.status) !== -1) {
+        var checkTime = Date.parse(check.created_at || '') || 0;
+        var runTime = Date.parse(latestRun.created_at || '') || 0;
+        if (runTime >= checkTime) {
+          alertTone = latestRun.status === 'failed' ? 'error' : 'warn';
+          alertText = latestRun.status === 'failed'
+            ? 'The latest re-check failed: ' + (latestRun.error || 'No reason was recorded.') +
+              ' The results below are from the previous completed check.'
+            : 'The latest re-check was ' + latestRun.status +
+              '. The results below are from the previous completed check.';
+        }
+      }
+      if (runHistoryError) {
+        // The stored check is readable but the run history is not, so this may
+        // not be the latest attempt. Say so instead of implying it is.
+        alertText = alertText
+          ? alertText + ' ' + runHistoryError
+          : 'The fact-check run history could not be read, so this may not be the latest check.';
+      }
+      if (alertText && factcheckAlert) {
+        factcheckAlert.textContent = alertText;
+        factcheckAlert.classList.toggle('callout-error', alertTone === 'error');
+        factcheckAlert.classList.toggle('callout-warn', alertTone !== 'error');
+        factcheckAlert.hidden = false;
+      }
+    }
+
+    async function readLatestFactcheckRun(scriptId) {
+      var query = '?kind=podcast_factcheck&script_id=' + encodeURIComponent(scriptId) + '&limit=1';
+      var res = await fetch('/api/pipeline-runs' + query);
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok) {
+        return { ok: false, detail: (data && data.detail) || 'Could not read fact-check run status.' };
+      }
+      return { ok: true, run: Array.isArray(data) && data.length ? data[0] : null };
+    }
+
+    function stopFactcheckPoll() {
+      if (factcheckPollTimer) global.clearTimeout(factcheckPollTimer);
+      factcheckPollTimer = null;
+      if (factcheckPollController) factcheckPollController.abort();
+      factcheckPollController = null;
+      factcheckRunId = null;
+    }
+
+    function watchFactcheckRun(runId, scriptId) {
+      stopFactcheckPoll();
+      factcheckRunId = runId;
+      var delay = 1000;
+      async function tick() {
+        if (factcheckRunId !== runId || currentScriptId !== scriptId) return;
+        factcheckPollController = new AbortController();
+        try {
+          var res = await fetch('/api/pipeline-runs/' + encodeURIComponent(runId), {
+            signal: factcheckPollController.signal,
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var run = await res.json();
+          delay = 1000;
+          showFactcheckState(
+            global.RunProgress ? global.RunProgress.summarise(run) : 'Fact check is running…',
+            { disableButton: true, buttonLabel: 'Checking…', state: 'running' },
+          );
+          if (global.RunProgress && global.RunProgress.isTerminal(run.status)) {
+            stopFactcheckPoll();
+            loadFactcheck(scriptId, currentScriptText);
+            return;
+          }
+          if (['succeeded', 'failed', 'cancelled', 'interrupted'].indexOf(run.status) !== -1) {
+            stopFactcheckPoll();
+            loadFactcheck(scriptId, currentScriptText);
+            return;
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+          delay = Math.min(delay * 2, 15000);
+          showFactcheckState(
+            'Lost contact with the fact-check run — retrying. This is not a completed check.',
+            { tone: 'warn', disableButton: true, buttonLabel: 'Checking…', state: 'running' },
+          );
+        }
+        factcheckPollTimer = global.setTimeout(tick, delay);
+      }
+      tick();
+    }
+
+    async function loadFactcheck(scriptId, scriptText) {
+      var token = ++factcheckLoadToken;
+      stopFactcheckPoll();
+      currentScriptText = scriptText == null ? '' : String(scriptText);
+      clearFactcheckDetails();
+      showFactcheckState(
+        'Loading fact check…',
+        { disableButton: true, buttonLabel: 'Loading…', state: 'loading' },
+      );
+      var checkPromise = fetch('/api/podcast/' + encodeURIComponent(scriptId) + '/factcheck').then(async function (res) {
+        return { status: res.status, ok: res.ok, data: await res.json().catch(function () { return {}; }) };
+      }).catch(function (err) {
+        return { status: 0, ok: false, data: { detail: err.message || 'Could not load fact check.' } };
+      });
+      var runPromise = readLatestFactcheckRun(scriptId).catch(function (err) {
+        return { ok: false, detail: err.message || 'Could not read fact-check run status.' };
+      });
+      var results = await Promise.all([checkPromise, runPromise]);
+      if (token !== factcheckLoadToken || currentScriptId !== scriptId) return;
+      var checkResult = results[0];
+      var runResult = results[1];
+      var currentHash = currentScriptHash;
+      var latestRun = runResult.run || null;
+
+      if (!runResult.ok && checkResult.status === 404) {
+        showFactcheckState(
+          'Could not determine whether a fact check is missing, running, or failed.',
+          {
+            tone: 'error',
+            buttonLabel: 'Reload status',
+            action: 'reload',
+            alert: runResult.detail,
+            state: 'unavailable',
+          },
+        );
+        return;
+      }
+      if (latestRun && ['pending', 'running'].indexOf(latestRun.status) !== -1) {
+        showFactcheckState(
+          global.RunProgress ? global.RunProgress.summarise(latestRun) : 'Fact check is running…',
+          { disableButton: true, buttonLabel: 'Checking…', state: 'running' },
+        );
+        watchFactcheckRun(latestRun.id, scriptId);
+        return;
+      }
+      if (checkResult.status === 503) {
+        showFactcheckState(
+          'Fact-check results are unavailable because the database migration is missing.',
+          {
+            tone: 'error',
+            disableButton: true,
+            buttonLabel: 'Unavailable',
+            alert: checkResult.data.detail,
+            state: 'unavailable',
+          },
+        );
+        return;
+      }
+      if (!checkResult.ok && checkResult.status !== 404) {
+        showFactcheckState(
+          'The fact check could not be loaded. This is not the same as having no issues.',
+          {
+            tone: 'error',
+            buttonLabel: 'Reload status',
+            action: 'reload',
+            alert: checkResult.data.detail || 'Request failed.',
+            state: 'unavailable',
+          },
+        );
+        return;
+      }
+      if (checkResult.status === 404) {
+        if (latestRun && latestRun.status === 'failed') {
+          showFactcheckState(
+            'The fact check failed. The script was not changed.',
+            {
+              tone: 'error',
+              buttonLabel: 'Try again',
+              alert: latestRun.error || 'No failure reason was recorded.',
+              state: 'failed',
+            },
+          );
+          return;
+        }
+        if (latestRun && ['cancelled', 'interrupted'].indexOf(latestRun.status) !== -1) {
+          showFactcheckState(
+            'The fact check was ' + latestRun.status + '. No completed result is available.',
+            { tone: 'warn', buttonLabel: 'Check facts', state: 'failed' },
+          );
+          return;
+        }
+        if (latestRun && latestRun.status === 'succeeded') {
+          showFactcheckState(
+            'The fact-check run finished, but its saved result could not be found.',
+            { tone: 'error', buttonLabel: 'Re-check', state: 'unavailable' },
+          );
+          return;
+        }
+        showFactcheckState(
+          'This script has not been fact-checked. No claims have been graded yet.',
+          { buttonLabel: 'Check facts', state: 'none' },
+        );
+        return;
+      }
+
+      var check = checkResult.data || {};
+      if (isFactcheckStale(check.script_sha256, currentHash)) {
+        showFactcheckState(
+          'This fact check is stale because the script changed after it was checked.',
+          {
+            tone: 'warn',
+            buttonLabel: 'Re-check',
+            alert: 'Old claim highlights are hidden because their line and character anchors may no longer match.',
+            state: 'stale',
+          },
+        );
+        return;
+      }
+      renderFactcheck(
+        check,
+        latestRun,
+        runResult.ok ? '' : 'The fact-check run history could not be read.',
+      );
+    }
+
+    async function startFactcheck() {
+      if (!currentScriptId || factcheckRunId) return;
+      clearFactcheckDetails();
+      showFactcheckState(
+        'Starting fact check…',
+        { disableButton: true, buttonLabel: 'Starting…', state: 'running' },
+      );
+      try {
+        var res = await fetch('/api/podcast/' + encodeURIComponent(currentScriptId) + '/factcheck', {
+          method: 'POST',
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.status !== 202 && res.status !== 409) {
+          showFactcheckState(
+            res.status === 503
+              ? 'The fact check cannot start because a database migration is missing.'
+              : 'The fact check could not be started.',
+            {
+              tone: 'error',
+              buttonLabel: 'Try again',
+              alert: data.detail || 'Request failed.',
+              state: 'failed',
+            },
+          );
+          return;
+        }
+        if (!data.run_id) throw new Error('The server did not return a fact-check run id.');
+        showFactcheckState(
+          'Fact check is starting…',
+          { disableButton: true, buttonLabel: 'Checking…', state: 'running' },
+        );
+        watchFactcheckRun(data.run_id, currentScriptId);
+      } catch (err) {
+        showFactcheckState(
+          'The fact check could not be started.',
+          {
+            tone: 'error',
+            buttonLabel: 'Try again',
+            alert: err.message || 'Request failed.',
+            state: 'failed',
+          },
+        );
+      }
+    }
+
     function showStoredAudio(meta) {
       var href = meta && meta.file_name ? audioHref(meta.file_name) : null;
       currentAudioHref = href || '';
@@ -387,7 +1319,16 @@
         });
       }
       if (keyPoints) keyPoints.hidden = !(script.key_points && script.key_points.length);
-      paintScript(scriptContent, script.script || '');
+      currentScriptText = script.script == null ? '' : String(script.script);
+      // The hash of the text the fact-check engine hashed, so the view can say
+      // whether a stored check still describes this script.
+      currentScriptHash = script.script_sha256 ? String(script.script_sha256) : '';
+      // A different script means a different line numbering: the deep-linked
+      // line and the highlight both have to be resolved again.
+      currentTargetLine = null;
+      requestedLineFollowed = false;
+      paintAddressableScript(currentScriptText, []);
+      if (factcheckPanel) factcheckPanel.hidden = !currentScriptId;
       if (scriptArea) scriptArea.hidden = false;
       if (progressBar) progressBar.hidden = true;
       if (audioSection) audioSection.hidden = !currentScriptId;
@@ -580,6 +1521,7 @@
           applyScriptView(script, scriptId);
           loadedBodyId = scriptId;
           syncAudioControls();
+          return loadFactcheck(scriptId, script.script || '');
         });
       }).catch(function (err) {
         if (statusEl) statusEl.textContent = 'Error loading script: ' + err.message;
@@ -604,6 +1546,8 @@
       if (run.status === 'failed' || run.status === 'cancelled' || run.status === 'interrupted') return;
       var result = run.result || {};
       if (result.saved === false) {
+        stopFactcheckPoll();
+        factcheckLoadToken += 1;
         currentScriptId = null;
         unsavedScript = result;
         showWarnings(result.warnings || [], { unsaved: true });
@@ -617,6 +1561,9 @@
           key_points: result.key_points,
         });
         showStoredAudio(null);
+        if (factcheckPanel) factcheckPanel.hidden = true;
+        if (factcheckIssues) factcheckIssues.hidden = true;
+        if (factcheckAudioWarning) factcheckAudioWarning.hidden = true;
         return;
       }
       if (result.script_id) {
@@ -659,11 +1606,17 @@
     }
 
     function startScript(paperId, pillarId) {
+      stopFactcheckPoll();
+      factcheckLoadToken += 1;
       if (statusEl) statusEl.textContent = 'Starting podcast script generation…';
       if (global.RunProgress) global.RunProgress.applyStatusClass(statusEl, '');
       showWarnings([]);
       unsavedScript = null;
       currentScriptId = null;
+      currentFactcheck = null;
+      if (factcheckPanel) factcheckPanel.hidden = true;
+      if (factcheckIssues) factcheckIssues.hidden = true;
+      if (factcheckAudioWarning) factcheckAudioWarning.hidden = true;
       if (scriptArea) scriptArea.hidden = true;
       if (scriptStages) scriptStages.replaceChildren();
       if (progressBar) progressBar.hidden = false;
@@ -985,6 +1938,23 @@
         syncAudioControls();
       });
     }
+    if (factcheckBtn) {
+      factcheckBtn.addEventListener('click', function () {
+        if (factcheckButtonAction === 'reload') {
+          loadFactcheck(currentScriptId, currentScriptText);
+          return;
+        }
+        startFactcheck();
+      });
+    }
+    if (showSupported) {
+      showSupported.addEventListener('change', function () {
+        paintAddressableScript(
+          currentScriptText,
+          currentFactcheck && Array.isArray(currentFactcheck.claims) ? currentFactcheck.claims : [],
+        );
+      });
+    }
     if (previewVoiceBtn) {
       previewVoiceBtn.addEventListener('click', function () {
         if (!voiceSelect || !voiceSelect.value || !voicePreview) return;
@@ -1072,6 +2042,20 @@
         if (open) loadScript(open.getAttribute('data-script-id'));
       });
     }
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeFactcheckPopover(true);
+    });
+    document.addEventListener('click', function (event) {
+      // A click anywhere else dismisses the evidence popover. Without this it
+      // stays open over the script until Escape or the script is repainted.
+      if (!activeFactcheckPopover) return;
+      var node = activeFactcheckPopover.node;
+      var trigger = activeFactcheckPopover.trigger;
+      var target = event.target;
+      if (target && (node.contains(target) || trigger.contains(target))) return;
+      closeFactcheckPopover(false);
+    });
+    global.addEventListener('pagehide', stopFactcheckPoll);
     if (libraryPillar) libraryPillar.addEventListener('change', applyLibraryFilter);
 
     refreshTtsStatus();
@@ -1132,10 +2116,21 @@
       formatClock: formatClock,
       formatValueText: formatValueText,
       scriptSegments: scriptSegments,
+      scriptLines: scriptLines,
+      claimTone: claimTone,
+      claimBucket: claimBucket,
+      claimPresentation: claimPresentation,
+      resolveSpan: resolveSpan,
+      visibleClaimSpans: visibleClaimSpans,
+      claimSegments: claimSegments,
+      strongestClaim: strongestClaim,
+      issueClaims: issueClaims,
+      factcheckSummary: factcheckSummary,
+      isFactcheckStale: isFactcheckStale,
+      requestedLine: requestedLine,
       groupEpisodes: groupEpisodes,
       viewMode: viewMode,
       rowFromParts: rowFromParts,
-      paintScript: paintScript,
     };
   }
 })(typeof window !== 'undefined' ? window : globalThis);

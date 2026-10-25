@@ -204,3 +204,55 @@ def test_unknown_script_is_404(api_client, monkeypatch):
     response = api_client.post(f"/api/podcast/{SCRIPT_ID}/factcheck")
     assert response.status_code == 404
     assert response.json()["detail"] == "Script not found"
+
+
+# --------------------------------------------------------------------- staleness
+
+
+def test_the_script_response_carries_the_hash_the_fact_check_was_run_against(
+    api_client, monkeypatch
+):
+    """The script response carries the hash a fact check was run against.
+
+    Listen needs the hash of the script text to tell a fresh fact check from
+    a stale one.
+
+    The browser cannot compute it: ``crypto.subtle`` only exists in a secure
+    context, so a plain-HTTP host — the usual way to reach a self-hosted stack
+    from another machine — could never compare anything and would have to hide
+    every highlight instead.
+    """
+    import hashlib
+
+    from nlp_pillars.schemas import PodcastScript
+
+    text = "[HOST]: The paper reports an average of 61.7."
+    script = PodcastScript(
+        id=SCRIPT_ID,
+        paper_id="arxiv:2403.05525",
+        pillar_id="neural-architectures-language",
+        title="AML",
+        script=text,
+        word_count=8,
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_podcast_script_by_id",
+        lambda sid: script,
+    )
+    response = api_client.get(f"/api/podcast/{SCRIPT_ID}")
+    assert response.status_code == 200
+    body = response.json()["script"]
+    assert body["script_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_the_view_hash_is_the_hash_the_engine_stored():
+    """Two hash functions that disagree would make every check look stale.
+
+    The engine writes ``podcast_fact_checks.script_sha256``; the view compares
+    the script's hash against it. They have to be the same function.
+    """
+    from nlp_pillars.factcheck.engine import sha256_text
+    from webui.services.podcast_factcheck_service import script_sha256
+
+    assert script_sha256("the same text") == sha256_text("the same text")
+    assert script_sha256("") == sha256_text("")

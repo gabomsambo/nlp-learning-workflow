@@ -15,6 +15,16 @@ const {
   formatCreated,
   formatValueText,
   scriptSegments,
+  scriptLines,
+  claimBucket,
+  claimPresentation,
+  resolveSpan,
+  claimSegments,
+  strongestClaim,
+  issueClaims,
+  factcheckSummary,
+  isFactcheckStale,
+  requestedLine,
   groupEpisodes,
   viewMode,
   rowFromParts,
@@ -44,6 +54,141 @@ test('script cues are segments, not an HTML string', () => {
   assert.equal(parts[1].text, '[HOST]:');
   assert.equal(parts[3].text, '[PAUSE]');
   assert.equal(parts.some((part) => part.text.includes('<')), false);
+});
+
+test('the script is split into the lines the fact-check engine numbered', () => {
+  // The engine numbers claims by the index of Python's script.splitlines(),
+  // and the TTS assembler walks the same list. A line off by one paints every
+  // highlight on the wrong words, so these are Python's answers, not guesses.
+  assert.deepEqual(scriptLines(''), []);
+  assert.deepEqual(scriptLines('a'), ['a']);
+  assert.deepEqual(scriptLines('a\n'), ['a']);
+  assert.deepEqual(scriptLines('a\nb'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\nb\n'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\n\n'), ['a', '']);
+  assert.deepEqual(scriptLines('\n'), ['']);
+  assert.deepEqual(scriptLines('a\r\nb'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\rb'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\vb'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\fb'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\x85b'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\u2028b'), ['a', 'b']);
+  assert.deepEqual(scriptLines('a\u2029b'), ['a', 'b']);
+});
+
+test('a span whose offsets do not produce its own text is re-anchored', () => {
+  // Python counts a line in code points; JavaScript counts UTF-16 code units.
+  // The emoji is one code point and two code units, so Python's offsets for
+  // "61.7" are 7..11 and JavaScript's are 8..12. The engine stores the
+  // Python ones, and the highlight would land on the wrong words.
+  const line = '🎧 gave 61.7 here';
+  assert.equal(line.slice(7, 11), ' 61.');
+  assert.equal(line.slice(8, 12), '61.7');
+  assert.deepEqual(resolveSpan(line, { span_start: 7, span_end: 11, span_text: '61.7' }), {
+    start: 8,
+    end: 12,
+  });
+  assert.deepEqual(resolveSpan(line, { span_start: 8, span_end: 12, span_text: '61.7' }), {
+    start: 8,
+    end: 12,
+  });
+  // A span that is not in this line at all is not highlighted.
+  assert.equal(resolveSpan(line, { span_start: 0, span_end: 4, span_text: 'nope' }), null);
+  // Out-of-range offsets are not painted either.
+  assert.equal(resolveSpan(line, { span_start: -1, span_end: 3 }), null);
+  assert.equal(resolveSpan(line, { span_start: 5, span_end: 500 }), null);
+});
+
+test('fact-check spans split a line at adjacent and overlapping boundaries', () => {
+  const high = { id: 'high', span_start: 2, span_end: 8, severity: 'high', verdict: 'contradicted' };
+  const medium = { id: 'medium', span_start: 5, span_end: 10, severity: 'medium', verdict: 'partially_supported' };
+  const segments = claimSegments('0123456789ab', [high, medium], false);
+  assert.deepEqual(segments.map((part) => [part.text, part.claims.map((claim) => claim.id)]), [
+    ['01', []],
+    ['234', ['high']],
+    ['567', ['high', 'medium']],
+    ['89', ['medium']],
+    ['ab', []],
+  ]);
+  assert.equal(strongestClaim(segments[2].claims).id, 'high');
+});
+
+test('supported spans are opt-in and malformed anchors are ignored', () => {
+  const supported = { id: 'ok', span_start: 0, span_end: 4, verdict: 'supported' };
+  const malformed = { id: 'bad', span_start: -1, span_end: 99, verdict: 'contradicted', severity: 'high' };
+  assert.deepEqual(claimSegments('text', [supported, malformed], false).map((part) => part.claims), [[]]);
+  assert.deepEqual(
+    claimSegments('text', [supported, malformed], true)[0].claims.map((claim) => claim.id),
+    ['ok'],
+  );
+});
+
+test('issue order is severity first then zero-based script position', () => {
+  const ordered = issueClaims([
+    { id: 'low', severity: 'low', line_index: 1, span_start: 0 },
+    { id: 'later', severity: 'high', line_index: 8, span_start: 0 },
+    { id: 'earlier', severity: 'high', line_index: 3, span_start: 4 },
+    { id: 'supported', severity: '', verdict: 'supported', line_index: 0 },
+    { id: 'opinion', severity: 'none', verdict: 'not_checkable', line_index: 0 },
+  ]);
+  assert.deepEqual(ordered.map((claim) => claim.id), ['earlier', 'later', 'low']);
+});
+
+test('claim buckets keep the verdicts apart', () => {
+  assert.equal(claimBucket({ verdict: 'contradicted', severity: 'high' }), 'contradicted');
+  assert.equal(claimBucket({ verdict: 'contradicted', severity: 'medium' }), 'misattributed');
+  assert.equal(claimBucket({ verdict: 'unsupported', severity: 'high' }), 'not_in_paper');
+  assert.equal(claimBucket({ verdict: 'unsupported', severity: 'low' }), 'outside');
+  assert.equal(
+    claimBucket({ verdict: 'partially_supported', error_type: 'wrong_attribution' }),
+    'misattributed',
+  );
+  assert.equal(claimBucket({ verdict: 'partially_supported' }), 'overstated');
+  assert.equal(claimBucket({ verdict: 'not_checkable' }), 'unchecked');
+  assert.equal(claimBucket({ verdict: 'supported' }), 'supported');
+  // A verdict this build does not know is shown as unclassified, not dropped.
+  assert.equal(claimBucket({ verdict: 'brand_new' }), 'unclassified');
+});
+
+test('claim labels and summary do not imply that unchecked text was verified', () => {
+  assert.equal(claimPresentation({ verdict: 'contradicted', severity: 'high' }).label, 'Contradicts the paper');
+  assert.equal(claimPresentation({ verdict: 'not_checkable' }).label, 'Opinion · not checked');
+  assert.equal(
+    claimPresentation({ verdict: 'unsupported', severity: 'high' }).label,
+    'Not in the paper',
+  );
+  assert.equal(
+    claimPresentation({ verdict: 'unsupported', severity: 'low' }).label,
+    'Outside the paper',
+  );
+  const summary = factcheckSummary([
+    { verdict: 'supported' },
+    { verdict: 'contradicted', severity: 'high' },
+    { verdict: 'unsupported', severity: 'high', scope: 'paper' },
+    { verdict: 'unsupported', severity: 'low', scope: 'background' },
+    { verdict: 'partially_supported', severity: 'medium' },
+    { verdict: 'not_checkable' },
+  ]);
+  assert.equal(
+    summary,
+    '6 claims checked · 1 contradict the paper · 1 not in the paper · 1 overstated · 1 outside the paper · 1 opinion (not checked) · 1 supported',
+  );
+});
+
+test('a summary of nothing says so, and a single claim is not pluralised', () => {
+  assert.equal(factcheckSummary([]), '0 claims checked');
+  assert.equal(factcheckSummary([{ verdict: 'supported' }]), '1 claim checked · 1 supported');
+});
+
+test('staleness and deep-link lines require exact hashes and valid zero-based indexes', () => {
+  assert.equal(isFactcheckStale('old', 'new'), true);
+  assert.equal(isFactcheckStale('same', 'same'), false);
+  assert.equal(isFactcheckStale('', 'new'), false);
+  assert.equal(requestedLine('0', 4), 0);
+  assert.equal(requestedLine('3', 4), 3);
+  assert.equal(requestedLine('4', 4), null);
+  assert.equal(requestedLine('-1', 4), null);
+  assert.equal(requestedLine('1.5', 4), null);
 });
 
 test('episodes group newest pillar first', () => {

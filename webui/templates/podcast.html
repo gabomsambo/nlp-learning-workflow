@@ -178,8 +178,35 @@
       <ul id="key-points-list"></ul>
     </div>
 
-    <h3 class="section-title">Script</h3>
-    <div id="script-content" class="script-body"></div>
+    <section id="factcheck-panel" class="factcheck-panel" aria-labelledby="factcheck-title" hidden>
+      <div class="factcheck-head">
+        <div>
+          <h3 id="factcheck-title" class="section-title">Fact check</h3>
+          <p id="factcheck-status" class="factcheck-status" role="status" aria-live="polite">Loading fact check…</p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="factcheck-btn">Check facts</button>
+      </div>
+      <div id="factcheck-summary" class="factcheck-summary" hidden>
+        <p id="factcheck-summary-text"></p>
+        <p id="factcheck-meta" class="factcheck-meta"></p>
+      </div>
+      <div id="factcheck-alert" class="callout callout-warn factcheck-alert" role="alert" hidden></div>
+      <label id="factcheck-supported-control" class="factcheck-toggle" hidden>
+        <input type="checkbox" id="factcheck-show-supported">
+        <span>Show supported claims</span>
+      </label>
+    </section>
+
+    <div class="factcheck-layout">
+      <section class="factcheck-script" aria-labelledby="script-heading">
+        <h3 id="script-heading" class="section-title">Script</h3>
+        <div id="script-content" class="script-body"></div>
+      </section>
+      <aside id="factcheck-issues" class="factcheck-issues" aria-labelledby="factcheck-issues-title" hidden>
+        <h3 id="factcheck-issues-title" class="section-title">Issues</h3>
+        <div id="factcheck-issues-list"></div>
+      </aside>
+    </div>
 
     <section id="audio-section" hidden>
       <h3 class="section-title">Record this episode</h3>
@@ -191,6 +218,9 @@
         </select>
         <p class="field-help" id="voice-reason"></p>
       </div>
+      {# A warning, never a gate: the research says a fact check informs the
+         recording decision, it does not block it. #}
+      <div id="factcheck-audio-warning" class="callout callout-warn factcheck-audio-warning" role="status" hidden></div>
       <div class="listen-actions">
         <button type="button" class="btn btn-secondary" id="preview-voice-btn" disabled>Preview voice</button>
         <button type="button" class="btn btn-primary" id="generate-audio-btn" disabled>Generate audio</button>
