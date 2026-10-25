@@ -62,31 +62,6 @@
     return Number(match[3]) + ' ' + MONTHS[month - 1] + ' ' + match[1];
   }
 
-  function formatClock(seconds) {
-    if (!isFinite(seconds) || seconds < 0) return '0:00';
-    seconds = Math.floor(seconds);
-    var h = Math.floor(seconds / 3600);
-    var m = Math.floor((seconds % 3600) / 60);
-    var s = seconds % 60;
-    function pad(n) { return (n < 10 ? '0' : '') + n; }
-    if (h) return h + ':' + pad(m) + ':' + pad(s);
-    return m + ':' + pad(s);
-  }
-
-  function minuteSecondPhrase(seconds) {
-    seconds = Math.floor(Math.max(0, isFinite(seconds) ? seconds : 0));
-    var h = Math.floor(seconds / 3600);
-    var m = Math.floor((seconds % 3600) / 60);
-    var s = seconds % 60;
-    if (h) return h + ' hours ' + m + ' minutes ' + s;
-    return m + ' minutes ' + s;
-  }
-
-  function formatValueText(current, duration) {
-    if (!isFinite(duration) || duration <= 0) return minuteSecondPhrase(current);
-    return minuteSecondPhrase(current) + ' of ' + minuteSecondPhrase(duration);
-  }
-
   function scriptSegments(text) {
     var src = String(text || '');
     var out = [];
@@ -103,24 +78,16 @@
     return out;
   }
 
-  /*
-   * The lines the fact-check engine numbered.
-   *
-   * The engine numbers claims by the index of `script.splitlines()`, and the
-   * TTS assembler walks the same list, so this has to agree with Python
-   * exactly — a line off by one paints every highlight on the wrong words.
-   * Python's splitlines() breaks on more than \n and \r (vertical tab, form
-   * feed, the file/group/record/unit separators, NEL, and the two Unicode
-   * line separators), and it leaves no trailing empty line for a trailing
-   * newline. An empty script has no lines at all.
-   */
-  function scriptLines(text) {
-    var source = text == null ? '' : String(text);
-    if (!source) return [];
-    var lines = source.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/);
-    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-    return lines;
-  }
+  var Core = global.ListenCore ||
+    (typeof require === 'function' ? require('./listen-core.js') : {});
+  var formatClock = Core.formatClock;
+  var formatValueText = Core.formatValueText;
+  var scriptLines = Core.scriptLines;
+  var resolveSpan = Core.resolveSpan;
+  var visibleClaimSpans = Core.visibleClaimSpans;
+  var claimSegments = Core.claimSegments;
+  var claimsByLine = Core.claimsByLine;
+  var groupTokens = Core.groupTokens;
 
   var RA = global.ReadAlong ||
     (typeof require === 'function' ? require('./readalong.js') : null);
@@ -137,80 +104,6 @@
   var issueClaims = Factcheck.issueClaims;
   var factcheckSummary = Factcheck.factcheckSummary;
   var isFactcheckStale = Factcheck.isFactcheckStale;
-
-  /*
-   * Where a claim's highlight sits in its line.
-   *
-   * The engine stores character offsets into the line as Python counts them —
-   * code points. JavaScript counts UTF-16 code units. The two agree until a
-   * character outside the Basic Multilingual Plane turns up, and a script with
-   * one emoji in it would then paint every highlight after it one character to
-   * the left. When the stored offsets do not produce the claim's own span
-   * text, look the text up in the line instead.
-   *
-   * Returns null when the span cannot be placed at all: a claim whose text is
-   * not in the line is not highlighted rather than highlighted in the wrong
-   * place.
-   */
-  function resolveSpan(line, claim) {
-    line = String(line == null ? '' : line);
-    claim = claim || {};
-    var start = Number(claim.span_start);
-    var end = Number(claim.span_end);
-    if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
-    if (start < 0 || end <= start || end > line.length) return null;
-    var text = claim.span_text == null ? '' : String(claim.span_text);
-    if (text && line.slice(start, end) !== text) {
-      var at = line.indexOf(text);
-      if (at === -1) return null;
-      if (line.indexOf(text, at + 1) === -1) {
-        start = at;
-        end = at + text.length;
-      }
-    }
-    return { start: start, end: end };
-  }
-
-  function visibleClaimSpans(line, claims, showSupported) {
-    line = String(line == null ? '' : line);
-    var result = [];
-    (claims || []).forEach(function (claim, index) {
-      if (!claim || (claim.verdict === 'supported' && !showSupported)) return;
-      var span = resolveSpan(line, claim);
-      if (!span) return;
-      result.push({ claim: claim, index: index, start: span.start, end: span.end });
-    });
-    return result;
-  }
-
-  /*
-   * Split one script line on every claim boundary. Overlapping claims therefore
-   * share the middle segment instead of one mark swallowing the other. Each
-   * returned segment retains every covering claim for the evidence popover.
-   */
-  function claimSegments(line, claims, showSupported) {
-    line = line == null ? '' : String(line);
-    var spans = visibleClaimSpans(line, claims, showSupported);
-    if (!spans.length) return [{ start: 0, end: line.length, text: line, claims: [] }];
-    var boundaries = [0, line.length];
-    spans.forEach(function (span) {
-      boundaries.push(span.start, span.end);
-    });
-    boundaries = boundaries.filter(function (value, index, all) {
-      return all.indexOf(value) === index;
-    }).sort(function (a, b) { return a - b; });
-    var out = [];
-    for (var i = 0; i < boundaries.length - 1; i++) {
-      var start = boundaries[i];
-      var end = boundaries[i + 1];
-      if (end <= start) continue;
-      var covering = spans.filter(function (span) {
-        return span.start <= start && span.end >= end;
-      }).map(function (span) { return span.claim; });
-      out.push({ start: start, end: end, text: line.slice(start, end), claims: covering });
-    }
-    return out;
-  }
 
   function requestedLine(value, lineCount) {
     if (value == null || !/^\d+$/.test(String(value))) return null;
@@ -740,13 +633,7 @@
       var keepScroll = scriptContent.scrollTop;
       scriptContent.replaceChildren();
       var lines = scriptLines(text);
-      var byLine = {};
-      (claims || []).forEach(function (claim) {
-        var line = Number(claim && claim.line_index);
-        if (!Number.isInteger(line) || line < 0 || line >= lines.length) return;
-        if (!byLine[line]) byLine[line] = [];
-        byLine[line].push(claim);
-      });
+      var byLine = claimsByLine(claims, lines.length);
       lines.forEach(function (textLine, lineIndex) {
         var row = document.createElement('div');
         row.className = 'script-line';
@@ -964,13 +851,7 @@
       readModel = RA.buildModel(currentTimeline, lines, currentScriptHash);
       readSurface.classList.toggle('is-timed', !!readModel);
       var showAll = !!(showSupported && showSupported.checked);
-      var byLine = {};
-      (lastClaims || []).forEach(function (claim) {
-        var line = Number(claim && claim.line_index);
-        if (!Number.isInteger(line) || line < 0 || line >= lines.length) return;
-        if (!byLine[line]) byLine[line] = [];
-        byLine[line].push(claim);
-      });
+      var byLine = claimsByLine(lastClaims, lines.length);
       lines.forEach(function (textLine, lineNo) {
         var tokens = RA.tokenize(textLine);
         if (!tokens) {
@@ -1001,61 +882,43 @@
         body.className = 'readalong-text';
         var segments = claimSegments(textLine, byLine[lineNo] || [], showAll);
         var words = [];
-        var group = null;
-        var groupSegment = null;
-        function closeGroup() {
-          if (!group) return;
-          var primary = strongestClaim(groupSegment.claims) || groupSegment.claims[0];
-          var presentation = claimPresentation(primary);
-          group.className = 'factcheck-mark is-' + presentation.tone;
-          group.setAttribute('aria-expanded', 'false');
-          group.setAttribute('aria-label', presentation.label + ': ' + group.textContent);
-          var claims = groupSegment.claims;
-          var trigger = group;
-          group.addEventListener('click', function () { openFactcheckPopover(trigger, claims, row); });
-          group.addEventListener('keydown', function (event) {
+        groupTokens(tokens, segments).forEach(function (group) {
+          var parent = body;
+          var mark = null;
+          if (group.segment) {
+            // A <button> is atomic inline content in Chrome: a mark that wraps
+            // would drop to its own line as one block. A span that behaves as
+            // a button wraps with the words around it.
+            mark = document.createElement('span');
+            mark.setAttribute('role', 'button');
+            mark.setAttribute('tabindex', '0');
+            if (group.words[0].index > 0) body.appendChild(document.createTextNode(' '));
+            body.appendChild(mark);
+            parent = mark;
+          }
+          group.words.forEach(function (entry, position) {
+            if ((mark && position > 0) || (!mark && entry.index > 0)) parent.appendChild(document.createTextNode(' '));
+            var span = document.createElement('span');
+            span.className = 'ra-w';
+            span.setAttribute('data-w', String(entry.index));
+            span.textContent = entry.token.text;
+            if (timed && timed.words && !timed.words[entry.index].heard) span.classList.add('is-guess');
+            words.push(span);
+            parent.appendChild(span);
+          });
+          if (!mark) return;
+          var claims = group.segment.claims;
+          var presentation = claimPresentation(strongestClaim(claims) || claims[0]);
+          mark.className = 'factcheck-mark is-' + presentation.tone;
+          mark.setAttribute('aria-expanded', 'false');
+          mark.setAttribute('aria-label', presentation.label + ': ' + mark.textContent);
+          mark.addEventListener('click', function () { openFactcheckPopover(mark, claims, row); });
+          mark.addEventListener('keydown', function (event) {
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
-            openFactcheckPopover(trigger, claims, row);
+            openFactcheckPopover(mark, claims, row);
           });
-          group = null;
-          groupSegment = null;
-        }
-        tokens.forEach(function (token, index) {
-          var segment = null;
-          for (var i = 0; i < segments.length; i++) {
-            if (token.start >= segments[i].start && token.start < segments[i].end) { segment = segments[i]; break; }
-          }
-          var flagged = segment && segment.claims.length ? segment : null;
-          if (!flagged || (group && groupSegment !== flagged)) closeGroup();
-          var span = document.createElement('span');
-          span.className = 'ra-w';
-          span.setAttribute('data-w', String(index));
-          span.textContent = token.text;
-          if (timed && timed.words && !timed.words[index].heard) span.classList.add('is-guess');
-          words.push(span);
-          var parent = body;
-          if (flagged) {
-            if (!group) {
-              // A <button> is atomic inline content in Chrome: a mark that wraps
-              // would drop to its own line as one block. A span that behaves as
-              // a button wraps with the words around it.
-              group = document.createElement('span');
-              group.setAttribute('role', 'button');
-              group.setAttribute('tabindex', '0');
-              groupSegment = flagged;
-              if (index > 0) body.appendChild(document.createTextNode(' '));
-              body.appendChild(group);
-            } else {
-              group.appendChild(document.createTextNode(' '));
-            }
-            parent = group;
-          } else if (index > 0) {
-            body.appendChild(document.createTextNode(' '));
-          }
-          parent.appendChild(span);
         });
-        closeGroup();
         row.appendChild(body);
         readLineEls[lineNo] = row;
         readWordEls[lineNo] = words;

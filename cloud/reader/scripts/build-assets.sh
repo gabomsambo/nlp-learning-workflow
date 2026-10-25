@@ -8,6 +8,8 @@ dest="$here/public/static"
 rm -rf "$dest"
 mkdir -p "$dest/icons"
 cp "$src/tokens.css" "$src/app.css" "$dest/"
+# The pure Listen helpers the episode page shares with the desktop Listen page.
+cp "$src/factcheck.js" "$src/readalong.js" "$src/listen-core.js" "$dest/"
 cp -R "$src/fonts" "$dest/fonts"
 cp "$src/icons/apple-touch-icon.png" "$src/icons/icon-192.png" "$src/icons/icon-512.png" "$dest/icons/"
 echo "public/static/ built from webui/static ($(du -sk "$dest" | cut -f1) KB)"

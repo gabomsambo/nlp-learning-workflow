@@ -9,6 +9,7 @@
  */
 
 import { AccessError, authorize, verifyAccessJwt } from './access.js';
+import { serveAudio } from './audio.js';
 import { createKeyStore } from './certs.js';
 import { serveDoc } from './docs.js';
 import { handleIngest } from './ingest.js';
@@ -21,6 +22,7 @@ const SECURITY_HEADERS = {
     "style-src 'self'",
     "img-src 'self' data:",
     "font-src 'self'",
+    "media-src 'self'",
     "connect-src 'self'",
     "manifest-src 'self'",
     "base-uri 'none'",
@@ -107,6 +109,10 @@ export function createHandler({ keyFor, now } = {}) {
         return secured(reply(404, { error: 'not found' }));
       }
       return secured(await serveDoc(env.DOCS, key, request));
+    }
+    if (pathname.startsWith('/api/audio/')) {
+      // `audio/<sha256>.mp3` in the bucket; serveAudio refuses any other shape.
+      return secured(await serveAudio(env.DOCS, `audio/${pathname.slice('/api/audio/'.length)}`, request));
     }
     if (pathname.startsWith('/api/')) return secured(reply(404, { error: 'not found' }));
 
