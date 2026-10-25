@@ -101,6 +101,7 @@ _TABLE_SQL = re.compile(
     re.IGNORECASE,
 )
 _MIGRATION_TABLES_FROM = 17
+STATE_MIGRATION = "docs/migrations/026_cloud_publish_state.sql"
 S2_PROBE_URL = "https://api.semanticscholar.org/graph/v1/paper/ARXIV:1706.03762"
 S2_CACHE_SECONDS = 180.0
 
@@ -936,6 +937,86 @@ async def _check_qdrant_cloud(client: httpx.AsyncClient, settings: Any) -> Dict[
     )
 
 
+def classify_cloud_reader(
+    status: Dict[str, Any],
+    rows: Optional[List[Dict[str, Any]]],
+    read_error: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The cloud reader row on Activity. Never fatal: the app works without the cloud.
+
+    ``status`` is ``cloud_publish_service.current_status()``; ``rows`` are the
+    ``cloud_publish_state`` rows (None when they could not be read).
+    """
+    label = "Cloud reader"
+    if not status.get("enabled"):
+        return make_check(
+            "cloud-reader", label, "ok",
+            "Automatic publishing is off.",
+            "Set CLOUD_PUBLISH_ENABLED=true in .env, then ./workstation up.",
+            fatal=False,
+        )
+    if not status.get("configured"):
+        missing = ", ".join(status.get("missing") or []) or "CLOUD_PUBLISH_URL, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET"
+        return make_check(
+            "cloud-reader", label, "down",
+            "Publishing is on but not configured.",
+            f"Set {missing} in .env.",
+            fatal=False,
+        )
+    held = ""
+    if rows is None:
+        held = f" Could not read what is published ({read_error or 'unknown error'})."
+    else:
+        audio = [r for r in rows if str(r.get("doc_key", "")).startswith("audio/")]
+        docs = [r for r in rows if r.get("doc_key") != "manifest.json" and r not in audio]
+        size = sum(int(r.get("byte_size") or 0) for r in rows)
+        manifest = next((r for r in rows if r.get("doc_key") == "manifest.json"), None)
+        when = f", manifest written {str(manifest['published_at'])[:16].replace('T', ' ')} UTC" if manifest and manifest.get("published_at") else ""
+        held = f" The cloud holds {len(docs)} documents and {len(audio)} audio files ({human_bytes(size)}){when}."
+    state = status.get("state")
+    if state == "failed":
+        retry = status.get("retry_in_seconds")
+        again = f" Trying again in {int(retry // 60) + 1} min." if retry else ""
+        return make_check(
+            "cloud-reader", label, "down",
+            f"The last publish failed: {public_line(str(status.get('last_error') or 'unknown error'))}.{again}{held}",
+            "The app is unaffected. Fix the cause, or run: docker compose exec webui python -m nlp_pillars.cli cloud publish",
+            fatal=False,
+        )
+    if state == "publishing":
+        return make_check("cloud-reader", label, "ok", f"Publishing now ({status.get('message') or 'working'}).{held}", None, fatal=False)
+    if state == "waiting":
+        return make_check("cloud-reader", label, "ok", f"A publish is queued.{held}", None, fatal=False)
+    ran = status.get("last_success_at")
+    prefix = f"Last publish {ran.replace('T', ' ').replace('Z', ' UTC')}." if ran else "Nothing published since the app started."
+    return make_check("cloud-reader", label, "ok", f"{prefix}{held}", None, fatal=False)
+
+
+async def _check_cloud_reader(
+    client: httpx.AsyncClient, base: str, headers: Dict[str, str], settings: Any,
+    database_ok: bool,
+) -> Dict[str, Any]:
+    from webui.services import cloud_publish_service
+
+    status = cloud_publish_service.current_status(settings)
+    if not status.get("enabled") or not status.get("configured"):
+        return classify_cloud_reader(status, None)
+    if not database_ok:
+        return classify_cloud_reader(status, None, "database is not answering")
+    try:
+        response = await client.get(
+            f"{base}/cloud_publish_state",
+            params={"select": "doc_key,byte_size,published_at", "limit": "5000"},
+            headers=headers,
+        )
+        if response.status_code >= 400:
+            return classify_cloud_reader(status, None, f"HTTP {response.status_code}; is {STATE_MIGRATION} applied?")
+        rows = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        return classify_cloud_reader(status, None, type(exc).__name__)
+    return classify_cloud_reader(status, rows if isinstance(rows, list) else None)
+
+
 async def _check_searxng(
     client: httpx.AsyncClient,
     settings: Any,
@@ -1276,6 +1357,7 @@ async def collect_status(
         key_check,
         schedule,
         disk,
+        cloud_reader,
     ) = await asyncio.gather(
         safe_migrations(),
         _guard("qdrant", "Qdrant (local)", lambda: _check_qdrant(client, settings), secrets),
@@ -1299,6 +1381,13 @@ async def collect_status(
         _guard("keys", "Model keys", keys, secrets),
         _guard("scheduler", "Scheduler", scheduler, secrets),
         _guard("storage", "Storage", stored, secrets),
+        _guard(
+            "cloud-reader",
+            "Cloud reader",
+            lambda: _check_cloud_reader(client, base, headers, settings, database["state"] == "ok"),
+            secrets,
+            fatal=False,
+        ),
     )
     checks = [
         web,
@@ -1313,6 +1402,7 @@ async def collect_status(
         key_check,
         schedule,
         disk,
+        cloud_reader,
     ]
     down = sum(1 for check in checks if counts_as_down(check))
     return {

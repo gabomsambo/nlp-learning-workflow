@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from nlp_pillars import fsrs_fold
+from webui.services import cloud_publish_service
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 
@@ -77,6 +78,8 @@ async def review_card(review_request: ReviewRequest) -> JSONResponse:
         result = review_quiz_card_fsrs(fsrs_request)
         
         if result.success:
+            if not result.duplicate:
+                cloud_publish_service.notify("review")
             return JSONResponse({
                 "success": True,
                 "message": result.message,

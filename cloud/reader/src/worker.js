@@ -5,11 +5,13 @@
  * (`run_worker_first` in wrangler.toml). The Worker has an R2 binding and the
  * static-asset binding and nothing else: no model, no queue, no database, and
  * no request to anything but the team's Access key endpoint (certs.js).
+ * `/ingest/*` is the publisher's way in (ingest.js); it takes service tokens only.
  */
 
 import { AccessError, authorize, verifyAccessJwt } from './access.js';
 import { createKeyStore } from './certs.js';
 import { serveDoc } from './docs.js';
+import { handleIngest } from './ingest.js';
 
 const SECURITY_HEADERS = {
   'content-security-policy': [
@@ -54,6 +56,16 @@ function keyStoreFor(teamDomain) {
 /** Build a fetch handler. Tests inject `keyFor` and `now`; production uses the defaults. */
 export function createHandler({ keyFor, now } = {}) {
   return async function handle(request, env) {
+    const { pathname: requested } = new URL(request.url);
+    if (requested === '/ingest' || requested.startsWith('/ingest/')) {
+      // The publisher's side door: service tokens only, its own Access application.
+      const store = keyFor ? null : keyStoreFor(env.TEAM_DOMAIN);
+      return secured(await handleIngest(request, env, {
+        keyFor: keyFor || ((kid) => store.keyFor(kid)),
+        now: now ? now() : Date.now(),
+      }));
+    }
+
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return secured(reply(405, { error: 'read only' }));
     }

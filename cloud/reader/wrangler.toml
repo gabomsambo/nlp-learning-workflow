@@ -28,6 +28,12 @@ bucket_name = "nlp-reader-docs"
 TEAM_DOMAIN = "soft-wave-31cb.cloudflareaccess.com"
 # The Access application's AUD tag for read.gabrielsambo.com (filled in once it exists).
 ACCESS_AUD = "b75dc0eabb1ef8c7bbe40d198c39bc7bc6062e1dd5cfa96018d9091961a2a667"
+# The ingest Access application (read.gabrielsambo.com/ingest, Service Auth only).
+INGEST_AUD = "9a484e80cf3ebe0d1e294444b71fd42bfc878509aecb74a21562d4704b26cb44"
+# Client id of the one service token the publisher uses. An id, not a secret.
+INGEST_SERVICE_TOKENS = "b4db51bb31d516fc7876f05972051c38.access"
+# The bucket shares the account's 10 GB free tier with other projects, so stop well short of it.
+INGEST_MAX_BYTES = "5000000000"
 # Secrets, set with `wrangler secret put` and never committed:
 #   ALLOWED_EMAILS          comma-separated; required, nobody is let in without it
 #   ALLOWED_SERVICE_TOKENS  optional; service-token client ids allowed to read
