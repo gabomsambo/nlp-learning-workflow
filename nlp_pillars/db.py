@@ -120,6 +120,11 @@ class TableQuery:
         self.params[column] = f'eq.{value}'
         return self
 
+    def in_(self, column: str, values: List[str]):
+        """Filter to rows whose column is one of ``values`` (a PostgREST ``in``)."""
+        self.params[column] = 'in.(' + ','.join(str(v) for v in values) + ')'
+        return self
+
     def order(self, column: str, desc: bool = False):
         """Order results."""
         direction = '.desc' if desc else ''
@@ -476,6 +481,8 @@ def _dict_to_quiz_card(row: Dict[str, Any]) -> QuizCard:
 def _review_log_to_dict(log: ReviewLog) -> Dict[str, Any]:
     """Convert ReviewLog to review_logs table row."""
     data = {
+        # The id is the idempotency key: a second insert with the same one is a 409.
+        'id': log.id,
         'card_id': log.card_id,
         'user_id': log.user_id,
         'pillar_id': log.pillar_id,
@@ -488,7 +495,10 @@ def _review_log_to_dict(log: ReviewLog) -> Dict[str, Any]:
         'previous_due_date': log.previous_due_date.isoformat() if log.previous_due_date else None,
         'days_overdue': log.days_overdue,
         'session_id': log.session_id,
-        'response_time_ms': log.response_time_ms
+        'response_time_ms': log.response_time_ms,
+        # Omitted when None so a database without migration 025 still takes the row.
+        'device_id': log.device_id,
+        'origin': log.origin,
     }
     # Remove None values
     return {k: v for k, v in data.items() if v is not None}
@@ -510,7 +520,9 @@ def _dict_to_review_log(row: Dict[str, Any]) -> ReviewLog:
         previous_due_date=datetime.fromisoformat(row['previous_due_date']) if row.get('previous_due_date') else None,
         days_overdue=row.get('days_overdue', 0),
         session_id=row.get('session_id'),
-        response_time_ms=row.get('response_time_ms')
+        response_time_ms=row.get('response_time_ms'),
+        device_id=row.get('device_id'),
+        origin=row.get('origin'),
     )
 
 
@@ -2319,89 +2331,21 @@ def get_quiz_cards_for_review(pillar_id: str, limit: int = 10) -> List[QuizCard]
 def review_quiz_card_fsrs(request: QuizReviewRequest) -> QuizReviewResponse:
     """
     Review a quiz card using FSRS algorithm.
-    
+
+    The review log is the source of truth: the log row is written first and the
+    quiz_cards row is re-derived from the card's whole log. See
+    ``services/quiz_reviews.py`` for the write order and what a half-done review
+    leaves behind.
+
     Args:
         request: Review request with card ID and rating
-        
+
     Returns:
         QuizReviewResponse with updated card and next review date
     """
-    try:
-        from .services.fsrs_service import get_fsrs_service
+    from .services.quiz_reviews import record_review
 
-        client = get_client()
-        fsrs_service = get_fsrs_service()
-
-        # Get the card
-        response = (client.table('quiz_cards')
-                   .select('*')
-                   .eq('id', request.card_id)
-                   .limit(1)
-                   .execute())
-
-        if response['error'] or not response['data']:
-            return QuizReviewResponse(
-                success=False,
-                card=None,
-                next_review_date=datetime.now(timezone.utc),
-                message="Quiz card not found"
-            )
-
-        # Convert to QuizCard object
-        card = _dict_to_quiz_card(response['data'][0])
-
-        # Get user's FSRS parameters
-        user_params = get_user_fsrs_parameters(card.user_id, card.pillar_id)
-
-        # Schedule the review using FSRS
-        updated_card, next_review_date = fsrs_service.schedule_card_review(
-            card, request.rating, user_params
-        )
-
-        # Create review log
-        review_log = fsrs_service.create_review_log(
-            card, request.rating, request.response_time_ms, request.session_id
-        )
-
-        # Update the card in database
-        update_data = _quiz_card_to_dict(updated_card)
-        update_response = (client.table('quiz_cards')
-                          .eq('id', request.card_id)
-                          .update(update_data))
-
-        if update_response['error']:
-            logger.error(f"Failed to update quiz card: {update_response['error']}")
-            return QuizReviewResponse(
-                success=False,
-                card=card,
-                next_review_date=next_review_date,
-                message="Failed to update card"
-            )
-
-        # Save review log
-        log_data = _review_log_to_dict(review_log)
-        log_response = client.table('review_logs').insert(log_data)
-
-        if log_response['error']:
-            logger.warning(f"Failed to save review log: {log_response['error']}")
-
-        logger.info(f"Reviewed card {request.card_id} with FSRS rating {request.rating}")
-
-        return QuizReviewResponse(
-            success=True,
-            card=updated_card,
-            next_review_date=next_review_date,
-            message="Card reviewed successfully"
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to review quiz card: {e}")
-        return QuizReviewResponse(
-            success=False,
-            card=None,
-            next_review_date=datetime.now(timezone.utc),
-            message=f"Review failed: {str(e)}"
-        )
+    return record_review(request)
 
 
 def update_quiz_card_review(
@@ -3436,6 +3380,17 @@ def list_quiz_schedule_rows(user_id: str = "default_user", pillar_id: Optional[s
     except Exception as e:
         logger.error(f"Failed to read quiz schedule: {e}")
         raise QuizLookupError("Could not read the next review time") from e
+
+
+def get_card_review_events(card_ids: List[str]) -> Dict[str, List[Any]]:
+    """Review events per card id, for folding. A never-reviewed card maps to ``[]``.
+
+    Raises on a failed read: an empty history and an unreadable one are different
+    facts, and previewing a reviewed card as new is the lie to avoid.
+    """
+    from .services.quiz_reviews import load_events
+
+    return load_events(get_client(), card_ids)
 
 
 def add_review_log(log: ReviewLog) -> bool:

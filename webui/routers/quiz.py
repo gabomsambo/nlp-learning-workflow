@@ -1,11 +1,14 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from nlp_pillars import fsrs_fold
 from nlp_pillars.db import (
     QuizLookupError,
+    get_card_review_events,
     get_cards_for_review,
     get_pillars_or_empty,
     list_quiz_schedule_rows,
@@ -20,6 +23,8 @@ from ..services.review_session import (
     json_for_script,
     session_cards,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/quiz")
 
@@ -54,6 +59,22 @@ def preview_schedule(card, rating: int) -> datetime:
     return due
 
 
+def schedule_from_log(events_by_card: dict, now: datetime):
+    """A ``schedule(card, rating)`` that previews from each card's review log.
+
+    The row cannot hold py-fsrs's learning step, so previewing from it can show
+    an interval the review will not produce. A card the log does not cover falls
+    back to the row.
+    """
+    def schedule(card, rating: int) -> datetime:
+        events = events_by_card.get(str(card.id))
+        if events is None:
+            return preview_schedule(card, rating)
+        return fsrs_fold.preview_due(events, rating, now)
+
+    return schedule
+
+
 @router.get("/", response_class=HTMLResponse)
 async def quiz_home(request: Request, pillar: Optional[str] = None, difficulty: Optional[str] = None) -> HTMLResponse:
     """One-card review session for whatever is due."""
@@ -75,6 +96,13 @@ async def quiz_home(request: Request, pillar: Optional[str] = None, difficulty: 
         if target is not None:
             cards = [card for card in cards if difficulty_number(card.difficulty) == target]
         cards = cards[:_SESSION_LIMIT]
+        try:
+            schedule = schedule_from_log(
+                get_card_review_events([str(card.id) for card in cards]),
+                fsrs_fold.now_ms(),
+            )
+        except Exception as exc:
+            logger.warning("Previewing intervals from the card rows: review log unreadable: %s", exc)
     except QuizLookupError as exc:
         fsrs_fallback = True
         fallback_reason = _reason(exc)

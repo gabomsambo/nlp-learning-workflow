@@ -22,13 +22,14 @@ FSRS_AVAILABLE = False
 FSRS_OPTIMIZER_AVAILABLE = False
 
 try:
-    from fsrs import Card, Rating, Scheduler, State
+    from fsrs import Card, Rating, State
     from fsrs import ReviewLog as FSRSReviewLog
+
+    from ..fsrs_fold import build_scheduler
     FSRS_AVAILABLE = True
     logger.info("FSRS library loaded successfully")
 except ImportError:
     logger.warning("fsrs library not available. FSRS scheduling will fall back to SM-2.")
-    Scheduler = None
     Card = None
     Rating = None
     State = None
@@ -51,22 +52,28 @@ class FSRSService:
         self.fsrs = None
         if FSRS_AVAILABLE:
             try:
-                # Initialize with default parameters
-                self.fsrs = Scheduler()
+                # Default parameters, fuzz off: see fsrs_fold.build_scheduler.
+                self.fsrs = build_scheduler()
                 logger.info("FSRS service initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize FSRS: {e}")
                 FSRS_AVAILABLE = False
 
     def schedule_card_review(self, card: QuizCard, rating: FSRSRating,
-                           parameters: Optional[UserFSRSParameters] = None) -> Tuple[QuizCard, datetime]:
+                           parameters: Optional[UserFSRSParameters] = None,
+                           review_datetime: Optional[datetime] = None) -> Tuple[QuizCard, datetime]:
         """Schedule the next review for a card based on FSRS algorithm.
+
+        This rebuilds the py-fsrs card from the row's columns, which cannot hold
+        ``step``. The review path folds the review log instead
+        (``fsrs_fold.fold_events``); this is for previews of a row already in hand.
         
         Args:
         ----
             card: Quiz card to schedule
             rating: User's rating of recall difficulty
             parameters: User's personalized FSRS parameters
+            review_datetime: When the review happened (UTC). Defaults to now.
             
         Returns:
         -------
@@ -76,6 +83,7 @@ class FSRSService:
         if not FSRS_AVAILABLE:
             return self._fallback_sm2_scheduling(card, rating)
 
+        review_datetime = (review_datetime or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
             # Get user parameters (for now, use default scheduler)
             # TODO: Implement custom parameters when FSRS supports it
@@ -91,14 +99,14 @@ class FSRSService:
             reviewed_card, review_log = fsrs_scheduler.review_card(
                 fsrs_card,
                 fsrs_rating,
-                review_datetime=datetime.now(timezone.utc)
+                review_datetime=review_datetime
             )
 
             # Update our card with new FSRS values
-            updated_card = self._update_card_from_fsrs(card, reviewed_card)
+            updated_card = self._update_card_from_fsrs(card, reviewed_card, review_datetime)
 
             # Calculate days until due
-            days_until_due = (reviewed_card.due - datetime.now(timezone.utc)).total_seconds() / (24 * 3600)
+            days_until_due = (reviewed_card.due - review_datetime).total_seconds() / (24 * 3600)
             logger.info(f"Scheduled card {card.id} with FSRS: next review in {days_until_due:.1f} days")
 
             return updated_card, reviewed_card.due
@@ -256,8 +264,10 @@ class FSRSService:
 
         return fsrs_card
 
-    def _update_card_from_fsrs(self, original_card: QuizCard, fsrs_card: 'Card') -> QuizCard:
+    def _update_card_from_fsrs(self, original_card: QuizCard, fsrs_card: 'Card',
+                               review_datetime: Optional[datetime] = None) -> QuizCard:
         """Update our QuizCard with values from FSRS Card."""
+        review_datetime = review_datetime or datetime.now(timezone.utc)
         # Convert state back
         if fsrs_card.state == State.Learning:
             # Determine if it's truly new or learning based on review count
@@ -274,7 +284,7 @@ class FSRSService:
         updated_card.difficulty_fsrs = fsrs_card.difficulty if fsrs_card.difficulty else 0.0
         updated_card.stability = fsrs_card.stability if fsrs_card.stability else 0.0
         updated_card.state = state
-        updated_card.last_review_date = datetime.now(timezone.utc)
+        updated_card.last_review_date = review_datetime
         updated_card.next_review_date = fsrs_card.due
         updated_card.review_count = updated_card.review_count + 1
 
@@ -283,7 +293,7 @@ class FSRSService:
         updated_card.due_date = fsrs_card.due
 
         # Calculate days until next review for legacy field
-        days_until_review = (fsrs_card.due - datetime.now(timezone.utc)).total_seconds() / (24 * 3600)
+        days_until_review = (fsrs_card.due - review_datetime).total_seconds() / (24 * 3600)
         updated_card.interval_days = max(1, int(days_until_review))
 
         return updated_card

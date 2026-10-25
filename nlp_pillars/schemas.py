@@ -585,6 +585,11 @@ class ReviewLog(BaseIOSchema):
     session_id: Optional[str] = Field(None, description="Review session identifier")
     response_time_ms: Optional[int] = Field(None, description="Time to answer in milliseconds")
 
+    # Where the review was made (docs/migrations/025_review_log_origin.sql).
+    # None lets the column default apply: desktop, no device.
+    device_id: Optional[str] = Field(None, description="Device that made the review")
+    origin: Optional[str] = Field(None, description="'desktop' or 'cloud'")
+
 
 class UserFSRSParameters(BaseIOSchema):
     """FSRS algorithm parameters personalized for a user."""
@@ -652,6 +657,11 @@ class QuizReviewRequest(BaseIOSchema):
     rating: FSRSRating = Field(..., description="User's rating of recall difficulty")
     response_time_ms: Optional[int] = Field(None, description="Time taken to answer")
     session_id: Optional[str] = Field(None, description="Review session ID")
+    # The review log row's id. Sending the same one twice records one review.
+    event_id: Optional[str] = Field(None, description="Idempotency key, a UUID")
+    reviewed_at: Optional[datetime] = Field(
+        None, description="When the review happened (UTC). Defaults to now."
+    )
 
 
 class QuizReviewResponse(BaseIOSchema):
@@ -662,6 +672,8 @@ class QuizReviewResponse(BaseIOSchema):
     card: Optional[QuizCard] = Field(default=None, description="Updated card with new FSRS parameters")
     next_review_date: datetime = Field(..., description="When card should be reviewed next")
     message: str = Field(default="", description="Status message")
+    event_id: Optional[str] = Field(default=None, description="The review log row this review is")
+    duplicate: bool = Field(default=False, description="This event_id was already recorded")
 
 
 class FSRSOptimizationRequest(BaseIOSchema):
