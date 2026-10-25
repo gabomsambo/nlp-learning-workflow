@@ -51,18 +51,32 @@ export function serviceClaims(overrides = {}) {
   return { ...claims, ...overrides };
 }
 
-/** Just enough of an R2 bucket: get() with an If-None-Match precondition. */
+/**
+ * Just enough of an R2 bucket: get() with an If-None-Match precondition or a
+ * byte range, and head(). `reads` records every call so a test can say what was
+ * (not) touched.
+ */
 export function fakeBucket(files) {
   const etagOf = (body) => `"${createHash('md5').update(body).digest('hex')}"`;
+  const reads = [];
   return {
-    async get(key, options = {}) {
+    reads,
+    async head(key) {
+      reads.push(['head', key]);
       if (!Object.hasOwn(files, key)) return null;
-      const body = files[key];
-      const httpEtag = etagOf(body);
-      const base = { key, size: Buffer.byteLength(body), httpEtag };
+      return { key, size: Buffer.byteLength(files[key]), httpEtag: etagOf(files[key]) };
+    },
+    async get(key, options = {}) {
+      reads.push(['get', key, options.range || null]);
+      if (!Object.hasOwn(files, key)) return null;
+      const whole = Buffer.from(files[key]);
+      const httpEtag = etagOf(whole);
+      const base = { key, size: whole.length, httpEtag };
       const sent = options.onlyIf && options.onlyIf.get ? options.onlyIf.get('if-none-match') : null;
       if (sent && sent === httpEtag) return base;
-      return { ...base, body: new Blob([body]).stream() };
+      const range = options.range;
+      const body = range ? whole.subarray(range.offset, range.offset + range.length) : whole;
+      return { ...base, body: new Blob([body]).stream(), range: range || undefined };
     },
   };
 }

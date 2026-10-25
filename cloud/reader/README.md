@@ -3,7 +3,9 @@
 A read-only copy of the library for a phone or iPad, served from the personal
 Cloudflare account at `read.gabrielsambo.com` so it works with the computer off.
 It shows what `python -m nlp_pillars.cli cloud export` writes: Today, Library,
-Paper and Lessons. `cloud publish` keeps it current, and nothing in it generates.
+Paper, Lessons and Listen (episodes with audio, read-along and fact-check
+highlights). `cloud publish` keeps it current. It has no reviews, no offline mode,
+and nothing that generates.
 
 Plan and reasoning: the cloud-reader report, sections 4, 7 and 9.
 
@@ -34,7 +36,8 @@ Access key endpoint (`src/certs.js`).
    (503). A service token is refused unless its client id is on
    `ALLOWED_SERVICE_TOKENS`, which is empty and exists only to check a deployment.
 4. Only `GET`/`HEAD`. `/api/manifest` and `/api/doc/<key>` serve R2 objects whose
-   names match what `cloud export` writes; anything else is a 404.
+   names match what `cloud export` writes; `/api/audio/<sha256>.mp3` serves
+   `audio/<sha256>.mp3` with byte ranges. Anything else is a 404.
 5. `/ingest/*` is separate. It is checked against its own Access application's AUD
    (`INGEST_AUD`), takes service tokens only, and the token's client id must be
    `INGEST_SERVICE_TOKENS`. A signed-in person gets 401 or 403 there, and the
@@ -79,6 +82,27 @@ every 10 minutes for runs that finished in another process. A failed publish is 
 with a growing wait, shown on Activity as "Cloud reader", and never fails the run it follows.
 Migration 026 (`cloud_publish_state`) must be applied by hand.
 
+## Audio
+
+`src/audio.js` streams an episode out of R2. Safari will not play, and cannot seek in,
+an `<audio>` source unless the server answers `Range` with `206` and says
+`Accept-Ranges: bytes`, so that is the one thing it does: one `Range` header becomes an
+offset and a length for R2, and the answer carries `Content-Range`. A range past the end
+is `416`; a header it cannot read (several ranges, nonsense) is ignored and the whole
+file is sent, which HTTP allows. `If-Range` and `If-None-Match` are honoured, and `HEAD`
+reports the same lengths with no body. The name is the hash of the bytes, so the
+response is `private, max-age=31536000, immutable`. `media-src 'self'` is in the CSP.
+
+The episode page (`public/js/episodes.js`) is the read-along from the app's Listen page:
+the spoken word is highlighted, the text follows it, a tap on a word or a line's
+timestamp seeks, "Jump to now" brings you back after you scroll away, and fact-check
+marks open their evidence. The pure parts (`readalong.js`, `factcheck.js`, `listen-core.js`)
+are the app's own files from `webui/static/`, copied by `build-assets.sh` and loaded as
+classic scripts, so the two pages cannot disagree about a line number, a word or a
+verdict. The DOM and the `<audio>` element are the reader's. It remembers where you
+stopped and the playback speed in `localStorage`, and sets the lock-screen controls.
+Leaving the page stops the audio; there is no mini player yet.
+
 ## Day to day
 
 Run from the repository root. `wrangler` is pinned to 4.147.0 and run through `npx`;
@@ -88,6 +112,9 @@ there is no `package.json` and no CI deploy.
 export XDG_CONFIG_HOME=$HOME/.config-cloudflare-account2   # the personal login, never the default one
 
 python -m nlp_pillars.cli cloud publish                    # export, then send what changed (--dry-run, --full)
+
+python -m nlp_pillars.cli cloud export --out /tmp/bundle   # the manual route, on the computer (see AGENTS.md for the container form)
+node cloud/reader/scripts/upload-bundle.mjs /tmp/bundle    # audio, then documents, then the manifest last (--no-audio to skip the MP3s)
 
 cloud/reader/scripts/build-assets.sh                       # copies tokens.css, app.css, fonts, icons from webui/static
 cd cloud/reader && npx wrangler@4.147.0 deploy             # only when the code or the look changed
@@ -130,5 +157,5 @@ module and fails with `MODULE_NOT_FOUND`.
 
 ## Not here yet
 
-Playing the audio and read-along on the phone (the files are published), the offline
-service worker and install manifest, reviewing on the phone, and the D1 event log.
+The offline service worker and install manifest, a mini player that outlives the page,
+reviewing on the phone, and the D1 event log.

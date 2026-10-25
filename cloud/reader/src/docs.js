@@ -1,7 +1,7 @@
 /*
  * Reads published documents out of R2. Only the keys `cloud export` writes
  * are reachable: a name outside this list is a 404 whatever the bucket holds.
- * Audio is not served yet.
+ * Audio is streamed by audio.js, never through here.
  */
 
 const DOC_KEY = new RegExp(

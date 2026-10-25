@@ -42,6 +42,10 @@
   <nav class="tabbar" aria-label="Primary" data-nav="tabs"></nav>
 
   <noscript><p class="container">This reader needs JavaScript.</p></noscript>
+  <!-- Shared with the app's Listen page (webui/static), copied by scripts/build-assets.sh. Classic scripts: they set window globals. -->
+  <script src="/static/factcheck.js"></script>
+  <script src="/static/readalong.js"></script>
+  <script src="/static/listen-core.js"></script>
   <script type="module" src="/js/reader.js"></script>
 </body>
 </html>

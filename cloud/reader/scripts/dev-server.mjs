@@ -32,13 +32,19 @@ const env = {
   ACCESS_AUD: AUD,
   ALLOWED_EMAILS: 'dev@example.com',
   DOCS: {
+    async head(key) {
+      const body = await readSafe(bundle, key);
+      return body ? { key, size: body.length, httpEtag: `"${body.length}-${key.length}"` } : null;
+    },
     async get(key, options = {}) {
       const body = await readSafe(bundle, key);
       if (!body) return null;
       const httpEtag = `"${body.length}-${key.length}"`;
       const base = { key, size: body.length, httpEtag };
       if (options.onlyIf?.get('if-none-match') === httpEtag) return base;
-      return { ...base, body: new Blob([body]).stream() };
+      const range = options.range;
+      const slice = range ? body.subarray(range.offset, range.offset + range.length) : body;
+      return { ...base, body: new Blob([slice]).stream(), range };
     },
   },
   ASSETS: {
