@@ -110,8 +110,12 @@ def test_the_paper_persisted_by_select_is_the_paper_discovery_found(candidate):
 
     from webui.routers.api import discovery as discovery_router
 
+    from webui.services.spend_guard import require_spend_room
     app = FastAPI()
     app.include_router(discovery_router.router)
+    # The spend guard has its own tests (test_spend_guard.py); here it would only
+    # try to read the database.
+    app.dependency_overrides[require_spend_room] = lambda: None
     app.state.scheduler = object()
     app.state.cancel_events = {}
 

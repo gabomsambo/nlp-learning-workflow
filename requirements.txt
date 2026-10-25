@@ -85,6 +85,8 @@ beautifulsoup4==4.15.0
 requests==2.34.2
 aiohttp==3.14.3
 gradio_client==1.7.2  # IndexTTS host Gradio API from Docker
+PyJWT==2.13.0  # Cloudflare Access token check (webui/access.py); already in the lock
+cryptography==50.0.0  # RS256 for PyJWT; already in the lock
 
 # CLI & Scheduling
 typer==0.27.1

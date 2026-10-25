@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,7 @@ from webui.services.podcast_factcheck_service import (
     script_sha256,
 )
 from webui.services.run_service import RunAlreadyActiveError
+from webui.services.spend_guard import require_spend_room
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ async def tts_voice_preview(path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/tts/generate", status_code=202)
+@router.post("/tts/generate", status_code=202, dependencies=[Depends(require_spend_room)])
 async def generate_podcast_audio(request: PodcastAudioRequest, http_request: Request):
     """Queue podcast audio synthesis as a pipeline run."""
     script = get_podcast_script_by_id(request.script_id)
@@ -170,7 +171,7 @@ async def serve_podcast_audio(filename: str):
     return FileResponse(target, media_type="audio/mpeg", filename=filename)
 
 
-@router.post("/generate", status_code=202)
+@router.post("/generate", status_code=202, dependencies=[Depends(require_spend_room)])
 async def generate_podcast(request: PodcastGenerateRequest, http_request: Request):
     """Queue podcast script generation as a pipeline run.
 
@@ -309,7 +310,11 @@ def _factcheck_conflict(script_id: str) -> JSONResponse:
     return JSONResponse(status_code=409, content=body)
 
 
-@router.post("/{script_id}/factcheck", status_code=202)
+@router.post(
+    "/{script_id}/factcheck",
+    status_code=202,
+    dependencies=[Depends(require_spend_room)],
+)
 async def start_factcheck(script_id: str, http_request: Request):
     """Queue a fact-check of one stored script.
 

@@ -48,10 +48,14 @@ def api_client(monkeypatch):
 
     monkeypatch.setattr("nlp_pillars.db.get_client", lambda: _Client())
 
+    from webui.services.spend_guard import require_spend_room
     app = FastAPI()
     app.state.scheduler = MagicMock()
     app.state.cancel_events = {}
     app.include_router(podcast_api.router)
+    # The spend guard has its own tests (test_spend_guard.py); here it would only
+    # try to read the database.
+    app.dependency_overrides[require_spend_room] = lambda: None
     return TestClient(app, raise_server_exceptions=False)
 
 

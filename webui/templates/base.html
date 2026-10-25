@@ -4,6 +4,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#2F5D50" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="NLP" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  {# use-credentials: behind Cloudflare Access an anonymous manifest fetch is redirected to the login page. #}
+  <link rel="manifest" href="/static/manifest.webmanifest?v={{ asset_v | default('1', true) }}" crossorigin="use-credentials">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
   <title>{% block title %}{{ title or 'NLP Learning' }}{% endblock %}</title>
   <script>
     (function () {
@@ -25,6 +34,7 @@
       root.setAttribute("data-density", density);
     })();
   </script>
+  <script src="/static/spend-guard.js?v={{ asset_v | default('1', true) }}"></script>
   <link rel="stylesheet" href="/static/tokens.css?v={{ asset_v | default('1', true) }}">
   <link rel="stylesheet" href="/static/app.css?v={{ asset_v | default('1', true) }}">
   {% block head %}{% endblock %}

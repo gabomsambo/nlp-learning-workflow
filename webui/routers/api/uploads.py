@@ -18,11 +18,12 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 
 from nlp_pillars.db import PipelineRunCreateError, pillar_exists
 from nlp_pillars.schemas import UploadAccepted, UploadUrlRequest
 from nlp_pillars.services.upload_service import get_upload_service
+from webui.services.spend_guard import require_spend_room
 from webui.services.run_service import (
     KIND_UPLOAD,
     TRIGGER_UI_UPLOAD,
@@ -92,7 +93,10 @@ def _dispatch_upload(http_request: Request, pillar_id: str, **kwargs) -> str:
 
 
 @router.post(
-    "/{pillar_id}/upload/url", response_model=UploadAccepted, status_code=202
+    "/{pillar_id}/upload/url",
+    response_model=UploadAccepted,
+    status_code=202,
+    dependencies=[Depends(require_spend_room)],
 )
 async def upload_paper_from_url(
     pillar_id: str, request: UploadUrlRequest, http_request: Request
@@ -131,7 +135,10 @@ async def upload_paper_from_url(
 
 
 @router.post(
-    "/{pillar_id}/upload/pdf", response_model=UploadAccepted, status_code=202
+    "/{pillar_id}/upload/pdf",
+    response_model=UploadAccepted,
+    status_code=202,
+    dependencies=[Depends(require_spend_room)],
 )
 async def upload_paper_from_file(
     pillar_id: str,
