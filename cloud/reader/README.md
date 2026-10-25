@@ -71,7 +71,7 @@ printf '%s' 'one@example.com,two@example.com' | npx wrangler@4.147.0 secret put 
 ```sh
 node cloud/reader/scripts/dev-server.mjs /tmp/bundle 8787   # the real Worker, signing its own throwaway tokens
 node --test cloud/reader/test/*.test.mjs                     # JWT, Worker, key store, helpers
-cloud/reader/scripts/smoke-dev.sh                            # `wrangler dev`: everything unauthenticated is refused
+cloud/reader/scripts/smoke-dev.sh                            # `wrangler dev`: refuses everything unauthenticated; serves from simulated R2 and assets
 ```
 
 Use the glob, not `node --test cloud/reader/test/`: the directory form resolves as a

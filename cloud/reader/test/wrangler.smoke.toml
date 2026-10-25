@@ -1,0 +1,18 @@
+# Used only by scripts/smoke-dev.sh. Same bindings as ../wrangler.toml, throwaway identity.
+name = "nlp-reader-smoke"
+main = "smoke-entry.mjs"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "../public"
+binding = "ASSETS"
+run_worker_first = true
+
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "nlp-reader-docs"
+
+[vars]
+TEAM_DOMAIN = "soft-wave-31cb.cloudflareaccess.com"
+ACCESS_AUD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ALLOWED_EMAILS = "dev@example.com"
