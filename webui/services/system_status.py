@@ -941,12 +941,41 @@ def classify_cloud_reader(
     status: Dict[str, Any],
     rows: Optional[List[Dict[str, Any]]],
     read_error: Optional[str] = None,
+    reviews: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The cloud reader row on Activity. Never fatal: the app works without the cloud.
 
     ``status`` is ``cloud_publish_service.current_status()``; ``rows`` are the
-    ``cloud_publish_state`` rows (None when they could not be read).
+    ``cloud_publish_state`` rows (None when they could not be read); ``reviews``
+    is ``cloud_review_sync_service.current_status()``, the pull of the phone's
+    reviews, which adds a sentence and turns a healthy row down when it is failing.
     """
+    check = _classify_publishing(status, rows, read_error)
+    if not reviews or not reviews.get("enabled"):
+        return check
+    if reviews.get("state") == "failed":
+        retry = reviews.get("retry_in_seconds")
+        again = f" Trying again in {int(retry // 60) + 1} min." if retry else ""
+        note = f" Phone reviews could not be pulled: {public_line(str(reviews.get('last_error') or 'unknown error'))}.{again}"
+        check["summary"] += note
+        if check["state"] == "ok":
+            check["state"] = "down"
+            check["fix"] = "Reviews made on the phone are safe in the cloud. Run: docker compose exec webui python -m nlp_pillars.cli cloud pull-reviews"
+        return check
+    summary = reviews.get("last_summary") or {}
+    if reviews.get("last_success_at"):
+        got = int(summary.get("applied") or 0)
+        check["summary"] += f" Phone reviews checked {reviews['last_success_at'].replace('T', ' ').replace('Z', ' UTC')}" + (
+            f" ({got} new)." if got else "."
+        )
+    return check
+
+
+def _classify_publishing(
+    status: Dict[str, Any],
+    rows: Optional[List[Dict[str, Any]]],
+    read_error: Optional[str] = None,
+) -> Dict[str, Any]:
     label = "Cloud reader"
     if not status.get("enabled"):
         return make_check(
@@ -996,13 +1025,14 @@ async def _check_cloud_reader(
     client: httpx.AsyncClient, base: str, headers: Dict[str, str], settings: Any,
     database_ok: bool,
 ) -> Dict[str, Any]:
-    from webui.services import cloud_publish_service
+    from webui.services import cloud_publish_service, cloud_review_sync_service
 
     status = cloud_publish_service.current_status(settings)
+    reviews = cloud_review_sync_service.current_status()
     if not status.get("enabled") or not status.get("configured"):
         return classify_cloud_reader(status, None)
     if not database_ok:
-        return classify_cloud_reader(status, None, "database is not answering")
+        return classify_cloud_reader(status, None, "database is not answering", reviews)
     try:
         response = await client.get(
             f"{base}/cloud_publish_state",
@@ -1010,11 +1040,11 @@ async def _check_cloud_reader(
             headers=headers,
         )
         if response.status_code >= 400:
-            return classify_cloud_reader(status, None, f"HTTP {response.status_code}; is {STATE_MIGRATION} applied?")
+            return classify_cloud_reader(status, None, f"HTTP {response.status_code}; is {STATE_MIGRATION} applied?", reviews)
         rows = response.json()
     except (httpx.HTTPError, ValueError) as exc:
-        return classify_cloud_reader(status, None, type(exc).__name__)
-    return classify_cloud_reader(status, rows if isinstance(rows, list) else None)
+        return classify_cloud_reader(status, None, type(exc).__name__, reviews)
+    return classify_cloud_reader(status, rows if isinstance(rows, list) else None, None, reviews)
 
 
 async def _check_searxng(

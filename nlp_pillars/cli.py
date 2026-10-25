@@ -1847,6 +1847,49 @@ def cloud_publish(
     raise typer.Exit(0)
 
 
+@cloud_app.command("pull-reviews")
+def cloud_pull_reviews(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Fetch and check the phone's reviews, print what would be applied. Writes nothing."
+    ),
+):
+    """Bring reviews made on the phone into the review log.
+
+    Asks the cloud reader for events after the saved cursor, checks each one, and
+    records it through the same log-first path a review at the desk takes
+    (origin=cloud, with the phone's device id), then re-derives each card from its
+    log. Needs the same CLOUD_PUBLISH_URL and service token as `cloud publish`, and
+    migration 027 applied. Safe to run again after any failure: an event already
+    in the log records nothing twice.
+    """
+    from .cloud.publish import PublishConfig, PublishError
+    from .cloud.reviews import PullError, pull_reviews
+    from .config import get_settings
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        config = PublishConfig.from_settings(get_settings())
+        report = pull_reviews(
+            config,
+            dry_run=dry_run,
+            on_progress=lambda message: console.print(f"  {message}", markup=False),
+        )
+    except PullError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        if exc.report is not None:
+            console.print(exc.report.render(), markup=False)
+        logging.error("cloud pull-reviews failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    except (PublishError, Exception) as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("cloud pull-reviews failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
 vectors_app = typer.Typer(
     help="Project chunk embeddings from Postgres into Qdrant",
     add_completion=False,

@@ -14,12 +14,14 @@
  *   GET /ingest/inventory         what is stored: key, size, sha256, uploaded
  *   PUT /ingest/object/<key>      one document or one audio file
  *   PUT /ingest/manifest          the manifest, then garbage collection
+ *   GET /ingest/reviews?after=N   the phone's review events, for the computer (reviews.js)
  *
- * No outbound request is made here. The only binding used is DOCS.
+ * No outbound request is made here. The bindings used are DOCS and REVIEWS.
  */
 
 import { AccessError, authorize, verifyAccessJwt } from './access.js';
 import { isDocKey } from './docs.js';
+import { pull as pullReviews } from './reviews.js';
 
 export const DEFAULT_MAX_BYTES = 5_000_000_000;
 export const MAX_DOC_BYTES = 8 * 1024 * 1024;
@@ -283,6 +285,7 @@ export async function handleIngest(request, env, { keyFor, now }) {
         max_bytes: maxBytes(env),
       });
     }
+    if (pathname === '/ingest/reviews') return await pullReviews(request, env);
     if (pathname === '/ingest/manifest') {
       if (request.method !== 'PUT') return reply(405, { error: 'method not allowed' });
       return reply(200, { ok: true, ...(await putManifest(request, env, await listAll(env.DOCS), now)) });

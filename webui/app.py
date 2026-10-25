@@ -21,7 +21,7 @@ load_dotenv()
 from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast, activity
 from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers, system_status as api_system_status, graph as api_graph, spend as api_spend
 from .access import AccessMiddleware
-from .services import cloud_publish_service, run_service
+from .services import cloud_publish_service, cloud_review_sync_service, run_service
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +83,13 @@ def create_app() -> FastAPI:
         # Keeps the cloud reader current. Off unless CLOUD_PUBLISH_ENABLED; a
         # problem starting it is logged and the app starts anyway.
         cloud_publish_service.start()
+        # Pulls the phone's reviews into the review log (same switch, same token).
+        cloud_review_sync_service.start()
 
         try:
             yield
         finally:
+            cloud_review_sync_service.stop()
             cloud_publish_service.stop()
             # Ask in-flight runs to stop at their next stage boundary, then wait.
             # shutdown(wait=True) does NOT interrupt a running job — it cannot — so

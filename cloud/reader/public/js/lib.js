@@ -1,6 +1,6 @@
 /* Pure helpers for the reader. No DOM, no network: node --test imports this file. */
 
-export const ROUTES = ['today', 'library', 'lessons'];
+export const ROUTES = ['today', 'library', 'lessons', 'review'];
 
 /** `#/paper/<id>/<tab>` and friends. Ids carry `:` and `/`, so they are percent-encoded. */
 export function parseRoute(hash) {
@@ -9,6 +9,7 @@ export function parseRoute(hash) {
   if (parts.length === 0) return { name: 'today' };
   if (parts[0] === 'library' && parts.length === 1) return { name: 'library' };
   if (parts[0] === 'lessons' && parts.length === 1) return { name: 'lessons' };
+  if (parts[0] === 'review' && parts.length === 1) return { name: 'review' };
   if (parts[0] === 'paper' && parts.length >= 2 && parts.length <= 3) {
     try {
       const id = decodeURIComponent(parts[1]);

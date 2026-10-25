@@ -221,6 +221,17 @@ class CloudPublisher:
             self._retry_at = 0.0
             self.message = ""
             self.state = "waiting" if self._dirty else "idle"
+        self._after_publish()
+
+    @staticmethod
+    def _after_publish() -> None:
+        """A publish is a natural moment to ask the cloud for reviews made since. Never raises."""
+        try:
+            from webui.services import cloud_review_sync_service
+
+            cloud_review_sync_service.trigger("after publish")
+        except Exception:  # noqa: BLE001
+            logger.warning("cloud publish: could not trigger a review pull", exc_info=True)
 
     def _progress(self, message: str) -> None:
         self.message = message

@@ -1,5 +1,6 @@
 /* The four pages. Each takes the store and returns an element to mount. */
 import { bullets, callout, chip, emptyState, h } from './dom.js';
+import { asSnapshotCards } from './schedule.js';
 import {
   PAPER_TABS, authorLine, dueSummary, filterPapers, formatDate, formatDuration, greeting,
   newestFirst, paperHref, pillarGlance, plural, readableScript, relativeTime, safePdfHref,
@@ -33,9 +34,11 @@ function paperRow(paper, pillars) {
       paper.episode_ids && paper.episode_ids.length ? chip('Episode') : null));
 }
 
-export async function todayView(store, now = Date.now()) {
-  const [library, schedule] = await Promise.all([store.library(), store.schedule()]);
+export async function todayView(store, reviews, now = Date.now()) {
+  const [library, published] = await Promise.all([store.library(), store.schedule()]);
   const pillars = new Map(library.pillars.map((p) => [p.id, p]));
+  // The cards as this device holds them: the published schedule with the reviews made since on top.
+  const schedule = { ...published, cards: asSnapshotCards(await reviews.states()) };
   const cards = dueSummary(schedule.cards, now);
   const hour = new Date(now).getHours();
 
@@ -53,8 +56,12 @@ export async function todayView(store, now = Date.now()) {
       h('h1', { class: 'today-greet', text: greeting(hour) }),
       h('p', { class: 'today-summary', text: summary })),
 
-    callout('info', 'Reading copy',
-      'This is the read-only copy of your library. Cards can be reviewed on the computer for now; reviewing here comes later.'),
+    h('section', { class: 'today-section', 'aria-labelledby': 'review-heading' },
+      h('div', { class: 'section-head' }, h('h2', { id: 'review-heading', class: 'section-title', text: 'Review' })),
+      h('p', { class: 'section-lede', text: cards.due + cards.fresh === 0
+        ? 'Nothing is due. Cards you review here reach the computer when you are online.'
+        : 'Review here, even without a connection. Your answers reach the computer when you are online.' }),
+      h('a', { class: 'btn btn-primary btn-md', href: '#/review', text: cards.due + cards.fresh === 0 ? 'Open review' : `Review ${cards.due + cards.fresh > 99 ? 'cards' : plural(cards.due + cards.fresh, 'card')}` })),
 
     h('section', { class: 'today-section', 'aria-labelledby': 'recent-heading' },
       h('div', { class: 'section-head' },
