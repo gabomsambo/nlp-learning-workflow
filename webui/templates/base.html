@@ -209,6 +209,10 @@
   <div id="mini-player" class="mini-player" hidden>
     <audio id="mini-player-audio" preload="none"></audio>
     <a id="mini-player-title" class="mini-title" href="/podcast/">Episode</a>
+    <a id="mini-player-open" class="mini-btn mini-open" href="/podcast/" aria-label="Read along: open this episode at the line being spoken">
+      <svg class="mini-open-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 5.5C5.2 4.5 8.4 4.5 12 6.5c3.6-2 6.8-2 9-1v13c-2.2-1-5.4-1-9 1-3.6-2-6.8-2-9-1z"/><path d="M12 6.5v13"/></svg>
+      <span class="mini-open-label">Read along</span>
+    </a>
     <div class="mini-transport">
       <button type="button" class="mini-btn mini-skip" id="mini-player-back" aria-label="Back 15 seconds">−15</button>
       <button type="button" class="mini-btn mini-play" id="mini-player-toggle" aria-label="Play">Play</button>
@@ -235,6 +239,7 @@
 
   <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
   <script src="/static/theme.js?v={{ asset_v | default('1', true) }}"></script>
+  <script src="/static/player-core.js?v={{ asset_v | default('1', true) }}"></script>
   <script src="/static/shell.js?v={{ asset_v | default('1', true) }}"></script>
   <script src="/static/status-chip.js?v={{ asset_v | default('1', true) }}"></script>
   {% block scripts %}{% endblock %}
