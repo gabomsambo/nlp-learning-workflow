@@ -1,0 +1,57 @@
+/* What the reader needs beyond app.css. Colours and fonts come from tokens.css. */
+
+.reader .reader-foot {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+/* main takes focus after a navigation so a screen reader starts at the new page; it is not a control. */
+.reader #main:focus { outline: none; }
+
+/* The app's paper tabs switch panels with :target; the reader switches by route. */
+.reader .paper-panel { display: none; }
+.reader .paper-panel.is-active { display: block; }
+.reader .tabs a[aria-current="page"] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.reader .reader-note {
+  margin: 0 0 var(--space-5);
+  color: var(--muted);
+}
+
+.reader .reader-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reader .reader-row {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+.reader a.reader-row:hover { border-color: var(--accent); }
+.reader .reader-row-title { font-weight: 600; }
+.reader .reader-row-meta { color: var(--muted); font-size: var(--fs-caption); }
+.reader .reader-row-body { margin: var(--space-1) 0 0; }
+
+.reader .reader-script {
+  max-width: var(--read-max);
+  font-family: var(--font-read);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.reader .reader-retry { margin-top: var(--space-4); }
+.reader .library-search { max-width: 28rem; }

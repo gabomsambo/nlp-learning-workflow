@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#2F5D50" />
+  <meta name="robots" content="noindex" />
+  <title>NLP Reader</title>
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <script src="/boot.js"></script>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/reader.css">
+</head>
+<body class="reader">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#/">
+        <span class="brand-mark" aria-hidden="true">N</span>
+        <span class="brand-name">NLP <em>Reader</em></span>
+      </a>
+      <nav class="app-nav" aria-label="Primary" data-nav="side"></nav>
+      <div class="sidebar-foot">
+        <p class="reader-foot" data-freshness>Loading</p>
+      </div>
+    </aside>
+
+    <div class="app-main">
+      <div class="phone-bar">
+        <a class="brand" href="#/">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span class="brand-name">NLP <em>Reader</em></span>
+        </a>
+        <p class="reader-foot" data-freshness></p>
+      </div>
+      <main id="main" class="container" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <nav class="tabbar" aria-label="Primary" data-nav="tabs"></nav>
+
+  <noscript><p class="container">This reader needs JavaScript.</p></noscript>
+  <script type="module" src="/js/reader.js"></script>
+</body>
+</html>

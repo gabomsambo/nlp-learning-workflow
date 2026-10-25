@@ -84,6 +84,11 @@ jobs:
       - name: Run JS unit tests
         run: node --test tests/js/*.test.js
 
+      # The cloud reader's Worker and page helpers: JWT verification with WebCrypto,
+      # the request handler against fake R2 and assets bindings. Same rules: no npm.
+      - name: Run cloud reader tests
+        run: node --test cloud/reader/test/*.test.mjs
+
   tests:
     name: pytest (Python 3.12)
     runs-on: ubuntu-latest
