@@ -122,6 +122,12 @@
     return lines;
   }
 
+  var RA = global.ReadAlong ||
+    (typeof require === 'function' ? require('./readalong.js') : null);
+  // Where in the reading surface the spoken line settles: a little above the
+  // middle, the way a transcript keeps what is coming in view.
+  var READ_ANCHOR = 0.38;
+
   var Factcheck = global.Factcheck ||
     (typeof require === 'function' ? require('./factcheck.js') : {});
   var claimTone = Factcheck.claimTone;
@@ -312,6 +318,17 @@
     var factcheckIssues = document.getElementById('factcheck-issues');
     var factcheckIssuesList = document.getElementById('factcheck-issues-list');
     var factcheckAudioWarning = document.getElementById('factcheck-audio-warning');
+    var readEl = document.getElementById('readalong');
+    var readSurface = document.getElementById('readalong-surface');
+    var readNoteEl = document.getElementById('readalong-note');
+    var readNowBtn = document.getElementById('readalong-now');
+    var readToggleBtn = document.getElementById('readalong-toggle');
+    var readBackBtn = document.getElementById('readalong-back');
+    var readForwardBtn = document.getElementById('readalong-forward');
+    var readTimeEl = document.getElementById('readalong-time');
+    var viewSwitch = document.getElementById('script-view-switch');
+    var viewReadBtn = document.getElementById('view-readalong');
+    var viewScriptBtn = document.getElementById('view-script');
     var downloadBtn = document.getElementById('download-btn');
     var warningsEl = document.getElementById('script-warnings');
     var settingsEl = document.getElementById('script-settings');
@@ -348,6 +365,22 @@
     var libraryEmpty = document.getElementById('listen-empty');
     var libraryError = document.getElementById('listen-scripts-error');
     var filterEmpty = document.getElementById('listen-filter-empty');
+
+    var currentTimeline = null;
+    var readModel = null;
+    var readLineEls = {};
+    var readWordEls = {};
+    var readActive = { line: -1, word: -1 };
+    var readFollowing = true;
+    var readRaf = 0;
+    var readProgrammaticUntil = 0;
+    var lastClaims = [];
+    var scriptView = 'readalong';
+    try {
+      // A deep link to one line is a request for the line-numbered script.
+      if (global.localStorage.getItem('nlp:scriptView') === 'script') scriptView = 'script';
+    } catch (e) { /* private window: the default stands */ }
+    if (new URLSearchParams(global.location.search).get('line') != null) scriptView = 'script';
 
     var currentScriptId = null;
     var loadedBodyId = null;
@@ -569,9 +602,19 @@
         if (index) popover.appendChild(document.createElement('hr'));
         appendClaimExplanation(popover, claim);
       });
+      if (lineRow && lineRow.classList && lineRow.classList.contains('readalong-line')) {
+        addPlayFromHere(popover, Number(lineRow.getAttribute('data-line')));
+      }
       trigger.setAttribute('aria-expanded', 'true');
       trigger.setAttribute('aria-controls', popoverId);
       lineRow.appendChild(popover);
+      if (lineRow.classList && lineRow.classList.contains('readalong-line')) {
+        // Reading the evidence is the reader's choice: let go of auto-scroll
+        // so the line they are on does not move, and bring the popover into view.
+        setFollowing(false);
+        readProgrammaticUntil = Date.now() + 900;
+        if (popover.scrollIntoView) popover.scrollIntoView({ block: 'nearest' });
+      }
       activeFactcheckPopover = { node: popover, trigger: trigger };
     }
 
@@ -606,7 +649,26 @@
       }
     }
 
+    function jumpToReadAlongLine(line) {
+      var target = document.getElementById('readalong-line-' + line);
+      if (!target) return false;
+      document.querySelectorAll('.readalong-line.is-target').forEach(function (row) {
+        row.classList.remove('is-target');
+      });
+      target.classList.add('is-target');
+      currentTargetLine = line;
+      // Looking at one line is the reader's choice, not the audio's.
+      setFollowing(false);
+      scrollReadTo(target, false);
+      if (readSurface && readSurface.scrollIntoView && !reducedMotion()) {
+        var box = readSurface.getBoundingClientRect();
+        if (box.top < 0 || box.bottom > global.innerHeight) readSurface.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+      return true;
+    }
+
     function jumpToScriptLine(line, updateUrl) {
+      if (readVisible() && jumpToReadAlongLine(line)) return;
       var target = document.getElementById('script-line-' + line);
       if (!target) return;
       document.querySelectorAll('.script-line.is-target').forEach(function (row) {
@@ -722,7 +784,390 @@
         scriptContent.appendChild(row);
       });
       scriptContent.scrollTop = keepScroll;
+      lastClaims = claims || [];
+      paintReadAlong();
       followRequestedLine();
+    }
+
+    /*
+     * Read along.
+     *
+     * The same script, set as a page to read: serif text in one column, the
+     * line being spoken at full strength and the rest quieter, and a soft chip
+     * on the word being said. The words and times come from the episode's
+     * stored timeline (readalong.js); the audio element stays the one source
+     * of time. Everything is built with createElement + textContent.
+     *
+     * Two things are easy to get wrong here. Auto-scroll must stop the moment
+     * the reader scrolls themselves, or the page fights their thumb; so a
+     * scroll the page did not start (no recent programmatic scroll) detaches
+     * the view and offers "Jump to now". And a click on a word seeks, but a
+     * click on a fact-check mark opens its evidence, so seeking from a flagged
+     * claim is a button inside the popover.
+     */
+    function reducedMotion() {
+      return !!(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    function readAudioMatches() {
+      if (!episodePlayer || !currentAudioHref) return false;
+      return pathOf(episodePlayer.currentSrc || episodePlayer.src) === currentAudioHref;
+    }
+
+    function readVisible() {
+      return !!(readEl && !readEl.hidden);
+    }
+
+    function scrollReadTo(el, instant) {
+      if (!el || !readSurface) return;
+      var surfaceRect = readSurface.getBoundingClientRect();
+      var rect = el.getBoundingClientRect();
+      var offset = rect.top - surfaceRect.top + readSurface.scrollTop;
+      var top = RA.scrollTopFor(offset, rect.height, readSurface.clientHeight, readSurface.scrollHeight, READ_ANCHOR);
+      readProgrammaticUntil = Date.now() + 900;
+      if (instant || reducedMotion() || !readSurface.scrollTo) {
+        readSurface.scrollTop = top;
+      } else {
+        readSurface.scrollTo({ top: top, behavior: 'smooth' });
+      }
+    }
+
+    /* "Jump to now" is for a reader who has scrolled away, not one still looking at it. */
+    function refreshNowButton() {
+      if (!readNowBtn) return;
+      if (readFollowing || !readModel || readActive.line === -1 || !readSurface) {
+        readNowBtn.hidden = true;
+        return;
+      }
+      var lineEl = readLineEls[readModel.lines[readActive.line].line];
+      if (!lineEl) {
+        readNowBtn.hidden = true;
+        return;
+      }
+      var box = readSurface.getBoundingClientRect();
+      var rect = lineEl.getBoundingClientRect();
+      readNowBtn.hidden = rect.bottom > box.top + 16 && rect.top < box.bottom - 16;
+    }
+
+    function setFollowing(on) {
+      readFollowing = on;
+      refreshNowButton();
+    }
+
+    function readNote(text) {
+      if (!readNoteEl) return;
+      readNoteEl.textContent = text || '';
+      readNoteEl.hidden = !text;
+    }
+
+    function readStatusNote() {
+      if (!currentAudioHref) return '';
+      var state = RA.timelineState(currentTimeline, currentScriptHash);
+      if (state === 'missing') {
+        return 'No read-along timing for this episode yet. It still plays, but the text will not follow the audio. ' +
+          'Episodes recorded before this feature can be timed with: python -m nlp_pillars.cli timeline backfill';
+      }
+      if (state === 'stale') {
+        return 'The script was edited after this audio was recorded, so the highlight is off. Record the episode again to bring it back.';
+      }
+      if (readModel && !readModel.wordLevel) {
+        return 'Word timing was weak for this episode, so only the line being spoken is highlighted.';
+      }
+      return '';
+    }
+
+    function clearReadActive() {
+      if (readActive.line !== -1 && readModel) {
+        var oldLine = readLineEls[readModel.lines[readActive.line].line];
+        if (oldLine) oldLine.classList.remove('is-current');
+        var oldWords = readWordEls[readModel.lines[readActive.line].line];
+        if (oldWords && oldWords[readActive.word]) oldWords[readActive.word].classList.remove('is-now');
+      }
+      readActive = { line: -1, word: -1 };
+    }
+
+    /* Move the highlight to wherever the audio is. Cheap when nothing changed. */
+    function updateReadPosition(force) {
+      if (!readModel || !readVisible()) return;
+      var pos = { line: -1, word: -1 };
+      if (readAudioMatches()) {
+        var time = episodePlayer.currentTime;
+        if (isFinite(time)) pos = RA.positionAt(readModel, time * 1000);
+      }
+      if (!force && pos.line === readActive.line && pos.word === readActive.word) return;
+      var lineChanged = pos.line !== readActive.line;
+      if (readActive.line !== -1) {
+        var prev = readModel.lines[readActive.line].line;
+        if (lineChanged && readLineEls[prev]) readLineEls[prev].classList.remove('is-current');
+        var prevWords = readWordEls[prev];
+        if (prevWords && prevWords[readActive.word]) prevWords[readActive.word].classList.remove('is-now');
+      }
+      readActive = pos;
+      if (pos.line === -1) {
+        refreshNowButton();
+        return;
+      }
+      var lineNo = readModel.lines[pos.line].line;
+      var lineEl = readLineEls[lineNo];
+      if (lineEl) lineEl.classList.add('is-current');
+      var wordEls = readWordEls[lineNo];
+      if (wordEls && pos.word !== -1 && wordEls[pos.word]) wordEls[pos.word].classList.add('is-now');
+      if (lineChanged || force) {
+        if (readFollowing) scrollReadTo(lineEl, false);
+        else refreshNowButton();
+      } else if (readFollowing && wordEls && wordEls[pos.word]) {
+        // A long line wraps; keep the word in view, not only the line's top.
+        var surfaceRect = readSurface.getBoundingClientRect();
+        var wordRect = wordEls[pos.word].getBoundingClientRect();
+        if (wordRect.bottom > surfaceRect.bottom - 24 || wordRect.top < surfaceRect.top + 24) {
+          scrollReadTo(wordEls[pos.word], false);
+        }
+      }
+    }
+
+    function readLoop() {
+      readRaf = 0;
+      updateReadPosition(false);
+      if (episodePlayer && !episodePlayer.paused && !episodePlayer.ended && readVisible()) {
+        readRaf = global.requestAnimationFrame(readLoop);
+      }
+    }
+
+    function startReadLoop() {
+      if (!readRaf && readVisible()) readRaf = global.requestAnimationFrame(readLoop);
+    }
+
+    /* Seek to a time and play from there; reattach auto-scroll. */
+    function playFrom(seconds) {
+      if (!episodePlayer || !currentAudioHref || seconds == null) return;
+      assignSource(currentAudioHref);
+      if (episodePlayer.readyState >= 1) {
+        try { episodePlayer.currentTime = seconds; } catch (e) { /* ignore */ }
+      } else {
+        episodePlayer.dataset.pending = String(seconds);
+      }
+      setFollowing(true);
+      var pending = episodePlayer.play();
+      if (pending && typeof pending.catch === 'function') pending.catch(function () {});
+      updateReadPosition(true);
+    }
+
+    function paintReadAlong() {
+      if (!readEl || !readSurface || !RA) return;
+      var keepScroll = readSurface.scrollTop;
+      readProgrammaticUntil = Date.now() + 400;
+      readSurface.replaceChildren();
+      readLineEls = {};
+      readWordEls = {};
+      readActive = { line: -1, word: -1 };
+      var lines = scriptLines(currentScriptText);
+      readModel = RA.buildModel(currentTimeline, lines, currentScriptHash);
+      readSurface.classList.toggle('is-timed', !!readModel);
+      var showAll = !!(showSupported && showSupported.checked);
+      var byLine = {};
+      (lastClaims || []).forEach(function (claim) {
+        var line = Number(claim && claim.line_index);
+        if (!Number.isInteger(line) || line < 0 || line >= lines.length) return;
+        if (!byLine[line]) byLine[line] = [];
+        byLine[line].push(claim);
+      });
+      lines.forEach(function (textLine, lineNo) {
+        var tokens = RA.tokenize(textLine);
+        if (!tokens) {
+          if (/^\s*\[(?:MUSIC|SFX|TRANSITION)\]\s*$/i.test(textLine)) {
+            var rule = document.createElement('div');
+            rule.className = 'readalong-break';
+            rule.setAttribute('aria-hidden', 'true');
+            rule.textContent = '• • •';
+            readSurface.appendChild(rule);
+          }
+          return;
+        }
+        var row = document.createElement('div');
+        row.className = 'readalong-line';
+        row.id = 'readalong-line-' + lineNo;
+        row.setAttribute('data-line', String(lineNo));
+        var timed = readModel && readModel.byLine[lineNo] != null ? readModel.lines[readModel.byLine[lineNo]] : null;
+        if (timed) {
+          var stamp = document.createElement('button');
+          stamp.type = 'button';
+          stamp.className = 'readalong-seek';
+          stamp.setAttribute('data-line', String(lineNo));
+          stamp.setAttribute('aria-label', 'Play from ' + RA.clockLabel(timed.start));
+          stamp.textContent = RA.clockLabel(timed.start);
+          row.appendChild(stamp);
+        }
+        var body = document.createElement('p');
+        body.className = 'readalong-text';
+        var segments = claimSegments(textLine, byLine[lineNo] || [], showAll);
+        var words = [];
+        var group = null;
+        var groupSegment = null;
+        function closeGroup() {
+          if (!group) return;
+          var primary = strongestClaim(groupSegment.claims) || groupSegment.claims[0];
+          var presentation = claimPresentation(primary);
+          group.className = 'factcheck-mark is-' + presentation.tone;
+          group.setAttribute('aria-expanded', 'false');
+          group.setAttribute('aria-label', presentation.label + ': ' + group.textContent);
+          var claims = groupSegment.claims;
+          var trigger = group;
+          group.addEventListener('click', function () { openFactcheckPopover(trigger, claims, row); });
+          group.addEventListener('keydown', function (event) {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            openFactcheckPopover(trigger, claims, row);
+          });
+          group = null;
+          groupSegment = null;
+        }
+        tokens.forEach(function (token, index) {
+          var segment = null;
+          for (var i = 0; i < segments.length; i++) {
+            if (token.start >= segments[i].start && token.start < segments[i].end) { segment = segments[i]; break; }
+          }
+          var flagged = segment && segment.claims.length ? segment : null;
+          if (!flagged || (group && groupSegment !== flagged)) closeGroup();
+          var span = document.createElement('span');
+          span.className = 'ra-w';
+          span.setAttribute('data-w', String(index));
+          span.textContent = token.text;
+          if (timed && timed.words && !timed.words[index].heard) span.classList.add('is-guess');
+          words.push(span);
+          var parent = body;
+          if (flagged) {
+            if (!group) {
+              // A <button> is atomic inline content in Chrome: a mark that wraps
+              // would drop to its own line as one block. A span that behaves as
+              // a button wraps with the words around it.
+              group = document.createElement('span');
+              group.setAttribute('role', 'button');
+              group.setAttribute('tabindex', '0');
+              groupSegment = flagged;
+              if (index > 0) body.appendChild(document.createTextNode(' '));
+              body.appendChild(group);
+            } else {
+              group.appendChild(document.createTextNode(' '));
+            }
+            parent = group;
+          } else if (index > 0) {
+            body.appendChild(document.createTextNode(' '));
+          }
+          parent.appendChild(span);
+        });
+        closeGroup();
+        row.appendChild(body);
+        readLineEls[lineNo] = row;
+        readWordEls[lineNo] = words;
+        readSurface.appendChild(row);
+      });
+      readSurface.scrollTop = keepScroll;
+      readNote(readStatusNote());
+      updateReadPosition(true);
+    }
+
+    function updateViewSwitch() {
+      var hasAudio = !!currentAudioHref;
+      if (viewSwitch) viewSwitch.hidden = !hasAudio;
+      var readAlong = hasAudio && scriptView === 'readalong';
+      if (readEl) readEl.hidden = !readAlong;
+      if (scriptContent) scriptContent.hidden = readAlong;
+      if (viewReadBtn) viewReadBtn.setAttribute('aria-pressed', readAlong ? 'true' : 'false');
+      if (viewScriptBtn) viewScriptBtn.setAttribute('aria-pressed', readAlong ? 'false' : 'true');
+      if (readAlong) {
+        readNote(readStatusNote());
+        updateReadPosition(true);
+        startReadLoop();
+      }
+    }
+
+    function setScriptView(view, remember) {
+      scriptView = view === 'script' ? 'script' : 'readalong';
+      if (remember) {
+        try { global.localStorage.setItem('nlp:scriptView', scriptView); } catch (e) { /* private window */ }
+      }
+      closeFactcheckPopover(false);
+      updateViewSwitch();
+    }
+
+    /* The timeline can arrive after the page did: recording finishes while it is open. */
+    function refreshTimeline() {
+      if (!currentScriptId) return Promise.resolve();
+      var id = currentScriptId;
+      return fetch('/api/podcast/' + encodeURIComponent(id)).then(function (res) {
+        return res.ok ? res.json() : null;
+      }).then(function (data) {
+        if (!data || !data.script || id !== currentScriptId) return;
+        var audio = data.script.audio_metadata || {};
+        currentTimeline = audio.timeline || null;
+        paintReadAlong();
+        updateViewSwitch();
+      }).catch(function () { /* the highlight is a nicety; the audio is unaffected */ });
+    }
+
+    function addPlayFromHere(popover, lineNo) {
+      if (!readModel || readModel.byLine[lineNo] == null) return;
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-ghost btn-sm factcheck-playfrom';
+      button.textContent = 'Play from here';
+      button.addEventListener('click', function () {
+        playFrom(RA.seekSecondsForLine(readModel, lineNo));
+      });
+      popover.appendChild(button);
+    }
+
+    function bindReadAlong() {
+      if (!readEl || !readSurface || !RA) return;
+      readSurface.addEventListener('click', function (event) {
+        var target = event.target;
+        if (!target || !target.closest || !readModel) return;
+        if (target.closest('.factcheck-mark') || target.closest('.factcheck-popover')) return;
+        var selection = global.getSelection && global.getSelection();
+        if (selection && String(selection).length > 0) return;
+        var stamp = target.closest('.readalong-seek');
+        var word = target.closest('.ra-w');
+        var row = target.closest('.readalong-line');
+        if (!row) return;
+        var lineNo = Number(row.getAttribute('data-line'));
+        if (stamp) {
+          playFrom(RA.seekSecondsForLine(readModel, lineNo));
+        } else if (word) {
+          playFrom(RA.seekSecondsForWord(readModel, lineNo, Number(word.getAttribute('data-w'))));
+        } else {
+          playFrom(RA.seekSecondsForLine(readModel, lineNo));
+        }
+      });
+      // A scroll the page did not start is the reader's. Let go of them.
+      readSurface.addEventListener('scroll', function () {
+        if (Date.now() < readProgrammaticUntil) return;
+        if (readFollowing) setFollowing(false);
+        else refreshNowButton();
+      }, { passive: true });
+      ['wheel', 'touchmove'].forEach(function (name) {
+        readSurface.addEventListener(name, function () {
+          if (readFollowing) setFollowing(false);
+        }, { passive: true });
+      });
+      if (readNowBtn) {
+        readNowBtn.addEventListener('click', function () {
+          setFollowing(true);
+          if (readActive.line !== -1 && readModel) {
+            scrollReadTo(readLineEls[readModel.lines[readActive.line].line], false);
+          }
+        });
+      }
+      if (readToggleBtn && playerToggle) readToggleBtn.addEventListener('click', function () { playerToggle.click(); });
+      if (readBackBtn) readBackBtn.addEventListener('click', function () { seekPlayer(-15); });
+      if (readForwardBtn) readForwardBtn.addEventListener('click', function () { seekPlayer(30); });
+      if (viewReadBtn) viewReadBtn.addEventListener('click', function () { setScriptView('readalong', true); });
+      if (viewScriptBtn) viewScriptBtn.addEventListener('click', function () { setScriptView('script', true); });
+      if (episodePlayer) {
+        episodePlayer.addEventListener('play', startReadLoop);
+        ['pause', 'seeked', 'timeupdate', 'loadedmetadata', 'ended', 'emptied'].forEach(function (name) {
+          episodePlayer.addEventListener(name, function () { updateReadPosition(false); });
+        });
+      }
     }
 
     function renderFactcheckIssues(claims) {
@@ -1203,8 +1648,11 @@
         duration_label: formatDuration(audio.duration_seconds),
       });
       setDownloadHref(scriptId);
+      currentTimeline = audio.timeline || null;
       renderScript(script);
       showStoredAudio(audio);
+      setFollowing(true);
+      updateViewSwitch();
     }
 
     function renderPlayer() {
@@ -1237,6 +1685,12 @@
         playerToggle.textContent = label;
         playerToggle.setAttribute('aria-label', label);
       }
+      if (readToggleBtn) {
+        var readLabel = paused ? 'Play' : 'Pause';
+        readToggleBtn.textContent = readLabel;
+        readToggleBtn.setAttribute('aria-label', readLabel);
+      }
+      if (readTimeEl && playerTime) readTimeEl.textContent = playerTime.textContent;
       var playingSrc = pathOf(episodePlayer.currentSrc || episodePlayer.src);
       document.querySelectorAll('.episode-play').forEach(function (button) {
         var same = button.getAttribute('data-src') === playingSrc && playingSrc && !paused;
@@ -1449,6 +1903,8 @@
         if (audioFileHint) audioFileHint.hidden = false;
         if (audioRunStatus) audioRunStatus.textContent = 'Audio ready — press play above.';
         renderPlayer();
+        updateViewSwitch();
+        refreshTimeline();
       } else if (run && run.status === 'failed' && audioRunStatus) {
         audioRunStatus.textContent = run.error || 'Audio generation failed.';
       }
@@ -1850,6 +2306,7 @@
         });
       });
     }
+    bindReadAlong();
     if (playerToggle) {
       playerToggle.addEventListener('click', function () {
         if (!currentAudioHref) return;

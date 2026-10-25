@@ -54,6 +54,16 @@ fastembed==0.9.0  # Local BAAI/bge-base-en-v1.5 ONNX. The weights are not in
                   # by the model. sentence-transformers would fetch the fp32
                   # checkpoint instead, which is heavier and is not the
                   # vectors the local-knowledge report measured.
+faster-whisper==1.2.1  # Read-along word timing: CPU speech recognition of a recorded
+                       # episode, matched back to its script. No paid API. The image
+                       # grows by this package, ctranslate2 (138 MB) and av (128 MB);
+                       # onnxruntime, tokenizers and huggingface_hub are already
+                       # locked. The weights are not in the install: the first timing
+                       # downloads about 145 MB into ALIGNER_CACHE_DIR.
+ctranslate2==4.8.3  # faster-whisper's engine; pinned so a rebuild cannot move it.
+av==19.0.2  # faster-whisper imports it. Audio is decoded by ffmpeg instead, because
+            # av 19 no longer accepts the metadata_errors argument faster-whisper
+            # 1.2.1 passes when it decodes a file itself.
 psycopg2-binary==2.9.12
 sqlalchemy==2.0.51
 

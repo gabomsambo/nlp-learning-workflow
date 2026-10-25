@@ -191,6 +191,7 @@
     tts_synthesize: 'Synthesizing speech',
     tts_assemble: 'Assembling episode',
     tts_encode: 'Encoding MP3',
+    tts_align: 'Timing words for read-along',
     tts_save: 'Saving audio metadata',
     // Podcast script generation (Ground Pack + synthesis). Prefixed so they do
     // not inherit "Writing the lesson" from synthesize.

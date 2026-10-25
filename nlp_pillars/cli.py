@@ -1426,7 +1426,6 @@ def embeddings_backfill(
     and does not download model weights.
     """
     from .chunk_embeddings import embed_chunk_rows, run_embedding_backfill
-    from .config import get_settings
     from .embeddings import (
         EmbeddingError,
         get_embedding_provider,
@@ -1817,6 +1816,70 @@ factcheck_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(factcheck_app, name="factcheck")
+
+
+timeline_app = typer.Typer(
+    help="Read-along word timing for recorded episodes",
+    add_completion=False,
+)
+app.add_typer(timeline_app, name="timeline")
+
+
+@timeline_app.command("backfill")
+def timeline_backfill(
+    script: Optional[str] = typer.Option(None, "--script", help="Only this podcast_scripts id"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Time episodes again even when their timeline is current.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="List what would be timed. No model is loaded and nothing is written.",
+    ),
+):
+    """Time the words of episodes that were recorded before read-along existed.
+
+    Listens to each episode's MP3 with faster-whisper on the CPU (no paid API)
+    and stores the result in audio_metadata.timeline. The first run downloads
+    about 145 MB of pinned weights into ALIGNER_CACHE_DIR.
+    """
+    from .tts.timeline import backfill_timelines
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        if script:
+            found = db.get_podcast_script_by_id(script)
+            scripts = [found] if found else []
+            if not scripts:
+                console.print(f"[bold red]No podcast script {script}.[/bold red]")
+                raise typer.Exit(1)
+        else:
+            scripts = db.get_podcast_scripts(limit=1000)
+    except db.PodcastScriptLookupError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        raise typer.Exit(1)
+
+    audio_dir = Path(get_settings().podcast_audio_dir)
+    rows = backfill_timelines(scripts, audio_dir, dry_run=dry_run, force=force)
+    table = Table(title="Read-along timing" + (" (dry run)" if dry_run else ""))
+    table.add_column("Script")
+    table.add_column("Title", overflow="fold")
+    table.add_column("Timeline")
+    table.add_column("Result", overflow="fold")
+    for row in rows:
+        table.add_row(row.script_id[:8], row.title, row.state, f"{row.action}: {row.detail}")
+    console.print(table)
+    if dry_run:
+        wanted = sum(1 for row in rows if row.action == "align")
+        console.print(f"{wanted} episode(s) would be timed. No model loaded. Nothing written.")
+        raise typer.Exit(0)
+    failed = [row for row in rows if row.action == "failed"]
+    done = sum(1 for row in rows if row.action == "aligned")
+    console.print(f"Timed {done} episode(s); {len(failed)} failed.")
+    raise typer.Exit(1 if failed else 0)
 
 
 @factcheck_app.command("run")

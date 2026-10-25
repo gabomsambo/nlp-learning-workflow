@@ -199,7 +199,25 @@
 
     <div class="factcheck-layout">
       <section class="factcheck-script" aria-labelledby="script-heading">
-        <h3 id="script-heading" class="section-title">Script</h3>
+        <div class="script-head">
+          <h3 id="script-heading" class="section-title">Script</h3>
+          {# Read along needs audio to follow. Without any, the plain script is all there is. #}
+          <div class="view-switch" id="script-view-switch" role="group" aria-label="Script view" hidden>
+            <button type="button" class="view-switch-btn" id="view-readalong" aria-pressed="true">Read along</button>
+            <button type="button" class="view-switch-btn" id="view-script" aria-pressed="false">Script</button>
+          </div>
+        </div>
+        <div id="readalong" class="readalong" hidden>
+          <p id="readalong-note" class="readalong-note" role="status" hidden></p>
+          <div id="readalong-surface" class="readalong-surface" tabindex="0" aria-label="Episode text, highlighted as it is spoken"></div>
+          <div class="readalong-bar" id="readalong-bar">
+            <button type="button" class="readalong-ctl" id="readalong-back" aria-label="Back 15 seconds">−15</button>
+            <button type="button" class="readalong-ctl readalong-play" id="readalong-toggle" aria-label="Play">Play</button>
+            <button type="button" class="readalong-ctl" id="readalong-forward" aria-label="Forward 30 seconds">+30</button>
+            <span class="readalong-time" id="readalong-time"></span>
+            <button type="button" class="readalong-now" id="readalong-now" hidden>Jump to now</button>
+          </div>
+        </div>
         <div id="script-content" class="script-body"></div>
       </section>
       <aside id="factcheck-issues" class="factcheck-issues" aria-labelledby="factcheck-issues-title" hidden>
@@ -292,5 +310,6 @@
 {% block scripts %}
 <script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/factcheck.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/readalong.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/listen.js?v={{ asset_v | default('1', true) }}"></script>
 {% endblock %}

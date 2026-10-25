@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Literal, Union
+from typing import List, Literal, Optional, Union
 
 # Standalone cue lines and the anchored [HOST]: prefix (case-insensitive).
 _HOST_PREFIX = re.compile(r"^\[HOST\]:\s*", re.IGNORECASE)
@@ -53,6 +53,22 @@ class ParsedScript:
     @property
     def chunk_count(self) -> int:
         return len(self.speech_chunks)
+
+
+def spoken_line_text(raw_line: str) -> Optional[str]:
+    """What the narrator says for one script line, or None when it says nothing.
+
+    The same rule ``parse_podcast_script`` applies line by line: a ``[HOST]:``
+    prefix is dropped, a standalone cue and a blank line are silent, any other
+    prose is narrated whole. The read-along aligner uses it so the words it
+    times are the words that were synthesised.
+    """
+    line = raw_line.strip()
+    if not line or _STANDALONE_CUE.match(line):
+        return None
+    host_match = _HOST_PREFIX.match(line)
+    spoken = line[host_match.end():].strip() if host_match else line
+    return spoken or None
 
 
 def _flush_speech(buffer: List[str], line_start: int, out: ParsedScript) -> None:
