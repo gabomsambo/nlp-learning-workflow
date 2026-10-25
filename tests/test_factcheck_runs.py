@@ -6,6 +6,7 @@ Hermetic. Nothing here dials a database, a scheduler, or a model API.
 import re
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from nlp_pillars import spend
 from nlp_pillars.cli import app
 from nlp_pillars.config import Settings
 from nlp_pillars.factcheck.constants import STAGES
@@ -27,6 +29,13 @@ SCHEMA = (ROOT / "schema.sql").read_text()
 RUNNER = CliRunner()
 PILLAR = "neural-architectures-language"
 SCRIPT_ID = "b4269725-1111-4111-8111-111111111111"
+
+
+def _budget(spent: float, cap: float = 2.0) -> spend.Budget:
+    start = datetime(2026, 10, 25, tzinfo=timezone.utc)
+    return spend.Budget(
+        cap_usd=cap, spent_usd=spent, day_start=start, resets_at=start + timedelta(days=1),
+    )
 
 
 def _statement(pattern: str) -> str:
@@ -195,6 +204,11 @@ def test_a_saved_script_starts_a_factcheck_and_a_failure_does_not_fail_the_scrip
             return_value=None,
         ),
         patch.object(
+            podcast_factcheck_service.spend,
+            "current_budget",
+            return_value=_budget(spent=0.0),
+        ),
+        patch.object(
             podcast_factcheck_service, "get_settings",
         ) as settings,
     ):
@@ -356,3 +370,45 @@ def test_backfill_stops_on_the_first_failure_without_changing_scripts():
     assert report.failed == 1
     assert report.checked == 0
     assert "No script was changed" in "\n".join(report.lines)
+
+
+def test_auto_dispatch_is_skipped_once_the_daily_cap_is_spent():
+    with (
+        patch.object(
+            podcast_factcheck_service.db, "get_active_factcheck_run", return_value=None,
+        ),
+        patch.object(
+            podcast_factcheck_service.spend,
+            "current_budget",
+            return_value=_budget(spent=2.0),
+        ),
+        patch.object(podcast_factcheck_service, "get_settings") as settings,
+        patch.object(run_service, "dispatch_run") as dispatch,
+    ):
+        settings.return_value.factcheck_auto_dispatch = True
+        result = podcast_factcheck_service.maybe_dispatch_after_script(
+            MagicMock(), {}, script_id=SCRIPT_ID, paper_id="arxiv:1", pillar_id=PILLAR,
+        )
+    assert result is None
+    dispatch.assert_not_called()
+
+
+def test_auto_dispatch_is_skipped_when_spend_cannot_be_read():
+    with (
+        patch.object(
+            podcast_factcheck_service.db, "get_active_factcheck_run", return_value=None,
+        ),
+        patch.object(
+            podcast_factcheck_service.spend,
+            "current_budget",
+            side_effect=spend.SpendUnavailableError("db down"),
+        ),
+        patch.object(podcast_factcheck_service, "get_settings") as settings,
+        patch.object(run_service, "dispatch_run") as dispatch,
+    ):
+        settings.return_value.factcheck_auto_dispatch = True
+        result = podcast_factcheck_service.maybe_dispatch_after_script(
+            MagicMock(), {}, script_id=SCRIPT_ID, paper_id="arxiv:1", pillar_id=PILLAR,
+        )
+    assert result is None
+    dispatch.assert_not_called()

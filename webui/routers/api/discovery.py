@@ -4,9 +4,10 @@ Discovery API endpoints for enhanced paper discovery with user selection.
 
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from webui.services.spend_guard import require_spend_room
 from webui.services.run_service import (
     KIND_DISCOVER,
     KIND_PROCESS_SELECTED,
@@ -133,7 +134,12 @@ async def discover_papers(
         )
 
 
-@router.post("/{pillar_id}/select", response_model=SelectResponse, status_code=202)
+@router.post(
+    "/{pillar_id}/select",
+    response_model=SelectResponse,
+    status_code=202,
+    dependencies=[Depends(require_spend_room)],
+)
 async def select_papers(pillar_id: str, request: SelectRequest, http_request: Request):
     """
     Accept user-selected papers for processing and return a run id immediately.

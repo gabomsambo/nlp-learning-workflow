@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from nlp_pillars.pillar_utils import validate_pillar_id
 from webui.routers.discovery import add_papers_context
+from webui.services.spend_guard import require_spend_room
 from webui.services.run_service import (
     KIND_RUN_DAILY,
     RunAlreadyActiveError,
@@ -25,7 +26,7 @@ async def pipeline_home(request: Request) -> HTMLResponse:
     )
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_spend_room)])
 async def trigger_run(request: Request, pillar: str, papers: int = 1):
     """Start a daily pipeline run and return its id immediately.
 

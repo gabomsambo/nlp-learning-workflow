@@ -37,10 +37,14 @@ def api_client(monkeypatch):
         "webui.routers.api.podcast.get_podcast_script_by_id",
         lambda sid: _script(),
     )
+    from webui.services.spend_guard import require_spend_room
     app = FastAPI()
     app.state.scheduler = MagicMock()
     app.state.cancel_events = {}
     app.include_router(podcast_api.router)
+    # The spend guard has its own tests (test_spend_guard.py); here it would only
+    # try to read the database.
+    app.dependency_overrides[require_spend_room] = lambda: None
     return TestClient(app, raise_server_exceptions=False)
 
 

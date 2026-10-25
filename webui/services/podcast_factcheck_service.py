@@ -12,7 +12,7 @@ import logging
 import threading
 from typing import Any, Callable, Dict, Optional
 
-from nlp_pillars import db
+from nlp_pillars import db, spend
 from nlp_pillars.config import get_settings
 from nlp_pillars.factcheck.constants import (
     KIND,
@@ -295,6 +295,15 @@ def maybe_dispatch_after_script(
                 "fact check already running for %s: %s", script_id, existing.id,
             )
             return existing.id
+        # Nobody clicked anything for this one, so it must respect the daily
+        # cap on its own. Unreadable spend counts as "no room".
+        budget = spend.current_budget()
+        if budget.exhausted:
+            logger.warning(
+                "daily spend cap reached ($%.2f of $%.2f); script %s was not fact-checked",
+                budget.spent_usd, budget.cap_usd, script_id,
+            )
+            return None
         from webui.services.run_service import dispatch_run
 
         run_id = dispatch_run(

@@ -4010,3 +4010,13 @@ html[data-theme="cockpit"] .lesson-preview {
   .lesson-title { font-size: var(--fs-tldr); }
   html[data-theme="cockpit"] .lesson-title { font-size: var(--fs-ui); }
 }
+
+/* Remaining daily budget beside the buttons that spend (spend-guard.js). */
+.spend-budget {
+  margin-inline-start: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  vertical-align: middle;
+}
+.spend-budget:empty { display: none; }
+.spend-budget[data-exhausted="true"] { color: var(--danger); font-weight: 600; }
