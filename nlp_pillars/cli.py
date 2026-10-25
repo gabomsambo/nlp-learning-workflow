@@ -1713,6 +1713,55 @@ def vault_export(
     raise typer.Exit(0)
 
 
+cloud_app = typer.Typer(
+    help="Offline bundle for the always-on cloud reader",
+    add_completion=False,
+)
+app.add_typer(cloud_app, name="cloud")
+
+
+@cloud_app.command("export")
+def cloud_export(
+    out: Path = typer.Option(
+        ...,
+        "--out",
+        help=(
+            "Directory to write the bundle into. Created if missing. A second run "
+            "rewrites a file only when its bytes changed."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Read and hash everything, print counts, write and transcode nothing.",
+    ),
+):
+    """Write the documents, 64 kbps audio and manifest the cloud reader serves.
+
+    Every document is built from an explicit field list. Uploaded PDFs, chunk
+    text, embeddings, ground packs, podcast options and keys are not in it. The
+    manifest is written last. Nothing leaves this machine.
+    """
+    from .cloud.export import ExportError, run_export
+    from .cloud.source import SourceError
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = run_export(out, dry_run=dry_run)
+    except (ExportError, SourceError) as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("cloud export failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("cloud export failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
 vectors_app = typer.Typer(
     help="Project chunk embeddings from Postgres into Qdrant",
     add_completion=False,

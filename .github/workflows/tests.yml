@@ -116,6 +116,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.lock.txt -r requirements.txt
 
+      # tests/test_cloud_audio.py runs the real ffmpeg on a synthetic tone, because
+      # the 64 kbps copy must keep its duration (read-along timings are
+      # milliseconds into the file) and only the encoder can say whether it does.
+      # Without this step those tests skip, which would read as green.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
       # The suite is fully mocked and must not reach the network or a database.
       # These are placeholders so module-level config reads find *something*:
       # a missing key should surface as a test failure, never as a collection
