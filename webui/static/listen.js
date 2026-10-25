@@ -1,8 +1,10 @@
 /*
  * Listen: episode library and studio.
  *
- * The library is newest-first and grouped by pillar. Play hands the page
- * <audio> to NlpPlayer so the shell mini player keeps the same position.
+ * The library is newest-first and grouped by pillar. Playing is done by the
+ * one player in player-core.js (the bar's <audio>); every transport on this
+ * page is a view of it, and the episode on screen only follows the audio when
+ * it is the episode the player holds.
  * Script text is built with text nodes. Nothing here calls generate or
  * synthesis except the two explicit buttons.
  *
@@ -91,6 +93,8 @@
 
   var RA = global.ReadAlong ||
     (typeof require === 'function' ? require('./readalong.js') : null);
+  var PC = global.NlpPlayerCore ||
+    (typeof require === 'function' ? require('./player-core.js') : null);
   // Where in the reading surface the spoken line settles: a little above the
   // middle, the way a transcript keeps what is coming in view.
   var READ_ANCHOR = 0.38;
@@ -240,7 +244,11 @@
     var audioRunStatus = document.getElementById('audio-run-status');
     var audioProgressBar = document.getElementById('audio-progress-bar');
     var audioStages = document.getElementById('audio-stages');
-    var episodePlayer = document.getElementById('episode-player');
+    // The only <audio> in the document is the bar's; this page drives it through
+    // the same controller the bar does.
+    var episodePlayer = document.getElementById('mini-player-audio');
+    var controller = global.NlpPlayer && typeof global.NlpPlayer.get === 'function'
+      ? global.NlpPlayer.get() : null;
     var audioFileHint = document.getElementById('audio-file-hint');
     var audioFilePath = document.getElementById('audio-file-path');
     var playerCover = document.getElementById('player-cover');
@@ -253,6 +261,8 @@
     var playerTime = document.getElementById('player-time');
     var playerRate = document.getElementById('player-rate');
     var playerNoAudio = document.getElementById('player-no-audio');
+    var idleDuration = 0;
+    var landing = null;
     var groupsEl = document.getElementById('episode-groups');
     var libraryPillar = document.getElementById('library-pillar');
     var libraryEmpty = document.getElementById('listen-empty');
@@ -274,6 +284,8 @@
       if (global.localStorage.getItem('nlp:scriptView') === 'script') scriptView = 'script';
     } catch (e) { /* private window: the default stands */ }
     if (new URLSearchParams(global.location.search).get('line') != null) scriptView = 'script';
+    // The bar's "Read along" link says it came to follow the audio.
+    if (new URLSearchParams(global.location.search).get('view') === 'readalong') scriptView = 'readalong';
 
     var currentScriptId = null;
     var loadedBodyId = null;
@@ -323,16 +335,15 @@
       }
     }
 
-    function assignSource(href) {
-      if (!episodePlayer || !href) return;
-      if (pathOf(episodePlayer.currentSrc || episodePlayer.src) === href) return;
-      var wasPlaying = !episodePlayer.paused && !!(episodePlayer.currentSrc || episodePlayer.src);
-      episodePlayer.preload = 'metadata';
-      episodePlayer.src = href;
-      if (wasPlaying) {
-        var pending = episodePlayer.play();
-        if (pending && typeof pending.catch === 'function') pending.catch(function () {});
-      }
+    /* The player's snapshot, but only while it holds the episode on screen. */
+    function liveSnapshot() {
+      if (!controller || !currentAudioHref) return null;
+      var snap = controller.snapshot();
+      return snap.track && snap.track.src === currentAudioHref ? snap : null;
+    }
+
+    function episodeTitle() {
+      return (scriptTitle && scriptTitle.textContent) || 'Episode';
     }
 
     function setCover(pillarId, initial) {
@@ -697,8 +708,7 @@
     }
 
     function readAudioMatches() {
-      if (!episodePlayer || !currentAudioHref) return false;
-      return pathOf(episodePlayer.currentSrc || episodePlayer.src) === currentAudioHref;
+      return !!liveSnapshot();
     }
 
     function readVisible() {
@@ -777,10 +787,8 @@
     function updateReadPosition(force) {
       if (!readModel || !readVisible()) return;
       var pos = { line: -1, word: -1 };
-      if (readAudioMatches()) {
-        var time = episodePlayer.currentTime;
-        if (isFinite(time)) pos = RA.positionAt(readModel, time * 1000);
-      }
+      var live = liveSnapshot();
+      if (live && isFinite(live.time)) pos = RA.positionAt(readModel, live.time * 1000);
       if (!force && pos.line === readActive.line && pos.word === readActive.word) return;
       var lineChanged = pos.line !== readActive.line;
       if (readActive.line !== -1) {
@@ -815,7 +823,8 @@
     function readLoop() {
       readRaf = 0;
       updateReadPosition(false);
-      if (episodePlayer && !episodePlayer.paused && !episodePlayer.ended && readVisible()) {
+      var live = liveSnapshot();
+      if (live && live.playing && !(episodePlayer && episodePlayer.ended) && readVisible()) {
         readRaf = global.requestAnimationFrame(readLoop);
       }
     }
@@ -826,16 +835,13 @@
 
     /* Seek to a time and play from there; reattach auto-scroll. */
     function playFrom(seconds) {
-      if (!episodePlayer || !currentAudioHref || seconds == null) return;
-      assignSource(currentAudioHref);
-      if (episodePlayer.readyState >= 1) {
-        try { episodePlayer.currentTime = seconds; } catch (e) { /* ignore */ }
-      } else {
-        episodePlayer.dataset.pending = String(seconds);
-      }
+      if (!controller || !currentAudioHref || seconds == null) return;
+      controller.load({
+        src: currentAudioHref,
+        script_id: currentScriptId || '',
+        title: episodeTitle(),
+      }, { at: seconds, play: true });
       setFollowing(true);
-      var pending = episodePlayer.play();
-      if (pending && typeof pending.catch === 'function') pending.catch(function () {});
       updateReadPosition(true);
     }
 
@@ -953,6 +959,86 @@
       updateViewSwitch();
     }
 
+    /*
+     * Land where the audio is.
+     *
+     * Used when the episode on screen is the one the player holds and the
+     * reader came to follow it: the read-along view, the spoken line settled
+     * in its box, and the box itself on screen above the bar. A different
+     * episode is left alone: looking at it does not take over the one playing.
+     */
+    function pageScrollToRead() {
+      if (!readEl || readEl.hidden) return;
+      var rect = readEl.getBoundingClientRect();
+      var bar = document.getElementById('mini-player');
+      var reserved = bar && !bar.hidden ? Math.max(0, global.innerHeight - bar.getBoundingClientRect().top) : 0;
+      var visible = global.innerHeight - reserved;
+      var gap = rect.height >= visible ? 16 : (visible - rect.height) / 2;
+      global.scrollTo({ top: Math.max(0, global.pageYOffset + rect.top - gap), behavior: 'auto' });
+    }
+
+    /* An episode that is not playing: open the page at its card, not at the top of the library. */
+    function scrollToEpisode() {
+      if (!scriptArea || scriptArea.hidden) return;
+      var rect = scriptArea.getBoundingClientRect();
+      global.scrollTo({ top: Math.max(0, global.pageYOffset + rect.top - 16), behavior: 'auto' });
+    }
+
+    function landAtPlayback(forceReadAlong) {
+      if (!controller) return false;
+      var arrival = PC.landingFor(controller.snapshot(), {
+        script_id: currentScriptId,
+        src: currentAudioHref,
+      });
+      if (!arrival.attached) {
+        scrollToEpisode();
+        return false;
+      }
+      if (forceReadAlong && scriptView !== 'readalong') setScriptView('readalong', false);
+      if (!readVisible()) {
+        scrollToEpisode();
+        return true;
+      }
+      setFollowing(true);
+      updateReadPosition(true);
+      if (readModel && readActive.line !== -1) {
+        // The word, not the line: a paragraph can be taller than the box.
+        var lineNo = readModel.lines[readActive.line].line;
+        var words = readWordEls[lineNo];
+        var target = (words && readActive.word !== -1 && words[readActive.word]) || readLineEls[lineNo];
+        if (target) scrollReadTo(target, true);
+      }
+      pageScrollToRead();
+      return true;
+    }
+
+    /* The reader scrolling is the end of the landing: nothing below moves the page again. */
+    function cancelLanding() {
+      if (landing) landing.live = false;
+    }
+
+    /* The bar's title and Read along button, answered in place so the audio never restarts. */
+    function openPlayingEpisode(detail) {
+      var id = detail && detail.script_id;
+      var src = detail && detail.src;
+      var here = id ? (id === currentScriptId && id === loadedBodyId) : (!!src && src === currentAudioHref);
+      if (!id && !here) return false;
+      try {
+        var url = new URL(global.location.href);
+        if (id) url.searchParams.set('script', id);
+        url.searchParams.set('view', 'readalong');
+        url.searchParams.delete('line');
+        global.history.replaceState({}, '', url);
+      } catch (e) { /* the landing works without a shareable URL */ }
+      if (here) {
+        landing = { force: true, live: true };
+        landAtPlayback(true);
+      } else {
+        loadScript(id, { land: true, force: true });
+      }
+      return true;
+    }
+
     /* The timeline can arrive after the page did: recording finishes while it is open. */
     function refreshTimeline() {
       if (!currentScriptId) return Promise.resolve();
@@ -1025,10 +1111,10 @@
       if (readForwardBtn) readForwardBtn.addEventListener('click', function () { seekPlayer(30); });
       if (viewReadBtn) viewReadBtn.addEventListener('click', function () { setScriptView('readalong', true); });
       if (viewScriptBtn) viewScriptBtn.addEventListener('click', function () { setScriptView('script', true); });
-      if (episodePlayer) {
-        episodePlayer.addEventListener('play', startReadLoop);
-        ['pause', 'seeked', 'timeupdate', 'loadedmetadata', 'ended', 'emptied'].forEach(function (name) {
-          episodePlayer.addEventListener(name, function () { updateReadPosition(false); });
+      if (controller) {
+        controller.subscribe(function (snap) {
+          if (snap.playing) startReadLoop();
+          updateReadPosition(false);
         });
       }
     }
@@ -1451,19 +1537,15 @@
     function showStoredAudio(meta) {
       var href = meta && meta.file_name ? audioHref(meta.file_name) : null;
       currentAudioHref = href || '';
+      idleDuration = Number(meta && meta.duration_seconds) || 0;
       if (!href) {
         if (playerNoAudio) playerNoAudio.hidden = false;
         if (playerToggle) playerToggle.disabled = true;
         if (audioFileHint) audioFileHint.hidden = true;
-        if (episodePlayer) {
-          episodePlayer.removeAttribute('src');
-          try { episodePlayer.load(); } catch (e) { /* ignore */ }
-        }
         renderPlayer();
         return;
       }
       if (playerNoAudio) playerNoAudio.hidden = true;
-      assignSource(href);
       if (playerToggle) playerToggle.disabled = false;
       if (audioFilePath) audioFilePath.textContent = meta.file_name;
       if (audioFileHint) audioFileHint.hidden = false;
@@ -1518,21 +1600,21 @@
       updateViewSwitch();
     }
 
+    /*
+     * Paint this page's transports from the player. They show the live
+     * position only while the player holds the episode on screen; otherwise
+     * they sit at the start of it and Play loads it.
+     */
     function renderPlayer() {
-      if (!episodePlayer) return;
-      var time = 0;
-      var duration = 0;
-      var paused = true;
-      if (episodePlayer.readyState >= 1) {
-        if (isFinite(episodePlayer.currentTime)) time = episodePlayer.currentTime;
-        if (isFinite(episodePlayer.duration)) duration = episodePlayer.duration;
-        paused = !!episodePlayer.paused;
-      }
+      var live = liveSnapshot();
+      var time = live ? live.time : 0;
+      var duration = live ? live.duration : idleDuration;
+      var paused = live ? live.paused : true;
       if (playerRange && !scrubbing) {
         var max = duration > 0 ? duration : 0;
         playerRange.max = String(max);
         playerRange.value = String(Math.min(time, max || time));
-        playerRange.disabled = !(duration > 0);
+        playerRange.disabled = !(live && live.duration > 0);
         playerRange.setAttribute('aria-valuemin', '0');
         playerRange.setAttribute('aria-valuemax', String(max));
         playerRange.setAttribute('aria-valuenow', String(Math.floor(time)));
@@ -1543,40 +1625,33 @@
           ? formatClock(time) + ' / ' + formatClock(duration)
           : formatClock(time);
       }
-      if (playerToggle) {
-        var label = paused ? 'Play' : 'Pause';
-        playerToggle.textContent = label;
-        playerToggle.setAttribute('aria-label', label);
-      }
-      if (readToggleBtn) {
-        var readLabel = paused ? 'Play' : 'Pause';
-        readToggleBtn.textContent = readLabel;
-        readToggleBtn.setAttribute('aria-label', readLabel);
+      var label = paused ? 'Play' : 'Pause';
+      [playerToggle, readToggleBtn].forEach(function (button) {
+        if (!button) return;
+        button.textContent = label;
+        button.setAttribute('aria-label', label);
+      });
+      // Skipping needs a place to skip from.
+      [playerBack, playerForward, readBackBtn, readForwardBtn].forEach(function (button) {
+        if (button) button.disabled = !live;
+      });
+      if (playerRate && controller) {
+        var rate = String(controller.snapshot().rate);
+        if (playerRate.value !== rate) playerRate.value = rate;
       }
       if (readTimeEl && playerTime) readTimeEl.textContent = playerTime.textContent;
-      var playingSrc = pathOf(episodePlayer.currentSrc || episodePlayer.src);
+      var held = controller ? controller.snapshot() : null;
+      var playingSrc = held && held.track ? held.track.src : '';
+      var playingNow = !!(held && held.playing);
       document.querySelectorAll('.episode-play').forEach(function (button) {
-        var same = button.getAttribute('data-src') === playingSrc && playingSrc && !paused;
+        var same = !!playingSrc && button.getAttribute('data-src') === playingSrc && playingNow;
         button.textContent = same ? 'Pause' : 'Play';
         button.setAttribute('aria-label', same ? 'Pause' : 'Play');
       });
     }
 
     function seekPlayer(delta) {
-      if (!episodePlayer) return;
-      var duration = episodePlayer.readyState >= 1 ? episodePlayer.duration : NaN;
-      var base = episodePlayer.readyState >= 1 && isFinite(episodePlayer.currentTime)
-        ? episodePlayer.currentTime
-        : Number(episodePlayer.dataset.pending || 0);
-      var next = base + delta;
-      if (next < 0) next = 0;
-      if (isFinite(duration) && duration > 0 && next > duration) next = duration;
-      if (episodePlayer.readyState >= 1) {
-        try { episodePlayer.currentTime = next; } catch (e) { /* ignore */ }
-      } else {
-        episodePlayer.dataset.pending = String(next);
-      }
-      renderPlayer();
+      if (controller && liveSnapshot()) controller.seekBy(delta);
     }
 
     function selectedVoiceMeta() {
@@ -1679,8 +1754,9 @@
       return options;
     }
 
-    function loadScript(scriptId) {
+    function loadScript(scriptId, opts) {
       if (!scriptId) return Promise.resolve();
+      opts = opts || {};
       return fetch('/api/podcast/' + encodeURIComponent(scriptId)).then(function (res) {
         return res.json().then(function (data) {
           if (!res.ok) throw new Error(data.detail || 'Failed to load script');
@@ -1693,7 +1769,18 @@
           applyScriptView(script, scriptId);
           loadedBodyId = scriptId;
           syncAudioControls();
-          return loadFactcheck(scriptId, script.script || '');
+          var mine = null;
+          if (opts.land) {
+            mine = landing = { force: !!opts.force, live: true };
+            landAtPlayback(mine.force);
+          }
+          return loadFactcheck(scriptId, script.script || '').then(function () {
+            // The fact check changes the height of what sits above the script;
+            // land again so the read-along is still where the reader was sent.
+            if (!mine || landing !== mine) return;
+            if (mine.live) landAtPlayback(mine.force);
+            landing = null;
+          });
         });
       }).catch(function (err) {
         if (statusEl) statusEl.textContent = 'Error loading script: ' + err.message;
@@ -1758,7 +1845,6 @@
         var href = pathOf(run.result.audio_url);
         if (audioHref(run.result.file_name) || (href && href.indexOf('/api/podcast/audio/') === 0)) {
           currentAudioHref = audioHref(run.result.file_name) || href;
-          assignSource(currentAudioHref);
         }
         if (playerNoAudio) playerNoAudio.hidden = true;
         if (playerToggle) playerToggle.disabled = !currentAudioHref;
@@ -2007,23 +2093,20 @@
         if (scriptId) loadScript(scriptId);
         return;
       }
-      var current = episodePlayer ? pathOf(episodePlayer.currentSrc || episodePlayer.src) : '';
-      if (episodePlayer && current === src && !episodePlayer.paused) {
-        episodePlayer.pause();
-        renderPlayer();
-        return;
-      }
       if (scriptId) currentScriptId = scriptId;
       if (title && scriptTitle) scriptTitle.textContent = title;
       currentAudioHref = src;
-      assignSource(src);
       if (playerToggle) playerToggle.disabled = false;
       if (playerNoAudio) playerNoAudio.hidden = true;
       if (scriptArea) scriptArea.hidden = false;
-      if (episodePlayer) {
-        var pending = episodePlayer.play();
-        if (pending && typeof pending.catch === 'function') pending.catch(function () {});
+      if (controller) {
+        if (liveSnapshot()) {
+          controller.toggle();
+        } else {
+          controller.load({ src: src, script_id: scriptId || '', title: title || episodeTitle() }, { play: true });
+        }
       }
+      renderPlayer();
       if (scriptId && scriptId !== loadedBodyId) loadScript(scriptId);
     }
 
@@ -2132,7 +2215,7 @@
     if (previewVoiceBtn) {
       previewVoiceBtn.addEventListener('click', function () {
         if (!voiceSelect || !voiceSelect.value || !voicePreview) return;
-        if (episodePlayer && !episodePlayer.paused) episodePlayer.pause();
+        if (controller) controller.pause();
         voicePreview.src = '/api/podcast/tts/voices/preview?path=' + encodeURIComponent(voiceSelect.value) + '&t=' + Date.now();
         voicePreview.hidden = false;
         voicePreview.load();
@@ -2146,29 +2229,7 @@
       });
     }
 
-    if (episodePlayer) {
-      episodePlayer.addEventListener('play', function () {
-        if (!global.NlpPlayer || typeof global.NlpPlayer.attach !== 'function') return;
-        global.NlpPlayer.attach(episodePlayer, {
-          script_id: currentScriptId || '',
-          title: (scriptTitle && scriptTitle.textContent) || 'Episode',
-          href: currentScriptId
-            ? ('/podcast/?script=' + encodeURIComponent(currentScriptId))
-            : '/podcast/',
-        });
-        renderPlayer();
-      });
-      ['pause', 'timeupdate', 'ended', 'ratechange', 'loadedmetadata'].forEach(function (name) {
-        episodePlayer.addEventListener(name, function () {
-          if (name === 'loadedmetadata' && episodePlayer.dataset.pending) {
-            var target = Number(episodePlayer.dataset.pending);
-            delete episodePlayer.dataset.pending;
-            try { episodePlayer.currentTime = target; } catch (e) { /* ignore */ }
-          }
-          renderPlayer();
-        });
-      });
-    }
+    if (controller) controller.subscribe(renderPlayer);
     bindReadAlong();
     if (playerToggle) {
       playerToggle.addEventListener('click', function () {
@@ -2184,23 +2245,18 @@
       playerRange.addEventListener('change', function () { scrubbing = false; });
       playerRange.addEventListener('input', function () {
         var next = Number(playerRange.value);
-        if (episodePlayer && episodePlayer.readyState >= 1) {
-          try { episodePlayer.currentTime = next; } catch (e) { /* ignore */ }
-        }
-        playerRange.setAttribute('aria-valuetext', formatValueText(next, episodePlayer && episodePlayer.duration));
-        if (playerTime && episodePlayer && isFinite(episodePlayer.duration) && episodePlayer.duration > 0) {
-          playerTime.textContent = formatClock(next) + ' / ' + formatClock(episodePlayer.duration);
+        var live = liveSnapshot();
+        if (!live) return;
+        controller.seekTo(next);
+        playerRange.setAttribute('aria-valuetext', formatValueText(next, live.duration));
+        if (playerTime && live.duration > 0) {
+          playerTime.textContent = formatClock(next) + ' / ' + formatClock(live.duration);
         }
       });
     }
     if (playerRate) {
       playerRate.addEventListener('change', function () {
-        var next = Number(playerRate.value);
-        if (episodePlayer) {
-          try { episodePlayer.playbackRate = next; } catch (e) { /* ignore */ }
-        }
-        var mini = document.getElementById('mini-player-rate');
-        if (mini) mini.value = playerRate.value;
+        if (controller) controller.setRate(playerRate.value);
       });
     }
 
@@ -2214,7 +2270,7 @@
           return;
         }
         var open = target.closest('.episode-open');
-        if (open) loadScript(open.getAttribute('data-script-id'));
+        if (open) loadScript(open.getAttribute('data-script-id'), { land: true });
       });
     }
     document.addEventListener('keydown', function (event) {
@@ -2239,7 +2295,21 @@
 
     var params = new URLSearchParams(global.location.search);
     var urlScriptId = params.get('script');
-    if (urlScriptId) loadScript(urlScriptId);
+    ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (name) {
+      global.addEventListener(name, cancelLanding, { passive: true });
+    });
+    document.addEventListener('nlp:player-open', function (event) {
+      if (openPlayingEpisode(event.detail)) event.preventDefault();
+    });
+    if (urlScriptId) {
+      var cameToFollow = params.get('view') === 'readalong';
+      // A deep link to one line is the reader's own destination; only the bar's link overrides it.
+      var inStudio = viewMode(params) === 'studio';
+      loadScript(urlScriptId, {
+        land: !inStudio && (cameToFollow || params.get('line') == null),
+        force: cameToFollow,
+      });
+    }
 
     (async function reattach() {
       if (!global.RunProgress) return;

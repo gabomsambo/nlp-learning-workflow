@@ -17,7 +17,6 @@ const {
   isSafeAudioSrc,
   toStoredSrc,
   parsePlayerState,
-  handoffTime,
   createRegistry,
   groupShortcuts,
   matchSearch,
@@ -144,12 +143,6 @@ test('player state keeps a safe audio path and refuses anything else', () => {
   }));
   assert.equal(oddRate.rate, 1);
   assert.equal(oddRate.href, '/podcast/');
-});
-
-test('handoff keeps the shell position when it was already playing', () => {
-  assert.equal(handoffTime(42, true, 1), 42);
-  assert.equal(handoffTime(42, false, 8), 8);
-  assert.equal(handoffTime(42, false, 0), 0);
 });
 
 test('shortcut registry is replaceable and groups Global first', () => {

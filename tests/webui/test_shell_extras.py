@@ -43,12 +43,17 @@ def test_shell_exposes_palette_help_and_player():
     assert 'data-open-settings' in home
     assert ">0<" not in home
     script = (STATIC / "shell.js").read_text()
-    assert "nlp:player" in script
+    assert "nlp:player" in (STATIC / "player-core.js").read_text()
     assert "NlpShortcuts" in script
     podcast = (TEMPLATES / "podcast.html").read_text()
     assert "/static/listen.js" in podcast
     listen = (STATIC / "listen.js").read_text()
-    assert "NlpPlayer.attach" in listen
+    assert "NlpPlayer.get" in listen
+    # One <audio> per document: the Listen page drives the bar's, not its own.
+    assert 'id="episode-player"' not in podcast
+    assert "/static/player-core.js" in home
+    assert home.index("/static/player-core.js") < home.index("/static/shell.js")
+    assert 'id="mini-player-open"' in home
     papers = (TEMPLATES / "papers.html").read_text()
     assert "URLSearchParams" in papers
     assert ".get('paper')" in papers

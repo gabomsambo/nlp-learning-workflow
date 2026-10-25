@@ -15,20 +15,21 @@
  *     run: function () {}
  *   });
  *
- * The mini player resumes from localStorage['nlp:player'] and does not
- * autoplay. The Listen page calls NlpPlayer.attach(audio, meta) when its
- * episode element starts.
+ * The bar is one view of the single player in player-core.js. It restores
+ * localStorage['nlp:player'] paused at the saved place (and carries on playing
+ * only when the page before it was playing a moment ago). The Listen page and
+ * the Today page drive the same controller, NlpPlayer.get().
  *
  * Nodes are createElement + textContent. Nothing here concatenates markup.
  */
 (function (global) {
   'use strict';
 
-  var PLAYER_KEY = 'nlp:player';
+  var PC = global.NlpPlayerCore ||
+    (typeof require === 'function' ? require('./player-core.js') : null);
   var PAPERS_URL = '/api/papers/?limit=200';
   var CHORD_MS = 1000;
   var PAPER_LIMIT = 8;
-  var RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
 
   var NAV_COMMANDS = [
     { id: 'today', label: 'Today', href: '/', sequence: ['g', 't'], keys: 'G then T' },
@@ -110,118 +111,14 @@
     return { papers: matched, commands: commands };
   }
 
-  function formatClock(seconds) {
-    if (!isFinite(seconds) || seconds < 0) return '0:00';
-    seconds = Math.floor(seconds);
-    var h = Math.floor(seconds / 3600);
-    var m = Math.floor((seconds % 3600) / 60);
-    var s = seconds % 60;
-    function pad(n) { return (n < 10 ? '0' : '') + n; }
-    if (h) return h + ':' + pad(m) + ':' + pad(s);
-    return m + ':' + pad(s);
-  }
-
-  function minuteSecondPhrase(seconds) {
-    seconds = Math.floor(Math.max(0, isFinite(seconds) ? seconds : 0));
-    var h = Math.floor(seconds / 3600);
-    var m = Math.floor((seconds % 3600) / 60);
-    var s = seconds % 60;
-    if (h) return h + ' hours ' + m + ' minutes ' + s;
-    return m + ' minutes ' + s;
-  }
-
-  function formatValueText(current, duration) {
-    if (!isFinite(duration) || duration <= 0) return minuteSecondPhrase(current);
-    return minuteSecondPhrase(current) + ' of ' + minuteSecondPhrase(duration);
-  }
-
-  function clampSeek(time, delta, duration) {
-    var next = (isFinite(time) ? time : 0) + delta;
-    if (next < 0) next = 0;
-    if (isFinite(duration) && duration > 0 && next > duration) next = duration;
-    return next;
-  }
-
-  function normalizeRate(rate) {
-    var n = Number(rate);
-    for (var i = 0; i < RATES.length; i++) {
-      if (Math.abs(RATES[i] - n) < 0.01) return RATES[i];
-    }
-    return 1;
-  }
-
-  function isSafeAudioSrc(src) {
-    if (typeof src !== 'string' || !src) return false;
-    if (src.indexOf('..') !== -1 || src.indexOf('\\') !== -1) return false;
-    if (src.indexOf('\n') !== -1 || src.indexOf('\r') !== -1) return false;
-    return src.indexOf('/api/podcast/audio/') === 0;
-  }
-
-  function isSafeAppHref(href) {
-    if (typeof href !== 'string' || href.charAt(0) !== '/') return false;
-    if (href.indexOf('//') !== -1 || href.indexOf('..') !== -1) return false;
-    if (href.indexOf('\\') !== -1) return false;
-    return true;
-  }
-
-  function toStoredSrc(src, base) {
-    if (typeof src !== 'string' || !src) return '';
-    if (src.indexOf('//') === -1 && src.charAt(0) === '/') {
-      var hash = src.indexOf('#');
-      return hash === -1 ? src : src.slice(0, hash);
-    }
-    try {
-      var url = new URL(src, base || 'http://localhost');
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
-      return url.pathname + url.search;
-    } catch (e) {
-      return '';
-    }
-  }
-
-  function cleanTitle(title) {
-    if (typeof title !== 'string') return 'Episode';
-    var text = title.replace(/\s+/g, ' ').trim();
-    if (!text) return 'Episode';
-    return text.slice(0, 180);
-  }
-
-  function fallbackHref(scriptId) {
-    if (typeof scriptId === 'string' && /^[A-Za-z0-9-]+$/.test(scriptId)) {
-      return '/podcast/?script=' + encodeURIComponent(scriptId);
-    }
-    return '/podcast/';
-  }
-
-  function parsePlayerState(raw) {
-    if (!raw) return null;
-    var data;
-    try {
-      data = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch (e) {
-      return null;
-    }
-    if (!data || typeof data !== 'object') return null;
-    var src = toStoredSrc(data.src, 'http://localhost');
-    if (!isSafeAudioSrc(src)) return null;
-    var time = Number(data.time);
-    if (!isFinite(time) || time < 0) time = 0;
-    if (time > 48 * 3600) time = 48 * 3600;
-    var scriptId = typeof data.script_id === 'string' ? data.script_id.slice(0, 80) : '';
-    return {
-      script_id: scriptId,
-      src: src,
-      time: time,
-      rate: normalizeRate(data.rate),
-      title: cleanTitle(data.title),
-      href: isSafeAppHref(data.href) ? data.href : fallbackHref(scriptId),
-    };
-  }
-
-  function handoffTime(shellTime, shellPlaying, pageTime) {
-    if (shellPlaying && isFinite(shellTime)) return shellTime;
-    return isFinite(pageTime) && pageTime > 0 ? pageTime : 0;
-  }
+  var formatClock = PC.formatClock;
+  var formatValueText = PC.formatValueText;
+  var clampSeek = PC.clampSeek;
+  var normalizeRate = PC.normalizeRate;
+  var isSafeAudioSrc = PC.isSafeAudioSrc;
+  var isSafeAppHref = PC.isSafeAppHref;
+  var toStoredSrc = PC.toStoredSrc;
+  var parsePlayerState = PC.parsePlayerState;
 
   function createRegistry() {
     var entries = [];
@@ -333,10 +230,7 @@
 
   var shortcuts = createRegistry();
   var chord = null;
-  var shellAudio = null;
-  var pageAudio = null;
-  var pendingSeek = null;
-  var lastPersist = 0;
+  var player = null;
   var papersCache = null;
   var papersFlight = null;
   var paletteItems = [];
@@ -345,22 +239,22 @@
 
   function readStored() {
     try {
-      return parsePlayerState(global.localStorage.getItem(PLAYER_KEY));
+      return parsePlayerState(global.localStorage.getItem(PC.PLAYER_KEY));
     } catch (e) {
       return null;
     }
   }
 
-  function writeStored(state) {
-    try {
-      if (!state) global.localStorage.removeItem(PLAYER_KEY);
-      else global.localStorage.setItem(PLAYER_KEY, JSON.stringify(state));
-    } catch (e) {}
-  }
-
-  function activeAudio() {
-    if (pageAudio && pageAudio.isConnected) return pageAudio;
-    return shellAudio;
+  /* The one controller, built on the bar's own <audio>. Null where there is no bar. */
+  function getPlayer() {
+    if (player) return player;
+    if (typeof document === 'undefined') return null;
+    var audio = document.getElementById('mini-player-audio');
+    if (!audio) return null;
+    var storage = null;
+    try { storage = global.localStorage; } catch (e) { storage = null; }
+    player = PC.createPlayer({ audio: audio, storage: storage, base: global.location.href });
+    return player;
   }
 
   function runCommand(command) {
@@ -702,235 +596,120 @@
     document.documentElement.setAttribute('data-player', expanded ? 'expanded' : 'on');
   }
 
-  function showPlayer(state) {
-    var bar = document.getElementById('mini-player');
-    var title = document.getElementById('mini-player-title');
-    var rate = document.getElementById('mini-player-rate');
-    if (!bar || !state) return;
-    bar.hidden = false;
-    syncPlayerChrome(bar);
-    if (title) {
-      title.textContent = state.title || 'Episode';
-      title.setAttribute('href', state.href || '/podcast/');
+  /* "1:43 / 10:54" as two spans, so a phone's one-row bar can keep the first and drop the second. */
+  function paintClock(clock, time, duration) {
+    if (!clock) return;
+    var now = clock.querySelector('.mini-time-now');
+    var total = clock.querySelector('.mini-time-total');
+    if (!now || !total) {
+      clock.replaceChildren();
+      now = document.createElement('span');
+      now.className = 'mini-time-now';
+      total = document.createElement('span');
+      total.className = 'mini-time-total';
+      clock.appendChild(now);
+      clock.appendChild(total);
     }
-    if (rate) rate.value = String(state.rate || 1);
-    renderTransport();
+    now.textContent = formatClock(time);
+    total.textContent = duration > 0 ? ' / ' + formatClock(duration) : '';
   }
 
-  function renderTransport() {
-    var stored = readStored();
-    var audio = activeAudio();
-    var time = stored ? stored.time : 0;
-    var duration = 0;
-    var paused = true;
-    if (audio && audio.readyState >= 1) {
-      if (isFinite(audio.currentTime)) time = audio.currentTime;
-      if (isFinite(audio.duration)) duration = audio.duration;
-      paused = !!audio.paused;
+  /* Paint the bar from the player's snapshot. Every control on it is a view of that. */
+  function renderBar(snap) {
+    var bar = document.getElementById('mini-player');
+    if (!bar || !snap) return;
+    if (!snap.track) {
+      bar.hidden = true;
+      syncPlayerChrome(bar);
+      return;
     }
+    bar.hidden = false;
+    syncPlayerChrome(bar);
+    var href = PC.readAlongHref(snap.track.script_id, snap.track.href);
+    var title = document.getElementById('mini-player-title');
+    if (title) {
+      if (title.textContent !== snap.track.title) title.textContent = snap.track.title;
+      title.setAttribute('href', href);
+    }
+    var open = document.getElementById('mini-player-open');
+    if (open) open.setAttribute('href', href);
+    var rate = document.getElementById('mini-player-rate');
+    if (rate && rate.value !== String(snap.rate)) rate.value = String(snap.rate);
     var range = document.getElementById('mini-player-range');
     var clock = document.getElementById('mini-player-time');
     var toggle = document.getElementById('mini-player-toggle');
     if (range && !scrubbing) {
-      var max = duration > 0 ? duration : 0;
+      var max = snap.duration > 0 ? snap.duration : 0;
       range.max = String(max);
-      range.value = String(Math.min(time, max || time));
-      range.disabled = !(duration > 0);
-      range.setAttribute('aria-valuetext', formatValueText(time, duration));
+      range.value = String(Math.min(snap.time, max || snap.time));
+      range.disabled = !(snap.duration > 0);
+      range.setAttribute('aria-valuetext', formatValueText(snap.time, snap.duration));
     }
-    if (clock) {
-      clock.textContent = formatClock(time) + (duration > 0 ? ' / ' + formatClock(duration) : '');
-    }
+    paintClock(clock, snap.time, snap.duration);
     if (toggle) {
-      toggle.textContent = paused ? 'Play' : 'Pause';
-      toggle.setAttribute('aria-label', paused ? 'Play' : 'Pause');
+      var label = snap.paused ? 'Play' : 'Pause';
+      if (toggle.textContent !== label) toggle.textContent = label;
+      toggle.setAttribute('aria-label', label);
     }
   }
 
-  function persistActive(force) {
-    var stored = readStored();
-    if (!stored) return;
-    var audio = activeAudio();
-    if (!audio || audio.readyState < 1) return;
-    var src = toStoredSrc(audio.currentSrc || audio.src || '', global.location.href);
-    if (src !== stored.src) return;
-    var now = Date.now();
-    if (!force && now - lastPersist < 1000) {
-      renderTransport();
-      return;
-    }
-    lastPersist = now;
-    stored.time = isFinite(audio.currentTime) ? audio.currentTime : stored.time;
-    stored.rate = normalizeRate(audio.playbackRate);
-    writeStored(stored);
-    renderTransport();
+  /*
+   * The bar's title and its Read along button open the episode that is
+   * playing. Pages that can show it in place (the Listen page) answer the
+   * nlp:player-open event and cancel it, so the click moves the view to the
+   * spot being spoken instead of reloading the page under a running audio.
+   * Everywhere else the link is a normal navigation to the episode's page.
+   */
+  function onOpenClick(event) {
+    if (event.defaultPrevented || event.button > 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var snap = player && player.snapshot();
+    if (!snap || !snap.track || typeof CustomEvent !== 'function') return;
+    var proceed = document.dispatchEvent(new CustomEvent('nlp:player-open', {
+      cancelable: true,
+      detail: { script_id: snap.track.script_id, src: snap.track.src },
+    }));
+    if (!proceed) event.preventDefault();
   }
 
-  function ensureShellSource(state) {
-    if (!shellAudio || !state) return;
-    var src = toStoredSrc(shellAudio.currentSrc || shellAudio.src || '', global.location.href);
-    if (src === state.src) return;
-    pendingSeek = state.time;
-    shellAudio.preload = 'metadata';
-    shellAudio.src = state.src;
-    try { shellAudio.playbackRate = state.rate; } catch (e) {}
-  }
-
-  function togglePlay() {
-    var stored = readStored();
-    var audio = activeAudio();
-    if (!stored || !audio) return;
-    if (!audio.paused) {
-      audio.pause();
-      persistActive(true);
-      return;
-    }
-    var src = toStoredSrc(audio.currentSrc || audio.src || '', global.location.href);
-    if (src !== stored.src) {
-      pendingSeek = stored.time;
-      audio.preload = 'metadata';
-      audio.src = stored.src;
-    }
-    try { audio.playbackRate = stored.rate; } catch (e) {}
-    var pending = audio.play();
-    if (pending && typeof pending.catch === 'function') pending.catch(function () {});
-  }
-
-  function seekBy(delta) {
-    var stored = readStored();
-    var audio = activeAudio();
-    if (!stored || !audio) return;
-    var duration = audio.readyState >= 1 ? audio.duration : NaN;
-    var base = audio.readyState >= 1 && isFinite(audio.currentTime) ? audio.currentTime : stored.time;
-    var next = clampSeek(base, delta, duration);
-    if (audio.readyState >= 1) {
-      try { audio.currentTime = next; } catch (e) {}
-    } else {
-      pendingSeek = next;
-    }
-    stored.time = next;
-    writeStored(stored);
-    renderTransport();
-  }
-
-  function bindAudio(audio) {
-    if (!audio || audio.__nlpPlayerBound) return;
-    audio.__nlpPlayerBound = true;
-    ['play', 'pause', 'seeked', 'ratechange', 'ended'].forEach(function (name) {
-      audio.addEventListener(name, function () { persistActive(true); });
-    });
-    audio.addEventListener('timeupdate', function () { persistActive(false); });
-  }
-
-  function attach(audio, meta) {
-    if (!audio) return null;
-    var src = toStoredSrc(audio.currentSrc || audio.src || '', global.location.href);
-    if (!isSafeAudioSrc(src)) return null;
-    meta = meta || {};
-    var stored = readStored();
-    var shellSrc = shellAudio
-      ? toStoredSrc(shellAudio.currentSrc || shellAudio.src || '', global.location.href)
-      : '';
-    var shellSame = !!(shellAudio && shellSrc === src);
-    var time = handoffTime(
-      shellSame ? shellAudio.currentTime : 0,
-      shellSame && !shellAudio.paused,
-      audio.currentTime
-    );
-    if (shellAudio && shellAudio !== audio) shellAudio.pause();
-    pageAudio = audio;
-    var rate = stored && stored.src === src ? stored.rate : normalizeRate(audio.playbackRate);
-    try { audio.playbackRate = rate; } catch (e) {}
-    if (isFinite(time) && Math.abs((audio.currentTime || 0) - time) > 0.35) {
-      try { audio.currentTime = time; } catch (e2) {}
-    }
-    var scriptId = typeof meta.script_id === 'string' ? meta.script_id.slice(0, 80) : '';
-    var state = {
-      script_id: scriptId,
-      src: src,
-      time: isFinite(audio.currentTime) ? audio.currentTime : time,
-      rate: rate,
-      title: cleanTitle(meta.title),
-      href: isSafeAppHref(meta.href) ? meta.href : fallbackHref(scriptId),
-    };
-    writeStored(state);
-    showPlayer(state);
-    bindAudio(audio);
-    return state;
-  }
-
+  /* Start an episode in the bar (the Today page's Play buttons). */
   function play(meta) {
+    var controller = getPlayer();
+    if (!controller) return null;
     meta = meta || {};
-    var src = toStoredSrc(meta.src || '', global.location && global.location.href);
-    if (!isSafeAudioSrc(src)) return null;
-    if (!shellAudio && typeof document !== 'undefined') {
-      shellAudio = document.getElementById('mini-player-audio');
-    }
-    if (pageAudio && pageAudio !== shellAudio && pageAudio.pause) pageAudio.pause();
-    pageAudio = null;
-    var stored = readStored();
-    var same = !!(stored && stored.src === src);
-    var scriptId = typeof meta.script_id === 'string' ? meta.script_id.slice(0, 80) : '';
-    var state = {
-      script_id: scriptId,
-      src: src,
-      time: same ? stored.time : 0,
-      rate: same ? stored.rate : normalizeRate(meta.rate),
-      title: cleanTitle(meta.title),
-      href: isSafeAppHref(meta.href) ? meta.href : fallbackHref(scriptId),
-    };
-    writeStored(state);
-    showPlayer(state);
-    if (!shellAudio) return state;
-    var current = toStoredSrc(shellAudio.currentSrc || shellAudio.src || '', global.location.href);
-    if (current !== src) {
-      pendingSeek = state.time;
-      shellAudio.preload = 'auto';
-      shellAudio.src = src;
-      try { shellAudio.playbackRate = state.rate; } catch (e) {}
-    }
-    var pending = shellAudio.play();
-    if (pending && typeof pending.catch === 'function') pending.catch(function () {});
-    return state;
+    return controller.load({
+      src: meta.src,
+      script_id: meta.script_id,
+      title: meta.title,
+      href: meta.href,
+    }, { play: true });
   }
 
   function wirePlayer() {
-    shellAudio = document.getElementById('mini-player-audio');
+    var controller = getPlayer();
+    if (!controller) return;
     var back = document.getElementById('mini-player-back');
     var toggle = document.getElementById('mini-player-toggle');
     var forward = document.getElementById('mini-player-forward');
     var range = document.getElementById('mini-player-range');
     var rate = document.getElementById('mini-player-rate');
-    if (!shellAudio) return;
-    bindAudio(shellAudio);
-    shellAudio.addEventListener('loadedmetadata', function () {
-      if (pendingSeek == null) return;
-      var target = pendingSeek;
-      pendingSeek = null;
-      try {
-        if (isFinite(shellAudio.duration) && target > shellAudio.duration) target = shellAudio.duration;
-        shellAudio.currentTime = target;
-      } catch (e) {}
-      renderTransport();
+    controller.subscribe(renderBar);
+    if (back) back.addEventListener('click', function () { controller.seekBy(-15); });
+    if (forward) forward.addEventListener('click', function () { controller.seekBy(30); });
+    if (toggle) toggle.addEventListener('click', function () { controller.toggle(); });
+    ['mini-player-title', 'mini-player-open'].forEach(function (id) {
+      var link = document.getElementById(id);
+      if (link) link.addEventListener('click', onOpenClick);
     });
-    if (back) back.addEventListener('click', function () { seekBy(-15); });
-    if (forward) forward.addEventListener('click', function () { seekBy(30); });
-    if (toggle) toggle.addEventListener('click', togglePlay);
     if (range) {
       range.addEventListener('pointerdown', function () { scrubbing = true; });
-      range.addEventListener('pointerup', function () { scrubbing = false; persistActive(true); });
-      range.addEventListener('change', function () { scrubbing = false; persistActive(true); });
+      range.addEventListener('pointerup', function () { scrubbing = false; renderBar(controller.snapshot()); });
+      range.addEventListener('change', function () { scrubbing = false; renderBar(controller.snapshot()); });
       range.addEventListener('input', function () {
-        var audio = activeAudio();
         var next = Number(range.value);
-        if (audio && audio.readyState >= 1) {
-          try { audio.currentTime = next; } catch (e) {}
-        }
-        range.setAttribute('aria-valuetext', formatValueText(next, audio && audio.duration));
-        var clock = document.getElementById('mini-player-time');
-        if (clock && audio && isFinite(audio.duration) && audio.duration > 0) {
-          clock.textContent = formatClock(next) + ' / ' + formatClock(audio.duration);
-        }
+        controller.seekTo(next);
+        range.setAttribute('aria-valuetext', formatValueText(next, controller.snapshot().duration));
+        paintClock(document.getElementById('mini-player-time'), next, controller.snapshot().duration);
       });
     }
     var expand = document.getElementById('mini-player-expand');
@@ -944,25 +723,17 @@
         syncPlayerChrome(bar);
       });
     }
-    if (rate) {
-      rate.addEventListener('change', function () {
-        var next = normalizeRate(rate.value);
-        var audio = activeAudio();
-        if (audio) {
-          try { audio.playbackRate = next; } catch (e) {}
-        }
-        var stored = readStored();
-        if (stored) {
-          stored.rate = next;
-          writeStored(stored);
-        }
-      });
-    }
-    global.addEventListener('pagehide', function () { persistActive(true); });
-    var state = readStored();
-    if (!state) return;
-    showPlayer(state);
-    if (!(pageAudio && pageAudio.isConnected)) ensureShellSource(state);
+    if (rate) rate.addEventListener('change', function () { controller.setRate(rate.value); });
+    // Leaving the page ends this <audio>. The saved place carries to the next one,
+    // and a stamp asks it to carry on playing if this one was.
+    global.addEventListener('pagehide', function () { controller.suspend(true); });
+    global.addEventListener('pageshow', function (event) {
+      // Back/forward can hand over this page from the cache with its audio
+      // stopped at an older place; the saved one is newer.
+      if (event && event.persisted) controller.restore();
+    });
+    controller.restore();
+    renderBar(controller.snapshot());
   }
 
   function labelSearchKeys() {
@@ -1017,7 +788,7 @@
   installGlobals();
   global.NlpShortcuts = shortcuts;
   global.NlpPlayer = {
-    attach: attach,
+    get: getPlayer,
     play: play,
     read: readStored,
   };
@@ -1042,7 +813,6 @@
       isSafeAppHref: isSafeAppHref,
       toStoredSrc: toStoredSrc,
       parsePlayerState: parsePlayerState,
-      handoffTime: handoffTime,
       createRegistry: createRegistry,
       groupShortcuts: groupShortcuts,
       matchSearch: matchSearch,
