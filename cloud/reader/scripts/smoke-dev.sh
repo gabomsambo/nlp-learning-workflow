@@ -57,12 +57,17 @@ for file in manifest.json library.json schedule.json; do
 done
 npx --yes wrangler@4.147.0 r2 object put "nlp-reader-docs/papers/arxiv_3a1706.03762.json" \
   --file "$fixture/papers/arxiv_3a1706.03762.json" --content-type application/json --local --persist-to "$state" >/dev/null
+audio=$(cd "$fixture" && ls audio/*.mp3 | head -1)   # 22 bytes: enough to see real R2 slice it
+npx --yes wrangler@4.147.0 r2 object put "nlp-reader-docs/$audio" --file "$fixture/$audio" \
+  --content-type audio/mpeg --local --persist-to "$state" >/dev/null
 base="http://127.0.0.1:$((${PORT:-8799} + 1))"
 serve "$((${PORT:-8799} + 1))" -c test/wrangler.smoke.toml
 expect "page is served by the assets binding" '<title>NLP Reader</title>' "$(curl -s "$base/")"
 check "script module is served"          200 "$base/js/reader.js"
 check "app.css is served from the build" 200 "$base/static/app.css"
 check "font is served"                   200 "$base/static/fonts/inter-latin.woff2"
+check "shared Listen helpers are served" 200 "$base/static/listen-core.js"
+check "episode page code is served"      200 "$base/js/episodes.js"
 expect "security headers on assets"      "frame-ancestors 'none'" "$(curl -s -D- -o /dev/null "$base/")"
 expect "caller is reported"              '"email":"dev@example.com"' "$(curl -s "$base/api/me")"
 etag=$(curl -s -D- -o /dev/null "$base/api/manifest" | tr -d '\r' | awk -F': ' 'tolower($1)=="etag"{print $2}')
@@ -73,5 +78,22 @@ check "document by key"                  200 "$base/api/doc/library.json"
 check "document with an encoded id"      200 "$base/api/doc/papers%2Farxiv_3a1706.03762.json"
 check "unpublished key"                  404 "$base/api/doc/episodes/00000000-0000-4000-8000-000000000000.json"
 check "audio is not served"              404 "$base/api/doc/audio/abc.mp3"
+
+echo "== audio: byte ranges against the simulated R2"
+headers_of() { curl -s -D- -o /dev/null "$@" | tr -d '\r' | tr 'A-Z' 'a-z'; }   # workerd keeps header-name case
+expect "audio advertises ranges"          'accept-ranges: bytes'         "$(headers_of "$base/api/$audio")"
+expect "audio is audio/mpeg"              'content-type: audio/mpeg'     "$(headers_of "$base/api/$audio")"
+expect "whole file is 200 of 22 bytes"    'content-length: 22'           "$(headers_of "$base/api/$audio")"
+probe=$(headers_of -H 'Range: bytes=0-1' "$base/api/$audio")
+expect "Safari's bytes=0-1 probe is 206"  'http/1.1 206'                 "$probe"
+expect "206 names the slice"              'content-range: bytes 0-1/22'  "$probe"
+expect "206 is two bytes long"            'content-length: 2'            "$probe"
+expect "a middle range"                   'content-range: bytes 5-9/22'  "$(headers_of -H 'Range: bytes=5-9' "$base/api/$audio")"
+expect "an open-ended range"              'content-range: bytes 10-21/22' "$(headers_of -H 'Range: bytes=10-' "$base/api/$audio")"
+expect "a suffix range"                   'content-range: bytes 18-21/22' "$(headers_of -H 'Range: bytes=-4' "$base/api/$audio")"
+check "a range past the end"              416 -H 'Range: bytes=22-' "$base/api/$audio"
+sliced=$(curl -s -H 'Range: bytes=5-9' "$base/api/$audio" | wc -c)
+[ "$sliced" = 5 ] && echo "ok   the body of bytes=5-9 is 5 bytes" || { echo "FAIL body was $sliced bytes"; fail=1; }
+check "unpublished audio"                 404 "$base/api/audio/$(printf 'ab%.0s' $(seq 1 32)).mp3"
 check "anonymous request is refused"     401 -H 'x-smoke-anonymous: 1' -H 'Cf-Access-Jwt-Assertion: nope' "$base/api/manifest"
 exit $fail

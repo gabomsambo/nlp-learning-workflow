@@ -1,6 +1,6 @@
 /* Pure helpers for the reader. No DOM, no network: node --test imports this file. */
 
-export const ROUTES = ['today', 'library', 'lessons'];
+export const ROUTES = ['today', 'library', 'lessons', 'listen'];
 
 /** `#/paper/<id>/<tab>` and friends. Ids carry `:` and `/`, so they are percent-encoded. */
 export function parseRoute(hash) {
@@ -9,6 +9,14 @@ export function parseRoute(hash) {
   if (parts.length === 0) return { name: 'today' };
   if (parts[0] === 'library' && parts.length === 1) return { name: 'library' };
   if (parts[0] === 'lessons' && parts.length === 1) return { name: 'lessons' };
+  if (parts[0] === 'listen' && parts.length === 1) return { name: 'listen' };
+  if (parts[0] === 'listen' && parts.length === 2) {
+    try {
+      return { name: 'episode', id: decodeURIComponent(parts[1]) };
+    } catch (error) {
+      return { name: 'notfound' };
+    }
+  }
   if (parts[0] === 'paper' && parts.length >= 2 && parts.length <= 3) {
     try {
       const id = decodeURIComponent(parts[1]);
@@ -27,6 +35,16 @@ export const PAPER_TABS = ['summary', 'notes', 'lesson', 'cards', 'episode'];
 export function paperHref(id, tab) {
   const base = `#/paper/${encodeURIComponent(id)}`;
   return tab && tab !== 'summary' ? `${base}/${tab}` : base;
+}
+
+export function episodeHref(id) {
+  return `#/listen/${encodeURIComponent(id)}`;
+}
+
+/** `audio/<sha256>.mp3` as the Worker serves it, or null for any other shape. */
+export function audioSrc(key) {
+  const match = /^audio\/([0-9a-f]{64}\.mp3)$/.exec(typeof key === 'string' ? key : '');
+  return match ? `/api/audio/${match[1]}` : null;
 }
 
 export async function sha256Hex(bytes) {
@@ -159,4 +177,53 @@ export function readableScript(script) {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** The episodes that can be listened to come first, newest first within each group. */
+export function listenRows(library) {
+  const rows = newestFirst(library.episodes || [], 'created_at');
+  const withAudio = rows.filter((e) => audioSrc(e.audio_key));
+  return [...withAudio, ...rows.filter((e) => !audioSrc(e.audio_key))];
+}
+
+/** What a published fact check lets the page say. A stale check is never painted onto a changed script. */
+export function factcheckState(episode) {
+  const check = episode && episode.fact_check;
+  if (!check) return { kind: 'none', claims: [] };
+  const claims = Array.isArray(check.claims) ? check.claims : [];
+  return { kind: check.stale ? 'stale' : 'done', claims, check };
+}
+
+/** Where to start: a saved position, unless it is at the very start or the very end. */
+export function resumeSeconds(saved, duration) {
+  const seconds = Number(saved);
+  if (!Number.isFinite(seconds) || seconds < 5) return 0;
+  if (Number.isFinite(duration) && duration > 0 && seconds > duration - 10) return 0;
+  return seconds;
+}
+
+export const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
+
+export function rateOrDefault(value) {
+  const rate = Number(value);
+  return PLAYBACK_RATES.includes(rate) ? rate : 1;
+}
+
+/** The notice above the text, or '' when the highlight is working as it should. */
+export function readAlongNote({ hasAudio, timelineState, wordLevel }) {
+  if (!hasAudio) return 'This episode has no audio yet. The script is below.';
+  if (timelineState === 'missing') return 'No read-along timing for this episode yet. It still plays, but the text will not follow the audio.';
+  if (timelineState === 'stale') return 'The script was edited after this audio was recorded, so the highlight is off.';
+  if (!wordLevel) return 'Word timing was weak for this episode, so only the line being spoken is highlighted.';
+  return '';
+}
+
+export function episodeMeta(episode, pillarName) {
+  return [pillarName, formatDuration(episode.duration_seconds), formatDate(episode.created_at)].filter(Boolean).join(' · ');
+}
+
+/** The letter on an episode's cover. Episodes are all titled "Deep Dive: <paper>", so skip that. */
+export function episodeInitial(title) {
+  const match = /[0-9A-Za-z]/.exec(String(title || '').replace(/^\s*deep dive\s*:\s*/i, ''));
+  return match ? match[0].toUpperCase() : 'E';
 }

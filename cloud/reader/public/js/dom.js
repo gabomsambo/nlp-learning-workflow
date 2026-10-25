@@ -20,6 +20,7 @@ const ICON_PATHS = {
   today: 'M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z',
   library: 'M5 4h5a2 2 0 0 1 2 2v13H7a2 2 0 0 0-2 2V4zM12 6h5a2 2 0 0 1 2 2v11h-7V6z',
   lessons: 'M6 3h8l4 4v14H6zM14 3v4h4',
+  listen: 'M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v6H5a1 1 0 0 1-1-1zM20 14h-3v6h2a1 1 0 0 0 1-1z',
 };
 
 export function icon(name) {
