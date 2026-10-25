@@ -1,0 +1,33 @@
+# The reader. Deploy by hand with the pinned wrangler (see README.md); there is
+# no CI deploy. Personal account only.
+name = "nlp-reader"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+# A *.workers.dev address would be a way around Access, so there is none.
+workers_dev = false
+preview_urls = false
+
+routes = [{ pattern = "read.gabrielsambo.com", custom_domain = true }]
+
+[observability]
+enabled = true
+
+# Static files. The Worker runs first, so the Access check covers them too.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+# The published bundle. This and ASSETS are the Worker's only bindings.
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "nlp-reader-docs"
+
+[vars]
+TEAM_DOMAIN = "soft-wave-31cb.cloudflareaccess.com"
+# The Access application's AUD tag for read.gabrielsambo.com (filled in once it exists).
+ACCESS_AUD = "b75dc0eabb1ef8c7bbe40d198c39bc7bc6062e1dd5cfa96018d9091961a2a667"
+# Secrets, set with `wrangler secret put` and never committed:
+#   ALLOWED_EMAILS          comma-separated; required, nobody is let in without it
+#   ALLOWED_SERVICE_TOKENS  optional; service-token client ids allowed to read
