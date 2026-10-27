@@ -892,6 +892,11 @@ class StageName(str, Enum):
     FACTCHECK_ANCHOR = "factcheck_anchor"
     FACTCHECK_PERSIST = "factcheck_persist"
 
+    # Paper Playground explain pass (nlp_pillars/playground/service.py).
+    PLAYGROUND_PREPARE = "playground_prepare"
+    PLAYGROUND_EXPLAIN = "playground_explain"
+    PLAYGROUND_PERSIST = "playground_persist"
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
 #:
@@ -998,6 +1003,18 @@ FACTCHECK_STAGES: List[StageName] = [
     StageName.FACTCHECK_REJUDGE,
     StageName.FACTCHECK_ANCHOR,
     StageName.FACTCHECK_PERSIST,
+]
+
+#: Stages for one Playground explain pass, in order.
+#:
+#: prepare reads the stored notebook and splits it into batches (no model
+#: call). explain is every model call; its detail carries the running total
+#: cost, so a run that dies half-way still records what it spent. persist
+#: stores the guide, including a partial one.
+PLAYGROUND_EXPLAIN_STAGES: List[StageName] = [
+    StageName.PLAYGROUND_PREPARE,
+    StageName.PLAYGROUND_EXPLAIN,
+    StageName.PLAYGROUND_PERSIST,
 ]
 
 

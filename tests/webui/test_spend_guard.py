@@ -24,6 +24,7 @@ EXPENSIVE = [
     ("post", "/api/podcast/generate"),
     ("post", "/api/podcast/tts/generate"),
     ("post", "/api/podcast/00000000-0000-4000-8000-000000000000/factcheck"),
+    ("post", "/api/playgrounds/00000000-0000-4000-8000-000000000000/explain"),
 ]
 
 

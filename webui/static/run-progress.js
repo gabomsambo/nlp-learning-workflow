@@ -207,6 +207,9 @@
     factcheck_rejudge: 'Re-checking flagged claims',
     factcheck_anchor: 'Locating evidence quotes',
     factcheck_persist: 'Saving the fact check',
+    playground_prepare: 'Reading the notebook',
+    playground_explain: 'Explaining the code cells',
+    playground_persist: 'Saving the study guide',
   };
 
   function stageLabel(name) {
@@ -459,6 +462,20 @@
       }
       if (run.status === 'cancelled') {
         return 'Cancelled. The script was not changed.';
+      }
+    }
+    if (run.kind === 'playground_explain') {
+      // Two facts, like an upload: whether a guide was saved, and whether it
+      // covers every cell. A partial guide is saved and shown.
+      var pg = run.result || {};
+      var cells = pg.cells_total != null
+        ? ' (' + (pg.cells_explained || 0) + ' of ' + pg.cells_total + ' cells)' : '';
+      if (run.status === 'succeeded') return 'Done — study guide saved' + cells;
+      if (run.status === 'failed' && pg.status === 'partial') {
+        return 'Saved a partial study guide' + cells + (run.error ? ' — ' + run.error : '');
+      }
+      if (run.status === 'failed') {
+        return 'Failed — the notebook is unchanged' + (run.error ? ' — ' + run.error : '');
       }
     }
     if (run.status === 'succeeded') {

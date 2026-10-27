@@ -70,7 +70,11 @@ def test_migration_keeps_every_existing_kind_and_adds_factcheck():
     assert "UPDATE podcast_scripts" not in MIGRATION
     assert "podcast_factcheck" in SCHEMA
     assert "'auto_podcast_factcheck'" in SCHEMA
-    assert "kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck')" in SCHEMA
+    # Later kinds join the exemption (028 adds playground_explain); these stay.
+    exempt = SCHEMA.split("CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar", 1)[1]
+    exempt = exempt.split(";", 1)[0]
+    for kind in ("'upload'", "'podcast_script'", "'podcast_factcheck'"):
+        assert kind in exempt
 
 
 def _pillar_table() -> sqlite3.Connection:

@@ -98,6 +98,8 @@
   --gutter: 44px;
   --pad-card: 20px;
   --on-deep: #FFFFFF;
+  /* Behind notebook figures in every theme: plots are drawn for a white page. */
+  --figure-bg: #FFFFFF;
   --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 
   /* Paper is the default theme. */

@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     llm_factcheck_rejudge_model: Optional[str] = Field(
         None, env="LLM_FACTCHECK_REJUDGE_MODEL"
     )
+    llm_playground_model: Optional[str] = Field(None, env="LLM_PLAYGROUND_MODEL")
 
     # Legacy routing names, still honoured and consulted second. They used to
     # carry the defaults themselves; the registry does now.
@@ -164,6 +165,19 @@ class Settings(BaseSettings):
     podcast_audio_dir: str = Field("/app/data/podcast_audio", env="PODCAST_AUDIO_DIR")
     tts_download_dir: str = Field("/app/data/tts-downloads", env="TTS_DOWNLOAD_DIR")
     tts_preview_dir: str = Field("/app/data/tts-previews", env="TTS_PREVIEW_DIR")
+
+    # Paper Playground (docs/PLAYGROUND.md). The data directory is the
+    # playground_data volume; each playground caches its datasets under
+    # <dir>/<playground_id>/ with a manifest.json the sandbox reads.
+    playground_data_dir: str = Field("/app/playground-data", env="PLAYGROUND_DATA_DIR")
+    # Total bytes of downloaded datasets per playground (default 1 GB).
+    playground_data_max_bytes: int = Field(
+        1_000_000_000, env="PLAYGROUND_DATA_MAX_BYTES", gt=0,
+    )
+    # Largest .ipynb accepted for import (default 25 MB).
+    playground_notebook_max_bytes: int = Field(
+        25_000_000, env="PLAYGROUND_NOTEBOOK_MAX_BYTES", gt=0,
+    )
 
     class Config:
         env_file = ".env"

@@ -22,11 +22,12 @@
     { re: /^\/api\/pillars\/[^/]+\/upload\/(url|pdf)$/, title: 'Add this paper', what: 'Processes the paper with Claude (summary, lesson, quiz).' },
     { re: /^\/api\/podcast\/generate$/, title: 'Generate a podcast script', what: 'Five model calls, roughly a quarter of a dollar.' },
     { re: /^\/api\/podcast\/tts\/generate$/, title: 'Generate audio', what: 'Runs the speech model on the computer’s GPU for several minutes.' },
-    { re: /^\/api\/podcast\/[^/]+\/factcheck$/, title: 'Check the facts', what: 'Checks every claim against the paper with Claude.' }
+    { re: /^\/api\/podcast\/[^/]+\/factcheck$/, title: 'Check the facts', what: 'Checks every claim against the paper with Claude.' },
+    { re: /^\/api\/playgrounds\/[^/]+\/explain$/, title: 'Generate the study guide', what: 'Explains every code cell with Claude Sonnet, about a dime per dozen cells.' }
   ];
 
   // Buttons that start those actions; each gets the remaining budget beside it.
-  var BUTTON_SELECTOR = '#generate-btn, #generate-audio-btn, #factcheck-btn, #process-btn, #run-btn, #submit-file-upload, #submit-url-upload';
+  var BUTTON_SELECTOR = '#generate-btn, #generate-audio-btn, #factcheck-btn, #process-btn, #run-btn, #submit-file-upload, #submit-url-upload, #playground-explain-btn';
 
   function pathOf(input) {
     var raw = typeof input === 'string' ? input : (input && input.url) || '';
