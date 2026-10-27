@@ -6,7 +6,8 @@ The bundle is a directory::
     library.json               pillars, paper and episode index, concepts
     schedule.json              one scheduling snapshot per quiz card
     papers/<name>.json         paper, note, lesson, quiz cards, concept links
-    episodes/<name>.json       script, source warnings, fact check, timeline
+    episodes/<name>.json       script, source warnings, fact check, timeline, follow-along
+    playgrounds/<id>.json      study steps, cells and saved outputs, read-only
     audio/<sha256>.mp3         64 kbps mono copy, named by the hash of its bytes
 
 Nothing here talks to Cloudflare. A document is built field by field from an
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from .. import fsrs_fold
+from ..playground import notebook as nb_view
 from ..services import quiz_reviews
 from . import audio as audio_tools
 from .source import CloudSource, load_source
@@ -35,7 +37,14 @@ BUNDLE_VERSION = 1
 # Default FSRS-6 weights; bump when user_fsrs_parameters ever feeds the scheduler.
 FSRS_PARAMS_VERSION = 1
 TOMBSTONE_DAYS = 30
-MANAGED_DIRS = ("papers", "episodes", "audio")
+MANAGED_DIRS = ("papers", "episodes", "playgrounds", "audio")
+# The Worker refuses a larger document (cloud/reader/src/ingest.js MAX_DOC_BYTES).
+MAX_DOC_BYTES = 8 * 1024 * 1024
+# Per playground, what of its saved outputs travels (CLOUD_PLAYGROUND_MAX_*):
+# base64 figure data, and every other output as encoded JSON. What does not fit
+# is left out in notebook order and marked where it was.
+DEFAULT_PLAYGROUND_MAX_IMAGE_BYTES = 3_000_000
+DEFAULT_PLAYGROUND_MAX_OUTPUT_BYTES = 1_500_000
 _TEMP_PREFIXES = (".transcode-", ".pending-")
 
 # ---------------------------------------------------------------------------
@@ -72,6 +81,12 @@ TIMELINE_FIELDS = (
 )
 TIMELINE_LINE_FIELDS = ("line", "start_ms", "end_ms", "words")
 CONCEPT_FIELDS = ("id", "name", "aliases", "description")
+PLAYGROUND_FIELDS = ("id", "paper_id", "title", "status", "source_kind")
+STEP_FIELDS = ("id", "title", "goal")
+GUIDE_FIELDS = ("cell_index", "explanation", "quiz")
+LINE_NOTE_FIELDS = ("line", "note")
+TRY_FIELDS = ("label", "code", "expect")
+SPAN_FIELDS = ("line_start", "line_end", "cell_index", "step_id")
 
 # Keys that must never appear anywhere in a document, at any depth.
 FORBIDDEN_KEYS = frozenset({
@@ -147,6 +162,10 @@ def episode_key(script_id: str) -> str:
 
 def audio_key(sha256: str) -> str:
     return f"audio/{sha256}.mp3"
+
+
+def playground_key(playground_id: str) -> str:
+    return f"playgrounds/{safe_name(playground_id)}.json"
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +300,206 @@ def serialize_fact_check(
 def serialize_concept(row: Mapping[str, Any], paper_ids: List[str]) -> Dict[str, Any]:
     out = _pick(row, CONCEPT_FIELDS)
     out["paper_ids"] = paper_ids
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Playgrounds
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlaygroundCaps:
+    """Saved output kept per playground; see DEFAULT_PLAYGROUND_MAX_*."""
+
+    image_bytes: int = DEFAULT_PLAYGROUND_MAX_IMAGE_BYTES
+    output_bytes: int = DEFAULT_PLAYGROUND_MAX_OUTPUT_BYTES
+
+    @classmethod
+    def from_settings(cls, settings: Any) -> "PlaygroundCaps":
+        return cls(
+            image_bytes=int(getattr(settings, "cloud_playground_max_image_bytes", DEFAULT_PLAYGROUND_MAX_IMAGE_BYTES)),
+            output_bytes=int(getattr(settings, "cloud_playground_max_output_bytes", DEFAULT_PLAYGROUND_MAX_OUTPUT_BYTES)),
+        )
+
+
+def serialize_steps(steps: Any) -> List[Dict[str, Any]]:
+    """The study guide, field by field (docs/PLAYGROUND.md, "Stored shape")."""
+    out = []
+    for step in steps if isinstance(steps, list) else []:
+        if not isinstance(step, Mapping):
+            continue
+        cells = []
+        for cell in step.get("cells") or []:
+            if not isinstance(cell, Mapping) or not isinstance(cell.get("cell_index"), int):
+                continue
+            guide = _pick(cell, GUIDE_FIELDS)
+            guide["line_notes"] = [
+                _pick(n, LINE_NOTE_FIELDS) for n in cell.get("line_notes") or [] if isinstance(n, Mapping)
+            ]
+            guide["tries"] = [
+                _pick(t, TRY_FIELDS) for t in cell.get("tries") or [] if isinstance(t, Mapping)
+            ]
+            cells.append(guide)
+        entry = _pick(step, STEP_FIELDS)
+        entry["cells"] = cells
+        out.append(entry)
+    return out
+
+
+def serialize_output(view: Mapping[str, Any]) -> Dict[str, Any]:
+    """One output of ``notebook.cells_view``, already sanitized. Text is ``body``:
+    ``text`` is a forbidden key, kept for the paper's own text."""
+    kind = view.get("kind")
+    if kind in ("stream", "text", "error"):
+        out: Dict[str, Any] = {"kind": kind, "body": view.get("text") or ""}
+        if kind == "stream":
+            out["name"] = view.get("name") or "stdout"
+    elif kind == "html":
+        out = {"kind": "html", "tree": view.get("tree") or []}
+    elif kind == "png":
+        return {"kind": "png", "data": view.get("data"), "alt": view.get("alt")}
+    else:
+        return {"kind": "unsupported", "mime": [str(m) for m in view.get("mime") or []]}
+    if view.get("truncated"):
+        out["truncated"] = True
+    return out
+
+
+class _Budget:
+    """What is left of one playground's caps, spent in notebook order."""
+
+    def __init__(self, caps: PlaygroundCaps) -> None:
+        self.image_left = caps.image_bytes
+        self.output_left = caps.output_bytes
+        self.figures_dropped = 0
+        self.outputs_dropped = 0
+
+    def keep(self, out: Dict[str, Any]) -> Dict[str, Any]:
+        if out["kind"] == "png":
+            size = len(out.get("data") or "")
+            if size <= self.image_left:
+                self.image_left -= size
+                return out
+            self.figures_dropped += 1
+            return {"kind": "dropped", "what": "figure", "bytes": size}
+        size = len(canonical_bytes(out))
+        if size <= self.output_left:
+            self.output_left -= size
+            return out
+        self.outputs_dropped += 1
+        return {"kind": "dropped", "what": "output", "bytes": size}
+
+
+def serialize_playground(row: Mapping[str, Any], caps: PlaygroundCaps) -> Dict[str, Any]:
+    """A playground as the reader shows it: no notebook JSON, no datasets, no model.
+
+    Cells come from the same ``cells_view`` the Playground tab renders, so HTML
+    output is the sanitized tag tree and only PNG figures survive.
+    """
+    notebook = row.get("notebook") if isinstance(row.get("notebook"), Mapping) else {}
+    budget = _Budget(caps)
+    cells = []
+    for view in nb_view.cells_view(dict(notebook)):
+        cell: Dict[str, Any] = {"index": view["index"], "type": view["type"], "source": view["source"]}
+        if view["type"] == "code":
+            cell["execution_count"] = view.get("execution_count")
+            cell["outputs"] = [budget.keep(serialize_output(o)) for o in view.get("outputs") or []]
+        cells.append(cell)
+    doc = _pick(row, PLAYGROUND_FIELDS)
+    doc.update({
+        "steps": serialize_steps(row.get("steps")),
+        "cells": cells,
+        "limits": {"image_bytes": caps.image_bytes, "output_bytes": caps.output_bytes},
+        "dropped": {"figures": budget.figures_dropped, "outputs": budget.outputs_dropped},
+    })
+    return doc
+
+
+def build_playgrounds(
+    source: CloudSource,
+    caps: PlaygroundCaps,
+    secrets: Iterable[str] = (),
+    warnings: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Each publishable playground's document, keyed by playground id.
+
+    A notebook is content someone uploaded, so one that trips the guard or will
+    not fit in a document is left out (and named in ``warnings``) instead of
+    stopping the whole publish. Only playgrounds of published papers are kept.
+    """
+    secrets = list(secrets)
+    paper_ids = {str(p["id"]) for p in source.papers}
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in sorted(source.playgrounds, key=lambda r: str(r["id"])):
+        pid = str(row["id"])
+        if str(row.get("paper_id")) not in paper_ids or row.get("status") not in ("ready", "partial"):
+            continue
+        doc = serialize_playground(row, caps)
+        try:
+            _guard(playground_key(pid), doc, secrets)
+            size = len(canonical_bytes(doc))
+        except ExportError as exc:
+            if warnings is not None:
+                warnings.append(f"playground {pid} not published: {exc}")
+            continue
+        if size > MAX_DOC_BYTES:
+            if warnings is not None:
+                warnings.append(
+                    f"playground {pid} not published: {size / 1_000_000:.1f} MB is over the "
+                    f"{MAX_DOC_BYTES / 1_000_000:.1f} MB document limit even with its outputs capped"
+                )
+            continue
+        if warnings is not None and (doc["dropped"]["figures"] or doc["dropped"]["outputs"]):
+            warnings.append(
+                f"playground {pid}: {doc['dropped']['figures']} figure(s) and "
+                f"{doc['dropped']['outputs']} other output(s) left out by CLOUD_PLAYGROUND_MAX_*"
+            )
+        out[pid] = doc
+    return out
+
+
+def playground_summary(doc: Mapping[str, Any]) -> Dict[str, Any]:
+    """What the paper page needs before the playground itself is fetched."""
+    return {
+        "id": doc["id"], "doc": playground_key(str(doc["id"])), "title": doc["title"],
+        "status": doc["status"], "step_count": len(doc["steps"]),
+        "cell_count": sum(1 for c in doc["cells"] if c["type"] == "code"),
+    }
+
+
+def serialize_follow_along(
+    links: List[Mapping[str, Any]],
+    playgrounds: Mapping[str, Mapping[str, Any]],
+    script: str,
+) -> List[Dict[str, Any]]:
+    """An episode's ready links to published playgrounds, freshest first.
+
+    ``stale`` says the mapping indexes another version of the script, as the
+    desktop panel decides it (``FollowAlong.chooseLink``).
+    """
+    sha = sha256_hex(script.encode("utf-8"))
+    rows = [r for r in links if r.get("status") == "ready" and str(r.get("playground_id")) in playgrounds]
+    rows.sort(key=lambda r: str(r["id"]))
+    rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    out = []
+    for row in rows:
+        pg = playgrounds[str(row["playground_id"])]
+        out.append({
+            "playground_id": pg["id"],
+            "doc": playground_key(str(pg["id"])),
+            "paper_id": pg["paper_id"],
+            "title": pg["title"],
+            "status": "ready",
+            "script_sha256": row.get("script_sha256"),
+            "stale": bool(row.get("script_sha256")) and row.get("script_sha256") != sha,
+            "mapping": [
+                _pick(span, SPAN_FIELDS)
+                for span in (row.get("mapping") if isinstance(row.get("mapping"), list) else [])
+                if isinstance(span, Mapping)
+            ],
+        })
+    out.sort(key=lambda link: link["stale"])
     return out
 
 
@@ -423,6 +642,7 @@ def serialize_episode(
     check: Optional[Mapping[str, Any]],
     claims: List[Mapping[str, Any]],
     plan: Optional[AudioPlan],
+    follow_along: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     meta = script.get("audio_metadata") if isinstance(script.get("audio_metadata"), Mapping) else {}
     entry = plan.entry if plan else None
@@ -448,13 +668,24 @@ def serialize_episode(
         "audio": audio,
         "timeline": serialize_timeline(meta.get("timeline")) if entry else None,
         "fact_check": serialize_fact_check(check, claims, text) if check else None,
+        "follow_along": follow_along or [],
     }
 
 
 def build_documents(
-    source: CloudSource, plans: Mapping[str, AudioPlan]
+    source: CloudSource,
+    plans: Mapping[str, AudioPlan],
+    playgrounds: Optional[Mapping[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Every JSON document, keyed by its path in the bundle. Pure."""
+    """Every JSON document, keyed by its path in the bundle. Pure.
+
+    ``playgrounds`` is ``build_playgrounds``'s result; without it they are built
+    here with the default caps.
+    """
+    if playgrounds is None:
+        playgrounds = build_playgrounds(source, PlaygroundCaps())
+    playground_by_paper = {str(doc["paper_id"]): doc for doc in playgrounds.values()}
+    links_by_script = _group(source.playground_links, "script_id")
     papers = sorted(source.papers, key=lambda r: str(r["id"]))
     paper_ids = {str(p["id"]) for p in papers}
     notes = _group(source.notes, "paper_id")
@@ -515,6 +746,9 @@ def build_documents(
             "related": [
                 {"paper_id": str(r["dst_id"]), "weight": r.get("weight")} for r in related
             ],
+            "playground": (
+                playground_summary(playground_by_paper[pid]) if pid in playground_by_paper else None
+            ),
         })
         docs[paper_key(pid)] = doc
         index = _pick(paper, ("id", "pillar_id", "title", "authors", "venue", "year", "added_at"))
@@ -524,15 +758,20 @@ def build_documents(
             "has_lesson": lesson is not None,
             "card_count": len(paper_cards),
             "episode_ids": doc["episode_ids"],
+            "has_playground": doc["playground"] is not None,
         })
         paper_index.append(index)
+
+    for pg_id, pg_doc in playgrounds.items():
+        docs[playground_key(pg_id)] = pg_doc
 
     episode_index = []
     for script in sorted(source.scripts, key=lambda r: str(r["id"])):
         sid = str(script["id"])
         check = checks.get(sid)
         claims = claims_by_check.get(str(check["id"]), []) if check else []
-        doc = serialize_episode(script, check, claims, plans.get(sid))
+        follow = serialize_follow_along(links_by_script.get(sid, []), playgrounds, script.get("script") or "")
+        doc = serialize_episode(script, check, claims, plans.get(sid), follow)
         docs[episode_key(sid)] = doc
         episode_index.append({
             "id": sid, "paper_id": doc["paper_id"], "pillar_id": doc["pillar_id"],
@@ -540,6 +779,7 @@ def build_documents(
             "audio_key": doc["audio"]["key"] if doc["audio"] else None,
             "duration_seconds": doc["audio"]["duration_seconds"] if doc["audio"] else None,
             "has_timeline": doc["timeline"] is not None,
+            "has_follow_along": any(not link["stale"] for link in doc["follow_along"]),
         })
     episode_index.sort(key=lambda e: (str(e["created_at"] or ""), e["id"]), reverse=True)
 
@@ -631,6 +871,7 @@ class ExportReport:
     audio_source_bytes: int = 0
     audio_cloud_bytes: int = 0
     audio_seconds: float = 0.0
+    playgrounds: int = 0
     manifest_written: bool = False
     warnings: List[str] = field(default_factory=list)
 
@@ -650,6 +891,7 @@ class ExportReport:
             f"(originals {mb(self.audio_source_bytes)}, {self.audio_seconds / 60:.0f} min)  "
             f"transcoded {self.audio_transcoded}, reused {self.audio_reused}, "
             f"still to transcode {self.audio_pending}",
+            f"  playgrounds: {self.playgrounds}",
             f"  {verb} {self.docs_written} document(s); manifest "
             + (
                 "unchanged"
@@ -727,6 +969,7 @@ def run_export(
     now: Optional[datetime] = None,
     secrets: Optional[Iterable[str]] = None,
     transcoder: Optional[Transcoder] = None,
+    playground_caps: Optional[PlaygroundCaps] = None,
 ) -> ExportReport:
     """Build the bundle in ``out``. With ``dry_run``: read, hash, report, write nothing.
 
@@ -738,28 +981,36 @@ def run_export(
     out = Path(out)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
     secrets = list(env_secret_values(os.environ) if secrets is None else secrets)
-    if audio_dir is None:
+    if audio_dir is None or playground_caps is None:
         from ..config import get_settings
 
-        audio_dir = Path(get_settings().podcast_audio_dir)
+        settings = get_settings()
+        if audio_dir is None:
+            audio_dir = Path(settings.podcast_audio_dir)
+        if playground_caps is None:
+            playground_caps = PlaygroundCaps.from_settings(settings)
     _check_out_dir(out)
     previous = read_manifest(out)
     source = source if source is not None else load_source()
 
+    playground_warnings: List[str] = []
+    playgrounds = build_playgrounds(source, playground_caps, secrets, playground_warnings)
     # Fail on a leak before spending minutes in ffmpeg. The audio entry only adds
     # a key and a hash to an episode, so the guard sees the same content here.
-    for key, doc in build_documents(source, {}).items():
+    for key, doc in build_documents(source, {}, playgrounds).items():
         _guard(key, doc, secrets)
     plans = plan_audio(
         source.scripts, Path(audio_dir), out, previous,
         transcode=not dry_run, transcoder=transcoder or audio_tools.transcode,
     )
     encoded: Dict[str, bytes] = {}
-    for key, doc in build_documents(source, plans).items():
+    for key, doc in build_documents(source, plans, playgrounds).items():
         _guard(key, doc, secrets)
         encoded[key] = canonical_bytes(doc)
 
-    report = ExportReport(dry_run=dry_run, out=out)
+    report = ExportReport(dry_run=dry_run, out=out, playgrounds=len(playgrounds))
+    report.warnings.extend(source.warnings)
+    report.warnings.extend(playground_warnings)
     prev_docs = {item["key"]: item["sha256"] for item in (previous or {}).get("docs", [])}
     doc_entries = []
     for key in sorted(encoded):

@@ -166,6 +166,11 @@ class Settings(BaseSettings):
     cf_access_client_secret: Optional[str] = Field(None, env="CF_ACCESS_CLIENT_SECRET")
     cloud_publish_max_bytes: int = Field(5_000_000_000, env="CLOUD_PUBLISH_MAX_BYTES", gt=0)
     cloud_bundle_dir: str = Field("/app/data/cloud-bundle", env="CLOUD_BUNDLE_DIR")
+    # The reader's read-only copy of each playground (cloud/export.py): bytes of
+    # base64 figure data, and of every other saved output as JSON, kept per
+    # playground. What does not fit is left out and marked where it was.
+    cloud_playground_max_image_bytes: int = Field(3_000_000, env="CLOUD_PLAYGROUND_MAX_IMAGE_BYTES", ge=0)
+    cloud_playground_max_output_bytes: int = Field(1_500_000, env="CLOUD_PLAYGROUND_MAX_OUTPUT_BYTES", ge=0)
     podcast_audio_dir: str = Field("/app/data/podcast_audio", env="PODCAST_AUDIO_DIR")
     tts_download_dir: str = Field("/app/data/tts-downloads", env="TTS_DOWNLOAD_DIR")
     tts_preview_dir: str = Field("/app/data/tts-previews", env="TTS_PREVIEW_DIR")

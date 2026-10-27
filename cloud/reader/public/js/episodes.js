@@ -7,9 +7,11 @@
  * Factcheck (verdict wording). What is here is the DOM and the audio element.
  *
  * Everything is createElement + textContent. The audio element is the one
- * source of time; the highlight follows it and never drives it.
+ * source of time; the highlight follows it and never drives it, and so does
+ * the code drawer under the player (follow.js).
  */
 import { callout, emptyState, h } from './dom.js';
+import { codeDrawer } from './follow.js';
 import {
   PLAYBACK_RATES, audioSrc, episodeHref, episodeInitial, episodeMeta, factcheckState, formatDate, listenRows,
   paperHref, rateOrDefault, readAlongNote, resumeSeconds, sha256Hex,
@@ -103,6 +105,15 @@ export async function episodeView(store, id) {
   const model = RA.buildModel(timeline, lines, scriptSha);
   const check = factcheckState(episode);
   const durationHint = Number(episode.audio && episode.audio.duration_seconds) || 0;
+  let audio = null;
+  // Null when the episode follows no notebook.
+  const drawer = codeDrawer({
+    store, episode, model, scriptSha, timeline, hasAudio: !!src,
+    now: () => ({
+      ms: audio && Number.isFinite(audio.currentTime) ? audio.currentTime * 1000 : 0,
+      playing: !!audio && !audio.paused && !audio.ended,
+    }),
+  });
 
   const state = {
     following: true,
@@ -120,7 +131,7 @@ export async function episodeView(store, id) {
   const wordEls = {};
 
   // ---- the audio element and its controls ---------------------------------
-  const audio = src ? h('audio', { preload: 'metadata', src }) : null;
+  audio = src ? h('audio', { preload: 'metadata', src }) : null;
   const surface = h('div', { class: 'readalong-surface', tabindex: '0', 'aria-label': 'Episode text, highlighted as it is spoken' });
   const note = h('p', { class: 'readalong-note', role: 'status', hidden: true });
   const nowButton = h('button', { type: 'button', class: 'readalong-now', hidden: true, text: 'Jump to now' });
@@ -231,6 +242,7 @@ export async function episodeView(store, id) {
     if (Number.isFinite(time)) pos = RA.positionAt(model, time * 1000);
     if (!force && pos.line === state.active.line && pos.word === state.active.word) return;
     const lineChanged = pos.line !== state.active.line;
+    if (drawer) drawer.update(false);
     if (state.active.line !== -1) {
       const prev = model.lines[state.active.line].line;
       if (lineChanged && lineEls[prev]) lineEls[prev].classList.remove('is-current');
@@ -446,8 +458,8 @@ export async function episodeView(store, id) {
     });
     audio.addEventListener('loadedmetadata', () => { applyPendingSeek(); paintClock(); });
     audio.addEventListener('canplay', applyPendingSeek);
-    audio.addEventListener('play', () => { paintToggle(); startLoop(); });
-    audio.addEventListener('pause', () => { paintToggle(); savePosition(true); updatePosition(false); });
+    audio.addEventListener('play', () => { paintToggle(); startLoop(); if (drawer) drawer.update(false); });
+    audio.addEventListener('pause', () => { paintToggle(); savePosition(true); updatePosition(false); if (drawer) drawer.update(false); });
     audio.addEventListener('ended', () => { paintToggle(); savePosition(true); });
     audio.addEventListener('seeked', () => { paintClock(); updatePosition(false); });
     audio.addEventListener('timeupdate', () => { paintClock(); updatePosition(false); savePosition(false); });
@@ -549,6 +561,7 @@ export async function episodeView(store, id) {
           audio,
           h('div', { class: 'reader-bar-scrub' }, range, clock),
           h('div', { class: 'reader-bar-buttons' }, back, toggle, forward, rate)) : null)),
+    drawer ? drawer.root : null,
     episode.key_points && episode.key_points.length
       ? h('section', { class: 'reader-keypoints' },
         h('h2', { class: 'section-title', text: 'Key points' }),
@@ -565,6 +578,7 @@ export async function episodeView(store, id) {
     if (state.raf) cancelAnimationFrame(state.raf);
     state.raf = 0;
     closePopover(false);
+    if (drawer) drawer.dispose();
     if (audio) {
       savePosition(true);
       audio.pause();

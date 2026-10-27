@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { createHandler } from '../src/worker.js';
+import { isDocKey } from '../src/docs.js';
+import { isIngestKey } from '../src/ingest.js';
 import { KID, NOW_MS, fakeBucket, makeEnv, makeKeyPair, serviceClaims, signJwt, userClaims } from './helpers.mjs';
 
 const pair = await makeKeyPair();
@@ -103,6 +105,20 @@ test('only published document names are reachable', async () => {
     const response = await get(`/api/doc/${key}`, { token, env });
     assert.equal(response.status, 404, key);
   }
+});
+
+test('a playground is served by its uuid name and nothing looser', async () => {
+  const id = 'abcdef12-3456-4789-8abc-def012345678';
+  const env = makeEnv({
+    DOCS: fakeBucket({ [`playgrounds/${id}.json`]: '{"id":"pg"}\n', 'playgrounds/notes.json': '{}' }),
+  });
+  const token = await userToken();
+  assert.equal((await get(`/api/doc/playgrounds%2F${id}.json`, { token, env })).status, 200);
+  assert.ok(isDocKey(`playgrounds/${id}.json`) && isIngestKey(`playgrounds/${id}.json`));
+  for (const key of ['playgrounds/notes.json', `playgrounds/${id.toUpperCase()}.json`, `playgrounds/${id}.json.bak`, `playgrounds/../${id}.json`]) {
+    assert.equal(isDocKey(key), false, key);
+  }
+  assert.equal((await get('/api/doc/playgrounds%2Fnotes.json', { token, env })).status, 404);
 });
 
 test('if the Access keys cannot be fetched the answer is 503, never an open door', async () => {

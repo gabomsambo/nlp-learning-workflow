@@ -21,7 +21,9 @@ from nlp_pillars.cloud import export as cloud_export
 from nlp_pillars.cloud import source as cloud_source
 from nlp_pillars.cloud.export import (
     ExportError,
+    PlaygroundCaps,
     build_documents,
+    build_playgrounds,
     canonical_bytes,
     env_secret_values,
     run_export,
@@ -38,7 +40,11 @@ POISON = [
     "POISON-GROUND-PACK", "POISON-OPTIONS", "POISON-GP-CALLS", "POISON-VOICE",
     "POISON-CHUNK-ID", "POISON-JUDGE-MODEL", "POISON-DISMISSED-NOTE", "POISON-MODEL",
     "/app/data", "file://", "Podcasts/voices", "attention_20261022.mp3", "uploads/",
+    "POISON-SCRIPT", "POISON-DATASET", "POISON-NOTEBOOK-NAME", "POISON-SPAN", "POISON-LINK-ERROR",
+    "onclick", "<style>", "\u001b",
 ]
+PLAYGROUND = "99999999-9999-4999-8999-999999999991"
+PLAYGROUND_DOC = f"playgrounds/{PLAYGROUND}.json"
 AUDIO_BYTES = b"original-mp3-bytes"
 
 
@@ -132,6 +138,9 @@ def raw_source(rows=None) -> CloudSource:
         claims=[r for r in rows["podcast_claims"] if r["fact_check_id"].endswith("2")],
         concepts=rows["concepts"], paper_concepts=rows["paper_concepts"],
         edges=[r for r in rows["graph_edges"] if r["kind"] == "related_to"],
+        # Every row, the unexplained one and the failed link included: the
+        # serializers decide what is published.
+        playgrounds=rows["playgrounds"], playground_links=rows["playground_links"],
     )
 
 
@@ -158,6 +167,7 @@ def export(out, audio_dir, source=None, transcoder=None, **kw):
     transcoder = transcoder or Transcoder()
     kw.setdefault("now", NOW)
     kw.setdefault("secrets", [])
+    kw.setdefault("playground_caps", PlaygroundCaps())
     report = run_export(
         out, source=source or load_source(FakeClient(fixture_rows())),
         audio_dir=audio_dir, transcoder=transcoder, **kw,
@@ -439,7 +449,7 @@ def test_manifest_lists_every_file_with_its_hash_and_is_written_last(tmp_path, a
         data = (out / item["key"]).read_bytes()
         assert cloud_export.sha256_hex(data) == item["sha256"] and len(data) == item["bytes"]
     assert [d["key"] for d in manifest["docs"]] == sorted(d["key"] for d in manifest["docs"])
-    assert report.docs_total == len(manifest["docs"]) == 7  # 3 papers, 2 episodes, library, schedule
+    assert report.docs_total == len(manifest["docs"]) == 8  # 3 papers, 2 episodes, 1 playground, library, schedule
     assert [a["key"] for a in manifest["audio"]] == [f"audio/{manifest['audio'][0]['sha256']}.mp3"]
     assert manifest["audio"][0]["duration_seconds"] == 12.5 and manifest["audio"][0]["bitrate_kbps"] == 64
 
@@ -563,7 +573,7 @@ def test_dry_run_writes_nothing_and_does_not_transcode(tmp_path, audio_dir):
     out = tmp_path / "bundle"
     report, tc = export(out, audio_dir, dry_run=True)
     assert not out.exists() and not tc.calls
-    assert report.docs_added == report.docs_total == 7 and report.audio_pending == 1
+    assert report.docs_added == report.docs_total == 8 and report.audio_pending == 1
     assert any("no cloud audio yet" in w for w in report.warnings)
 
     export(out, audio_dir)
@@ -608,7 +618,7 @@ def test_cli_exports_and_reports(tmp_path, audio_dir, monkeypatch):
     out = tmp_path / "bundle"
     result = CliRunner().invoke(app, ["cloud", "export", "--out", str(out)])
     assert result.exit_code == 0, result.output
-    assert "documents: 7" in result.output and "written last" in result.output
+    assert "documents: 8" in result.output and "written last" in result.output
     assert (out / "manifest.json").is_file()
 
     dry = CliRunner().invoke(app, ["cloud", "export", "--out", str(tmp_path / "other"), "--dry-run"])
@@ -622,3 +632,159 @@ def test_cli_exits_one_with_the_reason_when_the_guard_trips(tmp_path, monkeypatc
     monkeypatch.setattr("nlp_pillars.config.get_settings", lambda: type("S", (), {"podcast_audio_dir": str(tmp_path)})())
     result = CliRunner().invoke(app, ["cloud", "export", "--out", str(tmp_path / "bundle")])
     assert result.exit_code == 1 and "must not be published" in result.output
+
+
+# --- playgrounds ----------------------------------------------------------------
+
+
+def test_loader_reads_explained_playgrounds_and_ready_links_only(monkeypatch):
+    monkeypatch.setattr(cloud_source, "_PLAYGROUND_PAGE", 1)
+    client = FakeClient(fixture_rows())
+    source = load_source(client)
+    assert [r["id"] for r in source.playgrounds] == [PLAYGROUND]
+    assert [r["id"][-1] for r in source.playground_links] == ["1", "2"]
+    selected = {col for table, cols in client.selects if table == "playgrounds" for col in cols.split(",")}
+    assert not selected & {"datasets", "model", "error", "notebook_name"}
+    assert source.warnings == []
+
+
+def test_a_playground_is_published_read_only_and_sanitized():
+    docs = build_documents(raw_source(), {})
+    assert [k for k in docs if k.startswith("playgrounds/")] == [PLAYGROUND_DOC]
+    doc = docs[PLAYGROUND_DOC]
+    assert set(doc) == {"id", "paper_id", "title", "status", "source_kind", "steps", "cells", "limits", "dropped"}
+    assert [c["type"] for c in doc["cells"]] == ["markdown", "code", "code", "code", "code", "code"]
+    html, = doc["cells"][1]["outputs"]
+    assert html["kind"] == "html" and "plain" not in html
+    td = html["tree"][0]["c"][1]["c"][0]
+    assert td == {"t": "td", "a": {"colspan": "2"}, "c": ["1"]}
+    assert doc["cells"][2]["outputs"] == [{"kind": "stream", "name": "stdout", "body": "3\n"}]
+    assert doc["cells"][3]["outputs"][0]["kind"] == "png"
+    assert doc["cells"][4]["outputs"] == [{"kind": "error", "body": "ZeroDivisionError: division by zero"}]
+    guide = doc["steps"][0]["cells"][0]
+    assert set(guide) == {"cell_index", "explanation", "line_notes", "tries", "quiz"}
+    assert guide["tries"][0]["label"] == "Show one row" and guide["tries"][0]["code"].endswith("head(1)")
+    assert doc["dropped"] == {"figures": 0, "outputs": 0}
+
+
+def test_the_paper_and_library_point_at_the_playground():
+    docs = build_documents(raw_source(), {})
+    assert docs["papers/arxiv_3a1706.03762.json"]["playground"] == {
+        "id": PLAYGROUND, "doc": PLAYGROUND_DOC, "title": "Points study", "status": "ready",
+        "step_count": 2, "cell_count": 5,
+    }
+    # Imported but never explained: there is nothing to study on the phone yet.
+    assert docs["papers/cs_2f0301001.json"]["playground"] is None
+    flags = {p["id"]: p["has_playground"] for p in docs["library.json"]["papers"]}
+    assert flags == {"arxiv:1706.03762": True, "cs/0301001": False, "file:abc123def456": False}
+
+
+def test_follow_along_carries_the_spans_and_says_when_the_script_moved_on():
+    docs = build_documents(raw_source(), {})
+    fresh, = docs[f"episodes/{SCRIPT_WITH_AUDIO}.json"]["follow_along"]
+    assert fresh["doc"] == PLAYGROUND_DOC and fresh["stale"] is False and fresh["status"] == "ready"
+    assert fresh["mapping"] == [{"line_start": 2, "line_end": 2, "cell_index": 1, "step_id": "step-1"}]
+    stale, = docs["episodes/22222222-2222-4222-8222-222222222222.json"]["follow_along"]
+    assert stale["stale"] is True
+    flags = {e["id"]: e["has_follow_along"] for e in docs["library.json"]["episodes"]}
+    assert flags == {SCRIPT_WITH_AUDIO: True, "22222222-2222-4222-8222-222222222222": False}
+
+
+def test_a_link_to_an_unpublished_playground_is_not_offered():
+    rows = fixture_rows()
+    rows["playgrounds"][0]["status"] = "failed"
+    docs = build_documents(raw_source(rows), {})
+    assert not [k for k in docs if k.startswith("playgrounds/")]
+    assert docs[f"episodes/{SCRIPT_WITH_AUDIO}.json"]["follow_along"] == []
+
+
+def test_the_caps_leave_out_figures_and_outputs_in_order_and_say_so():
+    source = raw_source()
+    figure = len(source.playgrounds[0]["notebook"]["cells"][3]["outputs"][0]["data"]["image/png"])
+    warnings = []
+    pg = build_playgrounds(source, PlaygroundCaps(image_bytes=figure - 1, output_bytes=60), warnings=warnings)[PLAYGROUND]
+    outputs = [o for c in pg["cells"] if c["type"] == "code" for o in c["outputs"]]
+    assert [o["kind"] for o in outputs] == ["dropped", "stream", "dropped", "dropped"]
+    assert outputs[0] == {"kind": "dropped", "what": "output", "bytes": outputs[0]["bytes"]}
+    assert outputs[2] == {"kind": "dropped", "what": "figure", "bytes": figure}
+    assert pg["dropped"] == {"figures": 1, "outputs": 2}
+    assert pg["limits"] == {"image_bytes": figure - 1, "output_bytes": 60}
+    assert warnings == [f"playground {PLAYGROUND}: 1 figure(s) and 2 other output(s) left out by CLOUD_PLAYGROUND_MAX_*"]
+    whole = build_playgrounds(source, PlaygroundCaps(image_bytes=figure, output_bytes=10_000))[PLAYGROUND]
+    assert whole["dropped"] == {"figures": 0, "outputs": 0}
+
+
+def test_the_caps_come_from_the_settings(tmp_path, audio_dir, monkeypatch):
+    from nlp_pillars.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "cloud_playground_max_image_bytes", 0)
+    out = tmp_path / "bundle"
+    run_export(out, source=load_source(FakeClient(fixture_rows())), audio_dir=audio_dir,
+               transcoder=Transcoder(), now=NOW, secrets=[])
+    doc = json.loads((out / PLAYGROUND_DOC).read_text())
+    assert doc["limits"]["image_bytes"] == 0 and doc["dropped"]["figures"] == 1
+
+
+def test_a_notebook_that_trips_the_guard_is_left_out_and_the_rest_publishes(tmp_path, audio_dir):
+    rows = fixture_rows()
+    rows["playgrounds"][0]["notebook"]["cells"][2]["source"] = "key = 'sk-ant-" + "a" * 30 + "'"
+    report, _ = export(tmp_path / "bundle", audio_dir, source=load_source(FakeClient(rows)))
+    assert not (tmp_path / "bundle" / "playgrounds").exists()
+    paper = json.loads((tmp_path / "bundle" / "papers/arxiv_3a1706.03762.json").read_text())
+    assert paper["playground"] is None
+    assert any(w.startswith(f"playground {PLAYGROUND} not published:") and "sk-ant-" in w for w in report.warnings)
+    assert report.manifest_written and report.playgrounds == 0
+
+
+def test_a_playground_too_big_for_one_document_is_left_out(monkeypatch):
+    monkeypatch.setattr(cloud_export, "MAX_DOC_BYTES", 500)
+    warnings = []
+    assert build_playgrounds(raw_source(), PlaygroundCaps(), warnings=warnings) == {}
+    assert "document limit" in warnings[0]
+
+
+def test_an_unchanged_playground_is_not_rewritten_and_a_changed_one_is_alone(tmp_path, audio_dir):
+    out = tmp_path / "bundle"
+    export(out, audio_dir)
+    before = tree(out)
+    rows = fixture_rows()
+    rows["playgrounds"][0]["steps"][0]["cells"][0]["explanation"] = "Reads the points into a table."
+    rows["playgrounds"][0]["updated_at"] = "2026-10-26T12:00:00+00:00"  # not published
+    report, _ = export(out, audio_dir, source=load_source(FakeClient(rows)), now=NOW + timedelta(days=1))
+    changed = {k for k, v in tree(out).items() if before.get(k) != v}
+    assert changed == {PLAYGROUND_DOC, "manifest.json"}
+    assert report.docs_changed == 1
+
+
+def test_without_migration_028_or_029_the_rest_of_the_library_publishes(tmp_path, audio_dir):
+    def missing(table):
+        class Missing(FakeClient):
+            def table(self, name):
+                query = super().table(name)
+                if name == table:
+                    query.execute = lambda: {
+                        "data": None,
+                        "error": {"code": "PGRST205", "message": f"Could not find the table 'public.{name}' in the schema cache"},
+                    }
+                return query
+        return Missing(fixture_rows())
+
+    source = load_source(missing("playgrounds"))
+    assert source.playgrounds == [] and source.playground_links == []
+    assert "028_playgrounds.sql" in source.warnings[0]
+    report, _ = export(tmp_path / "a", audio_dir, source=source)
+    assert report.manifest_written and any("028_playgrounds.sql" in w for w in report.warnings)
+
+    source = load_source(missing("playground_links"))
+    assert [r["id"] for r in source.playgrounds] == [PLAYGROUND] and source.playground_links == []
+    assert "029_playground_links.sql" in source.warnings[0]
+    docs = build_documents(source, {})
+    assert PLAYGROUND_DOC in docs and docs[f"episodes/{SCRIPT_WITH_AUDIO}.json"]["follow_along"] == []
+
+
+def test_a_playground_doc_stays_far_inside_the_document_and_bundle_limits():
+    doc = build_documents(raw_source(), {})[PLAYGROUND_DOC]
+    caps = PlaygroundCaps()
+    # The caps bound the outputs; the code and the guide are what is left.
+    assert caps.image_bytes + caps.output_bytes < cloud_export.MAX_DOC_BYTES / 1.5
+    assert len(canonical_bytes(doc)) < 10_000
