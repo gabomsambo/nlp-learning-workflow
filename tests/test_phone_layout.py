@@ -32,3 +32,21 @@ def test_phone_mini_player_is_one_row_until_expanded():
     assert ".mini-player:not(.is-expanded) .mini-skip" in CSS
     assert ".mini-player.is-expanded" in CSS
     assert "bottom: calc(59px + env(safe-area-inset-bottom))" in player
+
+
+def test_playground_cards_scroll_inside_themselves_on_a_phone():
+    # Code, outputs and diffs scroll sideways inside their box; the page never
+    # does. min-width: 0 lets the grid shrink below the longest code line.
+    for rule in (".pg-code {", ".pg-diff {", ".pg-out {"):
+        block = CSS.split(rule, 1)[1].split("}", 1)[0]
+        assert "overflow-x: auto" in block or "overflow: auto" in block
+    for rule in (".pg-root {", ".pg-card {", ".pg-step {", ".pg-outputs {"):
+        block = CSS.split(rule, 1)[1].split("}", 1)[0]
+        # An auto grid track grows to the longest code line; this one cannot.
+        assert "grid-template-columns: minmax(0, 1fr)" in block
+        assert "min-width: 0" in block
+    assert "max-width: 100%" in CSS.split(".pg-out-img img {", 1)[1].split("}", 1)[0]
+    phone = CSS.split("@media (max-width: 859px) {\n  .pg-card", 1)[1].split("\n}", 1)[0]
+    assert ".pg-import-row .btn { min-height: 40px; }" in phone
+    # The tab is highlighted like the others when it is the target.
+    assert '.paper-page:has(.panel-playground:target) .tabs a[data-panel="playground"]' in CSS

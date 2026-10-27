@@ -55,6 +55,9 @@ COPY scripts/ ./scripts/
 # image directory's contents *and* permissions into it, and a root-owned mount
 # point would make every upload fail for the non-root user.
 RUN mkdir -p /app/data/uploads /app/data/podcast_audio /app/data/tts-downloads /app/data/tts-previews
+# Paper Playground datasets (the playground_data volume, docs/PLAYGROUND.md).
+# Same reason: a fresh volume must be writable by appuser.
+RUN mkdir -p /app/playground-data
 
 # Change ownership to app user
 RUN chown -R appuser:appuser /app

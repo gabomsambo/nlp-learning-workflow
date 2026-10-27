@@ -2185,5 +2185,60 @@ def factcheck_backfill(
     raise typer.Exit(0)
 
 
+
+playground_app = typer.Typer(
+    help="Paper Playground: attach a notebook to a paper (docs/PLAYGROUND.md)",
+    add_completion=False,
+)
+app.add_typer(playground_app, name="playground")
+
+
+@playground_app.command("import")
+def playground_import(
+    paper_id: str = typer.Argument(..., help="Paper id, e.g. arxiv:1706.03762"),
+    path: Path = typer.Argument(..., help="Path to a .ipynb file"),
+):
+    """Attach a notebook to a paper and cache the datasets it downloads.
+
+    Replaces any notebook the paper already had (its study guide is cleared).
+    Calls no model: write the guide from the Playground tab.
+    """
+    from .playground import service as playground_service
+    from .playground.notebook import NotebookError
+    from .playground.store import PlaygroundStoreError
+
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        console.print(f"[red]Could not read {path}: {exc}[/red]", markup=True)
+        raise typer.Exit(1)
+    try:
+        row = playground_service.import_notebook(paper_id, data, path.name)
+    except NotebookError as exc:
+        console.print(f"Not imported: {exc}", markup=False)
+        raise typer.Exit(1)
+    except playground_service.PaperNotFound as exc:
+        console.print(f"Not imported: {exc}", markup=False)
+        raise typer.Exit(1)
+    except PlaygroundStoreError as exc:
+        console.print(f"Not imported: {exc}", markup=False)
+        raise typer.Exit(1)
+
+    console.print(f"Imported {row.get('title')!r} as playground {row.get('id')}", markup=False)
+    datasets = row.get("datasets") or []
+    for record in datasets:
+        if record.get("error"):
+            console.print(f"  not cached  {record['url']}  ({record['error']})", markup=False)
+        else:
+            console.print(
+                f"  cached      {record['url']}  -> {record['path']} "
+                f"({record['bytes']:,} bytes)",
+                markup=False,
+            )
+    if not datasets:
+        console.print("  No dataset URLs found in the code cells.", markup=False)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

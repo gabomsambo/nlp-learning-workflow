@@ -172,6 +172,7 @@ stage can be moved with an env var — no code change:
 | Podcast Ground Pack (calls 1-4) | `LLM_PODCAST_EXTRACTION_MODEL`, `PODCAST_EXTRACTION_PROVIDER` | `deepseek-flash` (DeepSeek), `claude-haiku-5-5` as fallback |
 | Podcast script (call 5) | `LLM_PODCAST_SYNTHESIS_MODEL` | `claude-sonnet-5` |
 | Fact-check | `LLM_FACTCHECK_EXTRACT_MODEL`, `LLM_FACTCHECK_SCREEN_MODEL`, `LLM_FACTCHECK_REJUDGE_MODEL` | Haiku 5.5 / Haiku 5.5 / Sonnet 5.5 |
+| Playground study guide | `LLM_PLAYGROUND_MODEL` | `claude-sonnet-5` |
 
 Every call's model, token counts and cost are shown in the run's stage detail
 and logged at WARNING.
@@ -234,6 +235,7 @@ Set up a cron job or GitHub Action:
 | `pillars list` | List all pillars and goals |
 | `pillars set-goal llm-theory-practice "..."` | Update pillar learning goal |
 | `export --pillar llm-theory-practice --format md` | Export notes as markdown |
+| `playground import <paper_id> <file.ipynb>` | Attach a notebook to a paper for the Playground tab ([docs/PLAYGROUND.md](docs/PLAYGROUND.md); needs migration 028) |
 
 ## 🏗️ Project Structure
 
@@ -416,7 +418,7 @@ uvicorn webui.app:app --reload
 
 Open `http://localhost:8000`:
 - Dashboard: counts and recent activity
-- Papers: browse and filter by pillar
+- Papers: browse and filter by pillar. A paper's Playground tab turns its notebook into study cards ([docs/PLAYGROUND.md](docs/PLAYGROUND.md))
 - Lessons: view generated lessons
 - Pipeline: trigger runs and view results inline
 - Analytics: placeholder (to be expanded)

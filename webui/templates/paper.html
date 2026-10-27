@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from "_components.html" import page_header, button, chip, empty_state, callout %}
+{% from "_run_panel.html" import run_panel %}
 {% block title %}{% if found %}{{ page.title }}{% else %}Paper not found{% endif %}{% endblock %}
 {% block content %}
 {% if not found %}
@@ -52,6 +53,7 @@
         <a href="#lesson" data-panel="lesson">Lesson</a>
         <a href="#cards" data-panel="cards">Cards{% if page.cards %} · {{ page.cards|length }}{% endif %}</a>
         <a href="#episode" data-panel="episode">Episode{% if page.episodes %} · {{ page.episodes|length }}{% endif %}</a>
+        <a href="#playground" data-panel="playground">Playground</a>
       </nav>
 
       <div class="paper-panels">
@@ -223,6 +225,38 @@
           {{ button('Make episode', href=page.make_episode_href) }}
           {% endif %}
         </section>
+
+        <section id="playground" class="paper-panel panel-playground" data-paper-id="{{ page.id }}">
+          <div class="section-head">
+            <h2>Playground</h2>
+            <div class="pg-actions">
+              <button type="button" class="btn btn-secondary btn-sm" id="playground-hide-explanations" aria-pressed="false" hidden>Hide explanations</button>
+              <button type="button" class="btn btn-primary btn-sm" id="playground-explain-btn" hidden>Generate study guide</button>
+            </div>
+          </div>
+          <p id="playground-status" class="pg-status" role="status" aria-live="polite"></p>
+          {{ run_panel(
+            status_id='playground-run-status',
+            stages_id='playground-run-stages',
+            progress_id='playground-run-progress',
+            cancel_id='playground-run-cancel',
+            panel_id='playground-run-card',
+            title='Study guide',
+            progress_label='Study guide progress',
+            hidden=True
+          ) }}
+          <div id="playground-root" class="pg-root">
+            <p class="paper-muted">The playground loads with JavaScript.</p>
+          </div>
+          <form id="playground-import" class="pg-import" enctype="multipart/form-data">
+            <label for="playground-file">Notebook (.ipynb)</label>
+            <div class="pg-import-row">
+              <input type="file" id="playground-file" name="file" accept=".ipynb,application/x-ipynb+json,application/json">
+              <button type="submit" class="btn btn-secondary btn-sm" id="playground-import-btn">Import notebook</button>
+            </div>
+            <p class="pg-hint">Saved outputs are kept. Data files the code downloads are saved too, so later runs work offline.</p>
+          </form>
+        </section>
       </div>
     </div>
 
@@ -281,5 +315,7 @@
 {% if found %}
 <script src="/static/factcheck.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/paper-page.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/playground.js?v={{ asset_v | default('1', true) }}"></script>
 {% endif %}
 {% endblock %}

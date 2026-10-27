@@ -245,6 +245,11 @@ services:
       PODCAST_AUDIO_DIR: "/app/data/podcast_audio"
       TTS_DOWNLOAD_DIR: "/app/data/tts-downloads"
       TTS_PREVIEW_DIR: "/app/data/tts-previews"
+      # Paper Playground: where notebook datasets are cached (the
+      # playground_data volume below) and how much each playground may hold.
+      PLAYGROUND_DATA_DIR: "/app/playground-data"
+      PLAYGROUND_DATA_MAX_BYTES: "${PLAYGROUND_DATA_MAX_BYTES:-1000000000}"
+      PLAYGROUND_NOTEBOOK_MAX_BYTES: "${PLAYGROUND_NOTEBOOK_MAX_BYTES:-25000000}"
       # Obsidian vault. The process writes /vault. The host folder defaults
       # to ~/NLP-Vault (VAULT_HOST_DIR overrides it) so the captain can open
       # that directory in Obsidian. VAULT_DIR in .env is the host path for a
@@ -271,6 +276,11 @@ services:
       # not a bind mount into the repo) so uploads survive `docker compose
       # down` and image rebuilds, and never end up staged in git.
       - uploads_data:/app/data
+      # Paper Playground datasets, downloaded at notebook import
+      # (docs/PLAYGROUND.md). Read-write here; the sandbox mounts the same
+      # volume read-only at /data. Its own volume, not a folder of uploads_data,
+      # so the sandbox can never see the retained PDFs.
+      - playground_data:/app/playground-data
       # Same folder the scheduler writes when VAULT_EXPORT_ENABLED=true, so
       # `vault export` from this container and the nightly refresh cannot
       # diverge. `./workstation up` creates the host directory as the user

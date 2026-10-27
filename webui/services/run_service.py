@@ -37,6 +37,7 @@ from nlp_pillars.orchestrator import Orchestrator, RunCancelledError
 from nlp_pillars.schemas import (
     DISCOVER_STAGES,
     FACTCHECK_STAGES,
+    PLAYGROUND_EXPLAIN_STAGES,
     PODCAST_AUDIO_STAGES,
     PODCAST_SCRIPT_STAGES,
     PROCESS_SELECTED_STAGES,
@@ -48,6 +49,7 @@ from nlp_pillars.schemas import (
     UploadFileRequest,
     UploadUrlRequest,
 )
+from nlp_pillars.playground import service as playground_service
 from nlp_pillars.services.upload_service import get_upload_service
 from webui.services import (
     cloud_publish_service,
@@ -66,6 +68,7 @@ KIND_PODCAST_AUDIO = podcast_audio_service.KIND_PODCAST_AUDIO
 KIND_PODCAST_SCRIPT = podcast_script_service.KIND_PODCAST_SCRIPT
 KIND_PODCAST_FACTCHECK = podcast_factcheck_service.KIND_PODCAST_FACTCHECK
 KIND_UPLOAD = "upload"
+KIND_PLAYGROUND_EXPLAIN = playground_service.KIND_PLAYGROUND_EXPLAIN
 
 #: The trigger source for both manual upload routes. Uploads are exempt from the
 #: one-active-run-per-pillar guard (migration 015) — see dispatch_run.
@@ -84,6 +87,7 @@ _STAGES_FOR_KIND = {
     KIND_PODCAST_SCRIPT: PODCAST_SCRIPT_STAGES,
     KIND_PODCAST_FACTCHECK: FACTCHECK_STAGES,
     KIND_UPLOAD: UPLOAD_STAGES,
+    KIND_PLAYGROUND_EXPLAIN: PLAYGROUND_EXPLAIN_STAGES,
 }
 
 
@@ -133,6 +137,9 @@ def dispatch_run(
             KIND_PODCAST_FACTCHECK is exempted the same way (migration 023). One
             script still has at most one active fact-check; that conflict is a
             separate index and the route answers 409 with the run to attach to.
+
+            KIND_PLAYGROUND_EXPLAIN is exempted the same way (migration 028), with
+            one active pass per playground enforced by its own index.
         ValueError: on an unknown ``kind``.
         db.PipelineRunCreateError: the row could not be written for any other reason
             — including the CHECK constraints migration 015 widens.
@@ -224,6 +231,11 @@ def execute_run(
             _finish_podcast_factcheck(run_id, cancel_event, kwargs, on_stage)
             return
 
+        if kind == KIND_PLAYGROUND_EXPLAIN:
+            # Same no-Orchestrator rule: the explain pass reads the stored notebook.
+            _finish_playground_explain(run_id, cancel_event, kwargs, on_stage)
+            return
+
         # Built HERE, inside the worker thread. Never cached on app.state and never
         # passed across the thread boundary: it holds HTTP clients and agent state
         # that belong to the run, and reusing one across runs is how state leaks.
@@ -263,10 +275,11 @@ def execute_run(
 
     finally:
         cancel_events.pop(run_id, None)
-        # A discovery shows candidates and changes nothing the reader holds. Every
-        # other kind may. notify() only records the fact and cannot raise, so a
-        # cloud problem can never change how this run ended.
-        if kind != KIND_DISCOVER:
+        # A discovery shows candidates and changes nothing the reader holds, and
+        # the cloud reader does not carry playgrounds yet. Every other kind may.
+        # notify() only records the fact and cannot raise, so a cloud problem can
+        # never change how this run ended.
+        if kind not in (KIND_DISCOVER, KIND_PLAYGROUND_EXPLAIN):
             cloud_publish_service.notify(f"run:{kind}")
 
 
@@ -395,6 +408,39 @@ def _finish_podcast_factcheck(
         run_id,
         payload.get("fact_check_id"),
         script_id,
+    )
+
+
+def _finish_playground_explain(
+    run_id: str,
+    cancel_event: threading.Event,
+    kwargs: Dict[str, Any],
+    on_stage,
+) -> None:
+    """Close out an explain pass.
+
+    A guide that covers every cell is a succeeded run. A partial guide is
+    saved and the run is FAILED with that payload, the same two-facts rule as
+    an upload: the guide exists, and some cells were not explained. A pass
+    with nothing usable raises and execute_run records it.
+    """
+    playground_id = kwargs.get("playground_id")
+    if not playground_id:
+        raise ValueError("playground_explain run requires playground_id")
+    payload = playground_service.run_explain_job(playground_id, on_stage, cancel_event)
+    ok = payload.get("status") == "ready"
+    db.finish_pipeline_run(
+        run_id,
+        RunStatus.SUCCEEDED.value if ok else RunStatus.FAILED.value,
+        papers_processed=0,
+        papers_failed=0,
+        error=None if ok else payload.get("error"),
+        result=payload,
+    )
+    logger.info(
+        "Run %s finished playground %s: %s, %s of %s cells",
+        run_id, playground_id, payload.get("status"),
+        payload.get("cells_explained"), payload.get("cells_total"),
     )
 
 
@@ -638,6 +684,7 @@ WEBUI_TRIGGER_SOURCES = [
     podcast_script_service.TRIGGER_UI_PODCAST_SCRIPT,
     podcast_factcheck_service.TRIGGER_UI_PODCAST_FACTCHECK,
     podcast_factcheck_service.TRIGGER_AUTO_PODCAST_FACTCHECK,
+    playground_service.TRIGGER_UI_PLAYGROUND,
 ]
 
 

@@ -23,8 +23,8 @@ The defaults, and why:
 Every stage is overridable by env without touching code:
 ``LLM_SUMMARIZE_MODEL``, ``LLM_SYNTHESIZE_MODEL``, ``LLM_QUIZ_MODEL``,
 ``LLM_DISCOVER_MODEL``, ``LLM_CONCEPTS_MODEL``,
-``LLM_PODCAST_EXTRACTION_MODEL``, ``LLM_PODCAST_SYNTHESIS_MODEL``, and the
-``LLM_FACTCHECK_*`` trio. The older ``PODCAST_*_MODEL`` and
+``LLM_PODCAST_EXTRACTION_MODEL``, ``LLM_PODCAST_SYNTHESIS_MODEL``, the
+``LLM_FACTCHECK_*`` trio, and ``LLM_PLAYGROUND_MODEL``. The older ``PODCAST_*_MODEL`` and
 ``FACTCHECK_*_MODEL`` names still work and are consulted second, so an
 existing ``.env`` keeps working.
 
@@ -295,6 +295,22 @@ FACTCHECK_REJUDGE = ModelRoute(
     thinking="adaptive",
 )
 
+# -- playground --------------------------------------------------------------
+
+#: The Paper Playground explain pass (docs/PLAYGROUND.md): a notebook's cells
+#: become study steps with one-line explanations, line notes and "try this"
+#: tweaks. Same Sonnet as the podcast script by default: the explanations are
+#: what the captain studies from, so taste matters more than price here.
+PLAYGROUND_ROUTE = ModelRoute(
+    stage="playground_explain",
+    provider="anthropic",
+    default_model="claude-sonnet-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_playground_model",),
+    effort="medium",
+    thinking="adaptive",
+)
+
 
 def route_for(stage: str) -> ModelRoute:
     """The route for a stage name. Raises for an unknown stage."""
@@ -311,6 +327,7 @@ def route_for(stage: str) -> ModelRoute:
             FACTCHECK_EXTRACT,
             FACTCHECK_SCREEN,
             FACTCHECK_REJUDGE,
+            PLAYGROUND_ROUTE,
         )
     }
     try:

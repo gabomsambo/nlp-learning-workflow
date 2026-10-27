@@ -388,12 +388,12 @@ CREATE TABLE pipeline_runs (
         CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'ui_discover',
                                   'scheduler', 'ui_podcast_audio', 'ui_upload',
                                   'ui_podcast_script', 'ui_podcast_factcheck',
-                                  'auto_podcast_factcheck')),
+                                  'auto_podcast_factcheck', 'ui_playground')),
     kind             TEXT NOT NULL
         CONSTRAINT pipeline_runs_kind_check
         CHECK (kind IN ('run_daily', 'process_selected', 'discover',
                         'podcast_audio', 'upload', 'podcast_script',
-                        'podcast_factcheck')),
+                        'podcast_factcheck', 'playground_explain')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".
@@ -414,7 +414,8 @@ CREATE TABLE pipeline_runs (
     -- 'podcast_script' the generated script metadata (and the full text when
     -- saved=false). 'podcast_factcheck' stores script_id at insert so the
     -- one-active-per-script index can see it, then replaces that object with
-    -- counts when the run finishes. The rest leave it NULL. Written in a
+    -- counts when the run finishes. 'playground_explain' stores playground_id
+    -- at insert for the same reason. The rest leave it NULL. Written in a
     -- single PATCH — so unlike the stage list it has no read-modify-write
     -- problem and does not need a child table.
     result           JSONB
@@ -526,6 +527,27 @@ CREATE TABLE cloud_sync_state (
     key TEXT PRIMARY KEY CHECK (btrim(key) <> ''),
     value BIGINT NOT NULL DEFAULT 0 CHECK (value >= 0),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+
+-- Paper Playground. Same object as docs/migrations/028_playgrounds.sql
+-- (hand-applied on an existing volume). One current playground per paper; the
+-- stored shape of notebook, steps and datasets is docs/PLAYGROUND.md.
+CREATE TABLE playgrounds (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    paper_id      TEXT NOT NULL UNIQUE REFERENCES papers(id) ON DELETE CASCADE,
+    title         TEXT NOT NULL,
+    source_kind   TEXT NOT NULL DEFAULT 'notebook'
+        CHECK (source_kind IN ('notebook', 'generated')),
+    notebook      JSONB NOT NULL,
+    notebook_name TEXT,
+    steps         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    datasets      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status        TEXT NOT NULL DEFAULT 'imported'
+        CHECK (status IN ('imported', 'ready', 'partial', 'failed')),
+    model         TEXT,
+    error         TEXT,
+    created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
 );
 
 
@@ -1310,19 +1332,24 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 -- correctness constraint, not a performance index: a check-then-insert in Python
 -- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
 --
--- Uploads, podcast_script runs, and podcast_factcheck runs are exempt
--- (migrations 015 / 016 / 023). The guard is about two writers driving one
--- pillar's queue at once. Those three kinds are scoped to one paper or one
--- script, so refusing them because a discovery run is in flight would refuse
--- work for a conflict that does not exist. One script still has at most one
--- active fact-check: pipeline_runs_one_active_factcheck_per_script.
+-- Uploads, podcast_script, podcast_factcheck and playground_explain runs are
+-- exempt (migrations 015 / 016 / 023 / 028). The guard is about two writers
+-- driving one pillar's queue at once. Those kinds are scoped to one paper or
+-- one script, so refusing them because a discovery run is in flight would
+-- refuse work for a conflict that does not exist. One script still has at most
+-- one active fact-check, and one playground one active explain pass.
 CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
     ON pipeline_runs (pillar_id)
     WHERE status IN ('pending', 'running')
-      AND kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck');
+      AND kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck',
+                       'playground_explain');
 CREATE UNIQUE INDEX pipeline_runs_one_active_factcheck_per_script
     ON pipeline_runs ((result->>'script_id'))
     WHERE kind = 'podcast_factcheck'
+      AND status IN ('pending', 'running');
+CREATE UNIQUE INDEX pipeline_runs_one_active_explain_per_playground
+    ON pipeline_runs ((result->>'playground_id'))
+    WHERE kind = 'playground_explain'
       AND status IN ('pending', 'running');
 CREATE INDEX idx_pipeline_runs_pillar ON pipeline_runs(pillar_id, created_at DESC);
 CREATE INDEX idx_pipeline_runs_active ON pipeline_runs(status)
@@ -1375,6 +1402,7 @@ COMMENT ON COLUMN cloud_publish_state.doc_key IS 'Bundle path, e.g. papers/arxiv
 COMMENT ON COLUMN cloud_publish_state.content_hash IS 'sha256 (hex) of the bytes uploaded, as listed in the bundle manifest.';
 COMMENT ON COLUMN cloud_publish_state.byte_size IS 'Size of the uploaded object, summed to keep the bucket under its cap.';
 COMMENT ON TABLE cloud_sync_state IS 'Cursors for syncing with the cloud reader: reviews_seq (folded through) and reviews_pending (a pull in progress).';
+COMMENT ON TABLE playgrounds IS 'Paper Playground: one notebook per paper, its study guide (steps) and cached dataset records. See docs/PLAYGROUND.md.';
 COMMENT ON COLUMN chunk_embeddings.embedding IS 'float4[] (PostgreSQL real[]). Chosen over bytea so the array is readable without a codec, and over pgvector so the Postgres image stays unchanged.';
 COMMENT ON COLUMN chunk_embeddings.model_id IS 'Provider model id including the pinned revision, e.g. BAAI/bge-base-en-v1.5@<onnx sha>.';
 COMMENT ON TABLE paper_vectors IS 'One float32 title+abstract vector per paper per model. Rebuildable. Not the chunk index.';
