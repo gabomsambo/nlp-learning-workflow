@@ -1,9 +1,14 @@
 /*
  * The Playground tab on the paper page (docs/PLAYGROUND.md).
  *
- * Read-only in this version: a notebook's study steps, each code cell as a
- * card with its one-line explanation, tap-a-line notes, saved output and
- * "try this" diffs. Nothing runs here.
+ * A notebook's study steps, each code cell as a card with its one-line
+ * explanation, tap-a-line notes and saved output. Cells run in the
+ * playground runner (one session per open playground, playground-session.js):
+ * Run, Run up to here, edit with Reset to original, and "try this" tweaks
+ * shown as a Before / After. The pure logic is in playground-core.js.
+ *
+ * Live outputs arrive from the execute proxy in the same view shape as saved
+ * ones (notebook.py::runner_output_view), so one renderer serves both.
  *
  * Everything is built with createElement + textContent + setAttribute.
  * Notebook HTML outputs arrive already sanitized into a tag tree by the
@@ -23,7 +28,6 @@
   ];
   var VOID = ['br', 'hr'];
   var BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
-  var MAX_DIFF_CELLS = 250000;
 
   /* ------------------------------------------------------------ pure helpers */
 
@@ -59,35 +63,11 @@
     parent.appendChild(el);
   }
 
-  /** Line diff (LCS). Returns [{op: 'same'|'del'|'add', text}] in order. */
-  function lineDiff(before, after) {
-    var a = String(before || '').split('\n');
-    var b = String(after || '').split('\n');
-    var n = a.length;
-    var m = b.length;
-    if (n * m > MAX_DIFF_CELLS) {
-      return a.map(function (t) { return { op: 'del', text: t }; })
-        .concat(b.map(function (t) { return { op: 'add', text: t }; }));
-    }
-    var table = [];
-    for (var i = 0; i <= n; i++) table.push(new Array(m + 1).fill(0));
-    for (i = n - 1; i >= 0; i--) {
-      for (var j = m - 1; j >= 0; j--) {
-        table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-      }
-    }
-    var out = [];
-    i = 0;
-    j = 0;
-    while (i < n && j < m) {
-      if (a[i] === b[j]) { out.push({ op: 'same', text: a[i] }); i++; j++; }
-      else if (table[i + 1][j] >= table[i][j + 1]) { out.push({ op: 'del', text: a[i] }); i++; }
-      else { out.push({ op: 'add', text: b[j] }); j++; }
-    }
-    while (i < n) out.push({ op: 'del', text: a[i++] });
-    while (j < m) out.push({ op: 'add', text: b[j++] });
-    return out;
-  }
+  var Core = global.PlaygroundCore ||
+    (typeof require === 'function' ? require('./playground-core.js') : {});
+  var SessionApi = global.PlaygroundSession ||
+    (typeof require === 'function' ? require('./playground-session.js') : {});
+  var lineDiff = Core.lineDiff;
 
   /**
    * Which cells each step shows, in notebook order.
@@ -183,7 +163,7 @@
     return node;
   }
 
-  function renderOutput(out) {
+  function renderOutput(out, opts) {
     var box;
     if (out.kind === 'stream' || out.kind === 'text' || out.kind === 'error') {
       box = el('pre', 'pg-out' + (out.kind === 'error' || out.name === 'stderr' ? ' is-error' : ''), out.text || '');
@@ -193,7 +173,7 @@
     } else if (out.kind === 'png' && safePng(out.data)) {
       box = el('div', 'pg-out pg-out-img');
       var img = document.createElement('img');
-      img.setAttribute('alt', out.alt || 'Saved figure');
+      img.setAttribute('alt', out.alt || 'Figure');
       img.setAttribute('loading', 'lazy');
       img.setAttribute('src', 'data:image/png;base64,' + out.data);
       box.appendChild(img);
@@ -203,10 +183,68 @@
     if (out.truncated) {
       var wrap = el('div');
       wrap.appendChild(box);
-      wrap.appendChild(el('p', 'pg-out-note', 'Output cut for display. The stored notebook has all of it.'));
+      wrap.appendChild(el('p', 'pg-out-note', opts && opts.live
+        ? 'Output cut at the runner’s size limit.'
+        : 'Output cut for display. The stored notebook has all of it.'));
       return wrap;
     }
     return box;
+  }
+
+  function renderOutputs(box, outputs, opts) {
+    box.replaceChildren();
+    if (!outputs || !outputs.length) {
+      box.appendChild(el('p', 'pg-out-note', 'No output.'));
+      return;
+    }
+    outputs.forEach(function (o) { box.appendChild(renderOutput(o, opts)); });
+  }
+
+  /** One output with its changed lines or table cells marked (Before / After). */
+  function renderMarked(out, lineFlags, tableFlags) {
+    if (lineFlags && (out.kind === 'stream' || out.kind === 'text' || out.kind === 'error')) {
+      var pre = el('pre', 'pg-out' + (out.kind === 'error' || out.name === 'stderr' ? ' is-error' : ''));
+      String(out.text || '').split('\n').forEach(function (line, i, all) {
+        var span = el('span', 'pg-hl-line' + (lineFlags[i] ? ' is-changed' : ''), line + (i < all.length - 1 ? '\n' : ''));
+        pre.appendChild(span);
+      });
+      return pre;
+    }
+    var node = renderOutput(out, { live: true });
+    if (tableFlags && node.querySelectorAll) {
+      var cells = node.querySelectorAll('td, th');
+      tableFlags.forEach(function (changed, i) {
+        if (changed && cells[i]) cells[i].classList.add('is-changed');
+      });
+    }
+    return node;
+  }
+
+  function renderCompare(before, after, labels) {
+    var grid = el('div', 'pg-ba');
+    var colB = el('div', 'pg-ba-col');
+    var colA = el('div', 'pg-ba-col');
+    colB.appendChild(el('p', 'pg-label', 'Before · ' + labels.before));
+    colA.appendChild(el('p', 'pg-label', 'After · ' + labels.after));
+    var pairs = Core.compareOutputs(before, after);
+    var marked = false;
+    pairs.forEach(function (p) {
+      if (p.text) marked = marked || p.text.after.some(Boolean) || p.text.before.some(Boolean);
+      if (p.table) marked = marked || p.table.some(Boolean);
+      if (p.before) colB.appendChild(renderMarked(p.before, p.text && p.text.before, p.table));
+      if (p.after) colA.appendChild(renderMarked(p.after, p.text && p.text.after, p.table));
+    });
+    if (!(before || []).length) colB.appendChild(el('p', 'pg-out-note', 'No output.'));
+    if (!(after || []).length) colA.appendChild(el('p', 'pg-out-note', 'No output.'));
+    grid.appendChild(colB);
+    grid.appendChild(colA);
+    var wrap = el('div', 'pg-compare');
+    var note = Core.sameOutputs(before, after)
+      ? 'The output did not change.'
+      : marked ? 'Changed lines and table cells are highlighted.' : '';
+    if (note) wrap.appendChild(el('p', 'pg-hint', note));
+    wrap.appendChild(grid);
+    return wrap;
   }
 
   function renderCode(source, notes) {
@@ -238,21 +276,449 @@
     return block;
   }
 
-  function renderTry(source, t) {
-    var box = el('details', 'pg-try');
-    box.appendChild(el('summary', null, 'Try: ' + t.label));
-    box.appendChild(el('p', 'pg-expect', t.expect));
+  function renderDiff(rows, label) {
     var diff = el('div', 'pg-diff');
-    diff.setAttribute('aria-label', 'Original and changed code, line by line');
-    lineDiff(source, t.code).forEach(function (row) {
+    diff.setAttribute('aria-label', label || 'Original and changed code, line by line');
+    rows.forEach(function (row) {
+      if (row.op === 'gap') {
+        diff.appendChild(el('div', 'pg-diff-line is-gap', '⋯ ' + row.count + ' unchanged line' + (row.count === 1 ? '' : 's')));
+        return;
+      }
       var line = el('div', 'pg-diff-line is-' + row.op);
       line.appendChild(el('span', 'pg-diff-mark', row.op === 'add' ? '+' : row.op === 'del' ? '−' : ' '));
       line.appendChild(el('code', null, row.text || ' '));
       if (row.op !== 'same') line.setAttribute('aria-label', (row.op === 'add' ? 'added: ' : 'removed: ') + row.text);
       diff.appendChild(line);
     });
-    box.appendChild(diff);
+    return diff;
+  }
+
+  function button(text, className) {
+    var b = el('button', 'btn btn-sm ' + (className || 'btn-secondary'), text);
+    b.setAttribute('type', 'button');
+    return b;
+  }
+
+  /**
+   * The editor: a textarea over a line-number gutter. No library. Tab
+   * indents (Shift+Tab outdents); Escape then Tab leaves, so the keyboard is
+   * never trapped. Enter keeps the indent. Shift+Enter is the card's.
+   */
+  function buildEditor(value, onInput) {
+    var wrap = el('div', 'pg-editor');
+    var gutter = el('pre', 'pg-gutter');
+    gutter.setAttribute('aria-hidden', 'true');
+    var ta = el('textarea', 'pg-ta');
+    ta.value = value;
+    ['spellcheck', 'autocapitalize', 'autocomplete', 'autocorrect'].forEach(function (name) {
+      ta.setAttribute(name, name === 'spellcheck' ? 'false' : 'off');
+    });
+    ta.setAttribute('wrap', 'off');
+    ta.setAttribute('aria-label', 'Code for this cell (editable)');
+    var escaped = false;
+    function sync() {
+      gutter.textContent = Core.lineNumbers(ta.value);
+      var lines = ta.value.split('\n').length;
+      ta.rows = Math.max(3, Math.min(lines + 1, 30));
+      gutter.scrollTop = ta.scrollTop;
+    }
+    function changed() { sync(); onInput(ta.value); }
+    ta.addEventListener('input', changed);
+    ta.addEventListener('scroll', function () { gutter.scrollTop = ta.scrollTop; });
+    ta.addEventListener('focus', function () { escaped = false; });
+    ta.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { escaped = true; return; }
+      if (ev.key === 'Tab' && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !escaped) {
+        ev.preventDefault();
+        var r = Core.indentLines(ta.value, ta.selectionStart, ta.selectionEnd, ev.shiftKey);
+        ta.value = r.value;
+        ta.setSelectionRange(r.start, r.end);
+        changed();
+        return;
+      }
+      escaped = false;
+      if (ev.key === 'Enter' && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        ta.setRangeText(Core.newlineIndent(ta.value, ta.selectionStart), ta.selectionStart, ta.selectionEnd, 'end');
+        changed();
+      }
+    });
+    wrap.appendChild(gutter);
+    wrap.appendChild(ta);
+    sync();
+    return { wrap: wrap, ta: ta };
+  }
+
+  /* ----------------------------------------------------------- a code cell */
+
+  /**
+   * One runnable cell. Holds the cell's live state (edited code, latest live
+   * output) and builds its controls. `live` is the tab's shared context:
+   * {session, pg, cells, codeIndices}.
+   */
+  function CellCtl(cell, guide, live) {
+    this.cell = cell;
+    this.index = cell.index;
+    this.guide = guide || null;
+    this.live = live;
+    this.original = cell.source || '';
+    this.edited = null;
+    this.liveOutputs = null;
+    this.liveCode = null;
+    this.timer = null;
+    this.tries = [];
+  }
+
+  CellCtl.prototype.code = function () {
+    return this.edited != null ? this.edited : this.original;
+  };
+
+  /** What "Before" is for a try: the latest live output, else the saved one. */
+  CellCtl.prototype.beforeState = function () {
+    if (this.liveOutputs) return { outputs: this.liveOutputs, code: this.liveCode, label: 'your last run' };
+    return { outputs: this.cell.outputs || [], code: this.original, label: 'saved output' };
+  };
+
+  CellCtl.prototype.build = function (card) {
+    var self = this;
+    this.card = card;
+    card.setAttribute('data-cell', String(this.index));
+    card.setAttribute('tabindex', '-1');
+
+    this.toolbar = el('div', 'pg-toolbar');
+    this.runBtn = button('Run', 'btn-primary');
+    this.runBtn.setAttribute('title', 'Run this cell (Shift+Enter)');
+    this.upBtn = button('Run up to here');
+    this.upBtn.setAttribute('title', 'Run every earlier cell this session has not run yet, then this one');
+    this.editBtn = button('Edit', 'btn-ghost');
+    this.resetBtn = button('Reset to original', 'btn-ghost');
+    this.resetBtn.hidden = true;
+    this.runBtn.addEventListener('click', function () { self.run(); });
+    this.upBtn.addEventListener('click', function () { self.runUpTo(); });
+    this.editBtn.addEventListener('click', function () { self.startEdit(true); });
+    this.resetBtn.addEventListener('click', function () { self.reset(); });
+    [this.runBtn, this.upBtn, this.editBtn, this.resetBtn].forEach(function (b) { self.toolbar.appendChild(b); });
+    if (this.live.codeIndices[0] === this.index) this.upBtn.hidden = true;
+
+    this.status = el('div', 'pg-run-status');
+    this.statusText = el('span', 'pg-run-text');
+    this.statusText.setAttribute('role', 'status');
+    this.statusText.setAttribute('aria-live', 'polite');
+    this.interruptBtn = button('Interrupt', 'btn-ghost');
+    this.interruptBtn.hidden = true;
+    this.interruptBtn.addEventListener('click', function () { self.live.session.interrupt(); });
+    this.longerBtn = button('Run again with a longer limit', 'btn-secondary');
+    this.longerBtn.hidden = true;
+    this.status.appendChild(this.statusText);
+    this.status.appendChild(this.interruptBtn);
+    this.status.appendChild(this.longerBtn);
+    this.status.hidden = true;
+
+    this.editInfo = el('details', 'pg-edit-diff');
+    this.editInfo.hidden = true;
+    this.editSummary = el('summary');
+    this.editInfo.appendChild(this.editSummary);
+  };
+
+  CellCtl.prototype.say = function (text, tone) {
+    this.status.hidden = !text;
+    this.statusText.textContent = text || '';
+    this.status.className = 'pg-run-status' + (tone ? ' is-' + tone : '');
+  };
+
+  CellCtl.prototype.startTimer = function (label, target) {
+    var started = Date.now();
+    var self = this;
+    var write = target || function (t) { self.say(t, 'busy'); };
+    this.stopTimer();
+    write(label + ' ' + Core.formatElapsed(0));
+    this.timer = setInterval(function () { write(label + ' ' + Core.formatElapsed(Date.now() - started)); }, 200);
+  };
+
+  CellCtl.prototype.stopTimer = function () {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  };
+
+  CellCtl.prototype.setBusy = function (busy) {
+    this.runBtn.disabled = busy;
+    this.upBtn.disabled = busy;
+    this.tries.forEach(function (t) { t.runBtn.disabled = busy; });
+  };
+
+  /**
+   * Run `code` in the session with a running timer and an Interrupt button:
+   * the cell's own, or a try's (`ui` = {say, interrupt}).
+   * Resolves {result, generation} | {error} | {cancelled}.
+   */
+  CellCtl.prototype.execute = function (code, timeoutS, ui) {
+    var self = this;
+    var session = this.live.session;
+    var say = (ui && ui.say) || function (t, tone) { self.say(t, tone); };
+    var stopBtn = (ui && ui.interrupt) || this.interruptBtn;
+    say('Waiting for the session…', 'busy');
+    this.setBusy(true);
+    stopBtn.hidden = false;
+    this.longerBtn.hidden = true;
+    return session.execute(code, timeoutS, function () {
+      self.startTimer('Running…', function (t) { say(t, 'busy'); });
+    }).then(function (res) {
+      self.stopTimer();
+      self.setBusy(false);
+      stopBtn.hidden = true;
+      return res;
+    });
+  };
+
+  CellCtl.prototype.showLive = function (outputs, result, code) {
+    this.liveOutputs = outputs || [];
+    this.liveCode = code;
+    this.outLabel.textContent = 'Live output';
+    renderOutputs(this.liveBox, this.liveOutputs, { live: true });
+    this.liveBox.hidden = false;
+    if ((this.cell.outputs || []).length) {
+      this.savedHead.hidden = false;
+      this.savedToggle.hidden = false;
+      this.savedBox.hidden = true;
+      this.savedToggle.textContent = 'Compare with saved output';
+      this.savedToggle.setAttribute('aria-pressed', 'false');
+    } else {
+      this.savedBox.hidden = true;
+    }
+    if (result && result.execution_count != null) this.countEl.textContent = 'In [' + result.execution_count + ']';
+  };
+
+  /** Run this cell. Resolves true when it ran without error. */
+  CellCtl.prototype.run = function (timeoutS) {
+    var self = this;
+    var session = this.live.session;
+    var limit = timeoutS || session.timeoutS();
+    var code = this.code();
+    return this.execute(code, timeoutS).then(function (res) {
+      if (res.cancelled) { self.say('Not run: stopped before its turn.', 'warn'); return false; }
+      if (res.error) { self.say(res.error, 'error'); return false; }
+      var r = res.result;
+      self.showLive(r.outputs, r, code);
+      var summary = Core.runSummary(r, limit);
+      self.say(summary.text, summary.tone);
+      if (r.status === 'timeout') self.offerLonger(limit);
+      if (r.status === 'ok') session.markRan(self.index, res.generation);
+      self.live.paintRan();
+      return r.status === 'ok';
+    });
+  };
+
+  CellCtl.prototype.offerLonger = function (limit) {
+    var self = this;
+    var next = Core.longerTimeout(limit, this.live.session.maxTimeoutS());
+    if (!next) {
+      this.say(this.statusText.textContent + ' That is the runner’s maximum.', 'warn');
+      return;
+    }
+    this.longerBtn.textContent = 'Run again with a ' + Core.seconds(next) + ' limit';
+    this.longerBtn.hidden = false;
+    this.longerBtn.onclick = function () { self.run(next); };
+  };
+
+  /** Run every earlier cell this session has not run, then this one. */
+  CellCtl.prototype.runUpTo = function () {
+    var self = this;
+    var live = this.live;
+    var plan = Core.planRunUpTo(live.codeIndices, this.index, live.session.ran);
+    var earlier = plan.slice(0, -1);
+    var i = 0;
+    function next() {
+      if (i >= earlier.length) return self.run();
+      var ctl = live.cells[earlier[i]];
+      i += 1;
+      self.say('Running earlier cells: ' + i + ' of ' + earlier.length + '…', 'busy');
+      return ctl.run().then(function (ok) {
+        if (ok) return next();
+        self.say('Stopped: the cell ' + (ctl.countEl.textContent || '') + ' above did not finish cleanly. Fix it, or run from there.', 'error');
+        if (ctl.card.scrollIntoView) ctl.card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return false;
+      });
+    }
+    return next();
+  };
+
+  CellCtl.prototype.startEdit = function (focus) {
+    var self = this;
+    if (!this.editor) {
+      this.editor = buildEditor(this.code(), function (value) {
+        self.edited = value;
+        self.paintEdit();
+      });
+      this.editorHint = el('p', 'pg-hint', 'Tab indents · Esc then Tab leaves the editor · Shift+Enter runs.');
+      this.codeView.after(this.editor.wrap);
+      this.editor.wrap.after(this.editorHint);
+    }
+    if (this.edited == null) this.edited = this.original;
+    this.codeView.hidden = true;
+    if (this.noteHint) this.noteHint.hidden = true;
+    this.editor.wrap.hidden = false;
+    this.editorHint.hidden = false;
+    this.editBtn.hidden = true;
+    this.resetBtn.hidden = false;
+    this.paintEdit();
+    if (focus) this.editor.ta.focus();
+  };
+
+  CellCtl.prototype.paintEdit = function () {
+    var dirty = this.edited != null && this.edited !== this.original;
+    this.editInfo.hidden = !dirty;
+    this.card.classList.toggle('is-edited', dirty);
+    if (!dirty) return;
+    this.editSummary.textContent = Core.editSummary(this.original, this.edited);
+    var old = this.editInfo.querySelector('.pg-diff');
+    var rows = Core.compactDiff(lineDiff(this.original, this.edited), 1);
+    var diff = renderDiff(rows, 'Your edit against the original code');
+    if (old) old.replaceWith(diff); else this.editInfo.appendChild(diff);
+  };
+
+  CellCtl.prototype.reset = function () {
+    this.edited = null;
+    if (this.editor) {
+      this.editor.wrap.remove();
+      this.editorHint.remove();
+      this.editor = null;
+    }
+    this.codeView.hidden = false;
+    if (this.noteHint) this.noteHint.hidden = false;
+    this.editBtn.hidden = false;
+    this.resetBtn.hidden = true;
+    this.paintEdit();
+    this.editBtn.focus();
+  };
+
+  CellCtl.prototype.paintRan = function () {
+    var ran = this.live.session.hasRan(this.index);
+    this.ranEl.hidden = !ran;
+    var generation = this.live.session.generation;
+    this.tries.forEach(function (t) {
+      if (t.notice && t.generation !== generation && !t.notice.hidden) {
+        t.notice.hidden = true;
+        t.undoneNote.hidden = false;
+      }
+    });
+  };
+
+  /* ------------------------------------------------------------ "try this" */
+
+  function renderTry(source, t, ctl) {
+    var box = el('details', 'pg-try');
+    box.appendChild(el('summary', null, 'Try: ' + t.label));
+    box.appendChild(renderDiff(lineDiff(source, t.code)));
+    box.appendChild(el('p', 'pg-expect', t.expect));
+    if (!ctl) return box;
+
+    var entry = { runBtn: button('Run this try', 'btn-primary'), box: box, generation: null };
+    var bar = el('div', 'pg-toolbar');
+    var status = el('span', 'pg-run-text');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    var stop = button('Interrupt', 'btn-ghost');
+    stop.hidden = true;
+    stop.addEventListener('click', function () { ctl.live.session.interrupt(); });
+    bar.appendChild(entry.runBtn);
+    bar.appendChild(status);
+    bar.appendChild(stop);
+    box.appendChild(bar);
+    var result = el('div', 'pg-try-result');
+    result.hidden = true;
+    box.appendChild(result);
+    ctl.tries.push(entry);
+
+    function say(text, tone) {
+      status.textContent = text || '';
+      status.className = 'pg-run-text' + (tone ? ' is-' + tone : '');
+    }
+
+    entry.run = function () {
+      var before = ctl.beforeState();
+      var limit = ctl.live.session.timeoutS();
+      return ctl.execute(t.code, null, { say: say, interrupt: stop }).then(function (res) {
+        if (res.cancelled) { say('Not run: stopped before its turn.', 'warn'); return; }
+        if (res.error) { say(res.error, 'error'); return; }
+        var r = res.result;
+        var summary = Core.runSummary(r, limit);
+        say(summary.text, summary.tone);
+        entry.generation = ctl.live.session.generation;
+        showResult(before, r);
+      });
+    };
+    entry.runBtn.addEventListener('click', entry.run);
+
+    function showResult(before, r) {
+      result.replaceChildren();
+      result.appendChild(renderCompare(before.outputs, r.outputs || [], { before: before.label, after: 'this try' }));
+
+      var explainRow = el('div', 'pg-toolbar');
+      var explainBtn = button('Explain the difference', 'btn-ghost');
+      var answer = el('p', 'pg-diff-answer');
+      answer.setAttribute('aria-live', 'polite');
+      answer.hidden = true;
+      explainRow.appendChild(explainBtn);
+      result.appendChild(explainRow);
+      result.appendChild(answer);
+      explainBtn.addEventListener('click', function () {
+        explainBtn.disabled = true;
+        answer.hidden = false;
+        answer.className = 'pg-diff-answer is-busy';
+        answer.textContent = 'Asking Claude…';
+        explainDifference(ctl, t, before, r.outputs || []).then(function (body) {
+          answer.className = 'pg-diff-answer';
+          answer.replaceChildren(el('span', null, body.explanation));
+          var meta = (body.model || '') + (body.cost_usd != null ? ' · $' + Number(body.cost_usd).toFixed(4) : '') + ' · not saved';
+          answer.appendChild(el('span', 'pg-diff-meta', meta));
+        }).catch(function (err) {
+          answer.className = 'pg-diff-answer is-error';
+          answer.textContent = err.message;
+        }).then(function () { explainBtn.disabled = false; });
+      });
+
+      entry.notice = el('div', 'pg-try-notice');
+      entry.notice.setAttribute('role', 'note');
+      entry.notice.appendChild(el('p', null,
+        'This try changed the session’s variables. Later cells now see the tweaked state until you undo it.'));
+      var undo = button('Undo this try');
+      undo.setAttribute('title', 'Restart the session and rerun every cell up to this one');
+      undo.addEventListener('click', function () {
+        undo.disabled = true;
+        ctl.live.session.restart().then(function (ok) {
+          if (!ok) { undo.disabled = false; return; }
+          return ctl.runUpTo();
+        }).then(function () { undo.disabled = false; });
+      });
+      entry.notice.appendChild(undo);
+      entry.undoneNote = el('p', 'pg-hint', 'The session has restarted since this try, so it no longer affects later cells.');
+      entry.undoneNote.hidden = true;
+      result.appendChild(entry.notice);
+      result.appendChild(entry.undoneNote);
+      result.hidden = false;
+    }
     return box;
+  }
+
+  function explainDifference(ctl, t, before, afterOutputs) {
+    var pg = ctl.live.pg;
+    return fetch('/api/playgrounds/' + encodeURIComponent(pg.id) + '/explain-difference', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        before_code: before.code || ctl.original,
+        after_code: t.code,
+        before_output: Core.outputsText(before.outputs),
+        after_output: Core.outputsText(afterOutputs),
+        explanation: (ctl.guide && ctl.guide.explanation) || '',
+        expect: t.expect || '',
+      }),
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) throw new Error((body && body.detail) || 'Could not explain the difference (HTTP ' + res.status + ').');
+        return body;
+      });
+    });
   }
 
   function renderCell(cell, guide, state) {
@@ -267,9 +733,25 @@
     }
     var card = el('article', 'card pg-card');
     card.id = 'pg-cell-' + cell.index;
+    var runnable = state.live && String(cell.source || '').trim();
+    var ctl = runnable ? new CellCtl(cell, guide, state.live) : null;
+    if (ctl) {
+      state.live.cells[cell.index] = ctl;
+      ctl.build(card);
+    }
     var head = el('header', 'pg-card-head');
     var count = cell.execution_count != null ? 'In [' + cell.execution_count + ']' : 'Cell ' + cell.index;
-    head.appendChild(el('span', 'pg-count', count));
+    var countWrap = el('span', 'pg-count-wrap');
+    var countEl = el('span', 'pg-count', count);
+    countWrap.appendChild(countEl);
+    if (ctl) {
+      ctl.countEl = countEl;
+      ctl.ranEl = el('span', 'chip chip-ok pg-ran', 'Ran');
+      ctl.ranEl.hidden = true;
+      ctl.ranEl.setAttribute('title', 'Ran in this session');
+      countWrap.appendChild(ctl.ranEl);
+    }
+    head.appendChild(countWrap);
     card.appendChild(head);
 
     if (guide) {
@@ -289,21 +771,56 @@
       card.appendChild(el('p', 'pg-out-note', 'Not explained yet.'));
     }
 
-    card.appendChild(renderCode(cell.source, guide && guide.line_notes));
+    var codeView = renderCode(cell.source, guide && guide.line_notes);
+    card.appendChild(codeView);
+    var noteHint = null;
     if (guide && guide.line_notes && guide.line_notes.length) {
-      card.appendChild(el('p', 'pg-hint', 'Tap a highlighted line for its note.'));
+      noteHint = el('p', 'pg-hint', 'Tap a highlighted line for its note.');
+      card.appendChild(noteHint);
+    }
+    if (ctl) {
+      ctl.codeView = codeView;
+      ctl.noteHint = noteHint;
+      card.appendChild(ctl.editInfo);
+      card.appendChild(ctl.toolbar);
+      card.appendChild(ctl.status);
     }
 
     var outputs = cell.outputs || [];
-    if (outputs.length) {
+    if (outputs.length || ctl) {
       var outBox = el('div', 'pg-outputs');
-      outBox.appendChild(el('p', 'pg-label', 'Saved output'));
-      outputs.forEach(function (o) { outBox.appendChild(renderOutput(o)); });
+      var label = el('p', 'pg-label', outputs.length ? 'Saved output' : 'No saved output');
+      outBox.appendChild(label);
+      var savedBox = el('div', 'pg-saved');
+      outputs.forEach(function (o) { savedBox.appendChild(renderOutput(o)); });
+      if (ctl) {
+        ctl.outLabel = label;
+        ctl.liveBox = el('div', 'pg-live');
+        ctl.liveBox.hidden = true;
+        ctl.savedBox = savedBox;
+        ctl.savedToggle = button('Compare with saved output', 'btn-ghost');
+        ctl.savedToggle.hidden = true;
+        ctl.savedToggle.setAttribute('aria-pressed', 'false');
+        ctl.savedToggle.addEventListener('click', function () {
+          var show = savedBox.hidden;
+          savedBox.hidden = !show;
+          ctl.savedToggle.setAttribute('aria-pressed', show ? 'true' : 'false');
+          ctl.savedToggle.textContent = show ? 'Hide saved output' : 'Compare with saved output';
+        });
+        // Shown only once a live output sits above it.
+        var savedHead = el('p', 'pg-label pg-saved-label', 'Saved output (from the notebook)');
+        savedBox.prepend(savedHead);
+        ctl.savedHead = savedHead;
+        savedHead.hidden = true;
+        outBox.appendChild(ctl.liveBox);
+        outBox.appendChild(ctl.savedToggle);
+      }
+      outBox.appendChild(savedBox);
       card.appendChild(outBox);
     }
 
     if (guide) {
-      (guide.tries || []).forEach(function (t) { card.appendChild(renderTry(cell.source, t)); });
+      (guide.tries || []).forEach(function (t) { card.appendChild(renderTry(cell.source, t, ctl)); });
       if (guide.quiz) {
         var quiz = el('p', 'pg-quiz');
         quiz.appendChild(el('strong', null, 'Can you answer: '));
@@ -331,6 +848,13 @@
   function render(root, data, state) {
     var pg = data.playground;
     root.replaceChildren();
+    if (state.live) {
+      state.live.pg = pg;
+      state.live.cells = {};
+      state.live.codeIndices = (pg && pg.cells || []).filter(function (c) {
+        return c.type === 'code' && String(c.source || '').trim();
+      }).map(function (c) { return c.index; });
+    }
     if (!pg) {
       root.appendChild(el('p', 'paper-muted',
         'No notebook yet. Import the paper’s .ipynb below and each code cell becomes a study card.'));
@@ -390,6 +914,7 @@
       });
       root.appendChild(section);
     });
+    if (state.live) state.live.paintRan();
   }
 
   /* -------------------------------------------------------------------- boot */
@@ -413,8 +938,57 @@
       progress: document.getElementById('playground-run-progress'),
       cancel: document.getElementById('playground-run-cancel'),
     };
-    var state = { hide: false, data: null };
+    var sessionEls = {
+      bar: document.getElementById('playground-session'),
+      chip: document.getElementById('playground-session-chip'),
+      hint: document.getElementById('playground-session-hint'),
+      restart: document.getElementById('playground-session-restart'),
+      stop: document.getElementById('playground-session-stop'),
+    };
+    var state = { hide: false, data: null, live: null };
     try { state.hide = global.localStorage.getItem(HIDE_KEY) === 'true'; } catch (e) { /* default */ }
+
+    function paintSession() {
+      var live = state.live;
+      if (!sessionEls.bar) return;
+      sessionEls.bar.hidden = !live;
+      if (!live) return;
+      var session = live.session;
+      var chip = Core.sessionChip(session.phase, session.message);
+      sessionEls.chip.textContent = chip.label;
+      sessionEls.chip.className = 'chip chip-' + chip.tone;
+      sessionEls.hint.textContent = chip.hint;
+      sessionEls.restart.textContent = session.id ? 'Restart' : 'Start';
+      sessionEls.restart.disabled = session.phase === 'starting';
+      sessionEls.stop.disabled = !session.id;
+    }
+
+    /** One runner session per open playground; a different playground gets a new one. */
+    function ensureLive(pg) {
+      if (!pg || !SessionApi.Session) {
+        if (state.live) state.live.session.leave();
+        state.live = null;
+        paintSession();
+        return;
+      }
+      if (state.live && state.live.session.playgroundId === pg.id) return;
+      if (state.live) state.live.session.leave();
+      var live = { pg: pg, cells: {}, codeIndices: [] };
+      live.paintRan = function () {
+        Object.keys(live.cells).forEach(function (k) { live.cells[k].paintRan(); });
+      };
+      live.session = new SessionApi.Session({
+        playgroundId: pg.id,
+        onChange: function () { paintSession(); live.paintRan(); },
+      });
+      state.live = live;
+      paintSession();
+      // Start the kernel as the tab opens, so the first Run is quick. A
+      // runner that is not up says so on the chip, with how to start it.
+      live.session.health().then(function (limits) {
+        if (limits && !live.session.id && state.live === live) live.session.start();
+      });
+    }
 
     function say(text, tone) {
       status.textContent = text || '';
@@ -451,6 +1025,7 @@
         });
       }).then(function (body) {
         state.data = body;
+        ensureLive(body.playground);
         paint();
         showRequestedCell();
         var run = body.latest_run;
@@ -534,6 +1109,9 @@
         .then(function (data) {
           say(data.message || 'Notebook imported.', 'ok');
           form.reset();
+          // New code and possibly new cached datasets: the kernel reads the
+          // dataset manifest when it starts, so give it a fresh one.
+          if (state.live && state.live.session.id) state.live.session.restart();
           return load();
         })
         .catch(function (err) { say(err.message, 'error'); })
@@ -546,6 +1124,39 @@
         if (id && global.RunProgress) global.RunProgress.cancel(id).catch(function () { /* the poll shows the truth */ });
       });
     }
+
+    if (sessionEls.restart) {
+      sessionEls.restart.addEventListener('click', function () {
+        if (state.live) state.live.session.restart();
+      });
+      sessionEls.stop.addEventListener('click', function () {
+        if (state.live) state.live.session.stop();
+      });
+    }
+
+    // Shift+Enter runs the focused cell (or the try it is in), as in Jupyter.
+    root.addEventListener('keydown', function (ev) {
+      if (!Core.isRunShortcut(ev) || !state.live || !ev.target.closest) return;
+      var card = ev.target.closest('.pg-card[data-cell]');
+      var ctl = card && state.live.cells[card.getAttribute('data-cell')];
+      if (!ctl) return;
+      ev.preventDefault();
+      var tryBox = ev.target.closest('.pg-try');
+      var entry = tryBox && ctl.tries.filter(function (t) { return t.box === tryBox; })[0];
+      if (entry) { if (!entry.runBtn.disabled) entry.run(); return; }
+      if (!ctl.runBtn.disabled) ctl.run();
+    });
+
+    // Leaving the page closes the kernel; the runner would otherwise hold
+    // it (and a session slot) until it idles out.
+    global.addEventListener('pagehide', function () {
+      if (state.live) state.live.session.leave();
+    });
+    global.addEventListener('pageshow', function (ev) {
+      if (ev.persisted && state.live) {
+        state.live.session.markGone('Stopped when you left the page. Run a cell to start again.');
+      }
+    });
 
     // The notebook can be a few hundred KB, so it is fetched when the tab is
     // first opened, not on every paper page view.

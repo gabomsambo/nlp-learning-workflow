@@ -235,6 +235,15 @@
             </div>
           </div>
           <p id="playground-status" class="pg-status" role="status" aria-live="polite"></p>
+          <div id="playground-session" class="pg-session" hidden>
+            <span class="pg-session-label">Python session</span>
+            <span id="playground-session-chip" class="chip chip-neutral">Not started</span>
+            <span id="playground-session-hint" class="pg-session-hint"></span>
+            <span class="pg-session-actions">
+              <button type="button" class="btn btn-secondary btn-sm" id="playground-session-restart" title="Fresh kernel: every variable is gone">Restart</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="playground-session-stop" title="Close the kernel">Stop</button>
+            </span>
+          </div>
           {{ run_panel(
             status_id='playground-run-status',
             stages_id='playground-run-stages',
@@ -316,6 +325,8 @@
 <script src="/static/factcheck.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/paper-page.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/run-progress.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/playground-core.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/playground-session.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/playground.js?v={{ asset_v | default('1', true) }}"></script>
 {% endif %}
 {% endblock %}

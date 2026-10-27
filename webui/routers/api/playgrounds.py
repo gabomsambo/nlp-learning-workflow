@@ -17,10 +17,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from nlp_pillars.config import get_settings
 from nlp_pillars.db import PipelineRunCreateError
 from nlp_pillars.playground import MIGRATION, store
+from nlp_pillars.playground import difference
 from nlp_pillars.playground import service as playground_service
 from nlp_pillars.playground.notebook import NotebookError, cells_view
 from webui.services import run_service
@@ -204,3 +206,54 @@ async def start_explain(playground_id: str, http_request: Request):
         logger.error("Could not create playground_explain run: %s", exc)
         raise HTTPException(status_code=503, detail=f"{exc}. {MIGRATION_HINT}")
     return {"run_id": run_id, "message": "Writing the study guide"}
+
+
+#: Characters accepted per field. The prompt cuts each part far shorter
+#: (difference.OUTPUT_CHARS / CODE_CHARS); this only refuses an absurd body.
+DIFF_FIELD_MAX = 200_000
+
+
+class DifferenceBody(BaseModel):
+    before_code: str = Field(..., max_length=DIFF_FIELD_MAX)
+    after_code: str = Field(..., max_length=DIFF_FIELD_MAX)
+    before_output: str = Field("", max_length=DIFF_FIELD_MAX)
+    after_output: str = Field("", max_length=DIFF_FIELD_MAX)
+    explanation: str = Field("", max_length=2_000)
+    expect: str = Field("", max_length=2_000)
+
+
+@router.post(
+    "/{playground_id}/explain-difference",
+    dependencies=[Depends(require_spend_room)],
+)
+async def explain_difference(playground_id: str, body: DifferenceBody) -> Dict[str, Any]:
+    """Two or three sentences on what a "try this" changed, from one cheap call.
+
+    The page sends the code and the outputs it is showing; nothing is read
+    from or written to the database, and the answer is not stored. 503 when
+    the call cannot be made (no key), 502 when the model fails.
+    """
+    try:
+        playground_id = str(uuid.UUID(playground_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Playground not found")
+    try:
+        result = await asyncio.to_thread(
+            difference.explain_difference,
+            before_code=body.before_code,
+            after_code=body.after_code,
+            before_output=body.before_output,
+            after_output=body.after_output,
+            explanation=body.explanation,
+            expect=body.expect,
+        )
+    except difference.DifferenceUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except difference.DifferenceError as exc:
+        logger.warning("Playground %s: explain-difference failed: %s", playground_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {
+        "explanation": result.explanation,
+        "model": result.model,
+        "cost_usd": result.cost_usd,
+    }

@@ -4,6 +4,7 @@ The pass itself is covered in tests/test_playground_follow.py. Nothing here
 reaches a database, the network or a model.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -252,3 +253,16 @@ def test_the_app_registers_the_router():
     res = TestClient(create_app()).get("/api/follow-along", params={"script_id": "not-a-uuid"})
     # The route's own 404, not the router's "Not Found" for a missing path.
     assert res.status_code == 404 and res.json()["detail"] == "Episode not found"
+
+
+def test_listen_page_uses_the_shared_card_renderer_without_a_runner_session():
+    # One renderer and sanitizer for both places; the follow-along panel shows
+    # saved outputs only, so the session client and runner routes stay out.
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "webui/templates/podcast.html").read_text()
+    core = page.index("/static/playground-core.js")
+    assert core < page.index("/static/playground.js") < page.index("/static/follow-along.js")
+    assert "/static/playground-session.js" not in page
+    follow = (root / "webui/static/follow-along.js").read_text()
+    assert "/api/playground/runner" not in follow
+    assert "PlaygroundSession" not in follow

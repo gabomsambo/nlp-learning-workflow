@@ -56,6 +56,10 @@ def _runner(seen):
                     "kernel_restarted": False,
                 },
             )
+        if path == "/sessions/rich/execute":
+            return httpx.Response(200, json={"status": "ok", "execution_ms": 5, "execution_count": 2,
+                                             "outputs": RICH_OUTPUTS, "truncated": True, "dropped_outputs": 1,
+                                             "interrupted": False, "kernel_restarted": False})
         if path == "/sessions/busy/execute":
             return httpx.Response(409, json={"detail": "This session is still running earlier code."})
         if path == "/sessions/broken/execute":
@@ -163,7 +167,9 @@ def test_routes_proxy_every_call(api):
     assert created.json()["session_id"] == "abc123"
     executed = client.post("/api/playground/runner/sessions/abc123/execute", json={"code": "6*7", "timeout_s": 30})
     assert executed.status_code == 200
-    assert executed.json()["outputs"] == [{"type": "text", "text": "42"}]
+    # Outputs come back in the tab's view shape, not the runner's.
+    assert executed.json()["outputs"] == [{"kind": "text", "text": "42"}]
+    assert executed.json()["execution_count"] == 1
     assert seen[-1]["body"] == {"code": "6*7", "timeout_s": 30}
     assert client.post("/api/playground/runner/sessions/abc123/interrupt").json()["interrupted"] is True
     assert client.post("/api/playground/runner/sessions/abc123/restart").json()["restarted"] is True
@@ -230,3 +236,39 @@ def test_app_registers_the_runner_routes():
     paths = set(create_app().openapi()["paths"])
     assert "/api/playground/runner/sessions/{session_id}/execute" in paths
     assert "/api/playground/runner/health" in paths
+
+
+PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+RICH_OUTPUTS = [
+    {"type": "stream", "name": "stdout", "text": "\x1b[31mrows: 3\x1b[0m\n"},
+    {"type": "html", "untrusted": True, "text": "   a\n0  1",
+     "html": '<style>td{}</style><table onclick="x()"><tr><td colspan="2">1</td>'
+             '<td><a href="javascript:alert(1)">link</a></td></tr></table><script>alert(1)</script>'},
+    {"type": "html", "untrusted": True, "text": "fallback", "html": "<script>only()</script>"},
+    {"type": "image", "mime": "image/png", "data": PNG_B64, "text": "<Figure size 640x480>"},
+    {"type": "image", "mime": "image/png", "data": "bm90IGEgcG5n", "text": "<Figure>"},
+    {"type": "error", "ename": "ValueError", "evalue": "bad", "traceback": "Trace\n\x1b[31mValueError\x1b[0m: bad"},
+    {"type": "text", "text": "cut[output truncated: limit of 10 bytes reached]", "truncated": True},
+]
+
+
+def test_execute_turns_runner_outputs_into_safe_view_shapes(api):
+    client, _, _ = api
+    body = client.post("/api/playground/runner/sessions/rich/execute", json={"code": "x"}).json()
+    stream, html, html_fallback, png, bad_png, error, cut = body["outputs"]
+    assert stream == {"kind": "stream", "name": "stdout", "text": "rows: 3\n"}
+    # The same sanitizer as saved outputs: no raw markup, no attributes but spans, no script.
+    assert html["kind"] == "html" and "html" not in html
+    assert html["tree"] == [{"t": "table", "c": [{"t": "tr", "c": [
+        {"t": "td", "a": {"colspan": "2"}, "c": ["1"]}, {"t": "td", "c": ["link"]}]}]}]
+    assert html["plain"] == "   a\n0  1"
+    assert html_fallback == {"kind": "text", "text": "fallback"}
+    assert png == {"kind": "png", "data": PNG_B64, "alt": "<Figure size 640x480>"}
+    assert bad_png == {"kind": "text", "text": "<Figure>"}
+    assert error == {"kind": "error", "text": "Trace\nValueError: bad"}
+    assert cut == {"kind": "text", "text": "cut[output truncated: limit of 10 bytes reached]", "truncated": True}
+    # Everything else about the answer passes through.
+    assert body["truncated"] is True and body["dropped_outputs"] == 1
+    assert "javascript" not in json.dumps(body) and "script" not in json.dumps(body)

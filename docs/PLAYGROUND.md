@@ -9,7 +9,8 @@ them. Later PRs extend it; keep it short and exact.
 | Table | `playgrounds`, created by `docs/migrations/028_playgrounds.sql` (hand-applied) |
 | Import, datasets, explain pass | `nlp_pillars/playground/` |
 | API | `webui/routers/api/playgrounds.py` |
-| Tab | `webui/templates/paper.html` (`#playground`), `webui/static/playground.js` |
+| Tab | `webui/templates/paper.html` (`#playground`), `webui/static/playground.js` (render), `playground-core.js` (pure logic), `playground-session.js` (runner session) |
+| Explain the difference | `nlp_pillars/playground/difference.py`, `POST /api/playgrounds/{id}/explain-difference` |
 | Prompt | `nlp_pillars/playground/explain.py::SYSTEM_PROMPT`, copied in `docs/PROMPTS.md` |
 | Sandbox (running code) | [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md) |
 | Follow-along (Listen page) | `playground_links`, `docs/migrations/029_playground_links.sql` (hand-applied); `nlp_pillars/playground/{follow,links}.py`; `webui/routers/api/follow_along.py`; `webui/static/follow-along.js` |
@@ -147,9 +148,53 @@ same volume read-only at `/data` and serves a URL from
 
 The `playground-runner` service runs notebook code in a locked-down kernel and
 reads this cache through `manifest.json`. Its API, limits and offline-data
-rules are [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md). The Playground
-tab does not call it yet; running and editing cells from the tab is the next
-change.
+rules are [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md). The tab reaches
+it only through webui's `/api/playground/runner` proxy.
+
+**Session.** Opening the tab on a playground starts one kernel for it. The
+session bar shows Starting, Ready, Busy, Stopped or Runner not running (with
+the runner's own start hint), plus Restart and Stop. Leaving the page closes
+the session (`DELETE` with `keepalive`). A page reloaded while its kernel was
+still starting cannot close that kernel; when the runner then answers 429, the
+tab closes the least recently used idle session of the same playground and
+retries once. Sessions of other playgrounds are never touched.
+
+**Runs.** The runner runs one execution per session, so the tab queues runs:
+a cell clicked while another runs waits its turn. Interrupt, Restart and Stop
+drop what is waiting. "Run up to here" runs, in order, every earlier code cell
+that has not run cleanly in this kernel, then the cell; it stops at the first
+cell that fails. A restart, a stop, an expired session (404) or a kernel the
+runner had to restart empties that record. A run that hits the time limit
+offers to run again with double the limit, up to `max_exec_timeout_s`.
+Shift+Enter runs the focused cell (or the try it is in).
+
+Before sending, the tab removes indentation that every non-blank,
+non-comment line of a cell shares. Older Jupyter did this itself, so saved
+notebooks can hold cells such as `"  x = 1\n  print(x)"` that ran there and
+are an `IndentationError` for the runner's IPython.
+
+**Outputs.** The execute proxy turns runner outputs into the same view shape
+as saved ones (`notebook.py::runner_output_view`), so `text/html` goes through
+the same sanitizer and raw HTML never reaches the browser. A live output
+replaces the saved one in place; "Compare with saved output" shows both.
+
+**Editing.** Edit turns the code into a textarea with line numbers (no editor
+library). Tab indents, Shift+Tab outdents, Escape then Tab leaves the editor.
+Line notes belong to the original code and are hidden while editing. "Reset
+to original" drops the edit; a compact diff shows what changed.
+
+**Tries.** "Run this try" runs the try's code in the same kernel and shows
+Before (the cell's latest live output, else its saved output) beside After.
+Changed lines of text outputs, and changed cells of tables with the same
+shape, are highlighted. A try changes kernel state, so the card says so and
+offers "Undo this try": restart, then run up to this cell.
+
+**Explain the difference** sends both pieces of code, both outputs (as text,
+cut to 3,000 characters each) and the cell's explanation to
+`LLM_PLAYGROUND_DIFF_MODEL` (default `claude-haiku-5-5`, no fallback) behind
+`require_spend_room`. The answer is shown under the Before / After and is not
+stored. Its cost is logged at WARNING; it is not added to the daily spend
+total, which only counts stored run stages and fact-checks.
 
 ## Follow-along
 
@@ -234,7 +279,10 @@ playground's paper and title), the playground on the episode's own paper (the
 picker's default) and the latest pass. `GET /api/follow-along/playgrounds`
 lists papers with a playground for the picker. The cards themselves come from
 `GET /api/playgrounds?paper_id=…`, rendered with `playground.js`'s
-`renderCode`/`renderOutput`, so the sanitizer is the Playground tab's.
+`renderCode`/`renderOutput`, so the sanitizer is the Playground tab's. The
+Listen page loads `playground-core.js` and `playground.js` but not
+`playground-session.js`: the panel shows saved outputs and never starts a
+runner session.
 
 `follow-along.js` maps playback time to a line (`ReadAlong.positionAt`), the
 line to a span, and the span to a card: step title, explanation, code with line

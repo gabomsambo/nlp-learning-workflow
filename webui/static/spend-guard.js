@@ -24,7 +24,8 @@
     { re: /^\/api\/podcast\/tts\/generate$/, title: 'Generate audio', what: 'Runs the speech model on the computer’s GPU for several minutes.' },
     { re: /^\/api\/podcast\/[^/]+\/factcheck$/, title: 'Check the facts', what: 'Checks every claim against the paper with Claude.' },
     { re: /^\/api\/playgrounds\/[^/]+\/explain$/, title: 'Generate the study guide', what: 'Explains every code cell with Claude Sonnet, about a dime per dozen cells.' },
-    { re: /^\/api\/follow-along$/, title: 'Follow along with code', what: 'One quick Claude Haiku call matches the episode’s lines to the notebook’s cells, about a cent.' }
+    { re: /^\/api\/follow-along$/, title: 'Follow along with code', what: 'One quick Claude Haiku call matches the episode’s lines to the notebook’s cells, about a cent.' },
+    { re: /^\/api\/playgrounds\/[^/]+\/explain-difference$/, title: 'Explain the difference', what: 'One short Claude Haiku call, a fraction of a cent.' }
   ];
 
   // Buttons that start those actions; each gets the remaining budget beside it.

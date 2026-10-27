@@ -8,6 +8,11 @@ runner's body unchanged. Status codes:
 * 503 when the runner cannot be reached, with a ``detail`` naming how to start
   it, or when it could not start a kernel;
 * 502 for any other runner 5xx, 504 when it did not answer in time.
+
+One exception to "unchanged": execute's ``outputs`` come back in the Playground
+tab's view shape (``notebook.runner_output_view``), the same shape as a saved
+output. The runner's ``html`` is raw and untrusted, so it is sanitized into a
+tag tree here and never sent to the browser as markup.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from nlp_pillars.playground.notebook import runner_output_view
 from webui.services.playground_runner_client import (
     PlaygroundRunnerClient,
     PlaygroundRunnerError,
@@ -75,7 +81,11 @@ async def create_session(body: CreateSessionBody) -> Dict[str, Any]:
 
 @router.post("/sessions/{session_id}/execute")
 async def execute(session_id: SessionId, body: ExecuteBody) -> Dict[str, Any]:
-    return await _call(get_client().execute(session_id, body.code, body.timeout_s))
+    result = await _call(get_client().execute(session_id, body.code, body.timeout_s))
+    outputs = result.get("outputs")
+    if isinstance(outputs, list):
+        result["outputs"] = [runner_output_view(o) for o in outputs if isinstance(o, dict)]
+    return result
 
 
 @router.post("/sessions/{session_id}/interrupt")
