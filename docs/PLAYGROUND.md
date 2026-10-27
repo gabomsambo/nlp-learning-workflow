@@ -14,6 +14,7 @@ them. Later PRs extend it; keep it short and exact.
 | Prompt | `nlp_pillars/playground/explain.py::SYSTEM_PROMPT`, copied in `docs/PROMPTS.md` |
 | Sandbox (running code) | [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md) |
 | Follow-along (Listen page) | `playground_links`, `docs/migrations/029_playground_links.sql` (hand-applied); `nlp_pillars/playground/{follow,links}.py`; `webui/routers/api/follow_along.py`; `webui/static/follow-along.js` |
+| Phone reader (read-only) | `nlp_pillars/cloud/export.py` (`playgrounds/<id>.json`); `cloud/reader/public/js/{playground-tab,follow}.js`; [`cloud/reader/README.md`](../cloud/reader/README.md), "Playground" |
 
 Until migration 028 is applied, the tab and the CLI say so and name the file;
 nothing is downloaded and no model is called.
@@ -297,3 +298,15 @@ audio, no read-along timeline (`python -m nlp_pillars.cli timeline backfill`),
 or a timeline for an older version of the script. A link whose
 `script_sha256` no longer matches the script is offered again rather than
 followed. Spans whose cell is no longer in the study guide are skipped.
+
+## Phone reader
+
+`cloud export` publishes each `ready` or `partial` playground of a published
+paper as `playgrounds/<id>.json`, read-only: steps, cells and saved outputs in
+the `cells_view` form above (output text is `body`), capped per playground by
+`CLOUD_PLAYGROUND_MAX_IMAGE_BYTES` and `CLOUD_PLAYGROUND_MAX_OUTPUT_BYTES`.
+Ready links go into each episode document as `follow_along`. The reader shows
+them as a Playground tab and a code drawer under the player, drawn with
+`playground.js` and `follow-along.js`; nothing runs there. Details, caps and
+what is left out: [`cloud/reader/README.md`](../cloud/reader/README.md),
+"Playground".

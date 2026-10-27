@@ -82,9 +82,9 @@ async function render() {
     else if (route.name === 'review') view = await reviewView(store, reviews);
     else if (route.name === 'listen') view = await listenView(store);
     else if (route.name === 'episode') view = await episodeView(store, route.id);
-    else if (route.name === 'paper') view = await paperView(store, route.id, route.tab);
+    else if (route.name === 'paper') view = await paperView(store, route.id, route.tab, new URLSearchParams(query || ''));
     else view = emptyState('Page not found', 'There is nothing at this address.', h('a', { class: 'btn btn-primary btn-md', href: '#/', text: 'Go to Today' }));
-    document.title = { paper: 'Paper · NLP Reader', listen: 'Listen · NLP Reader', episode: 'Episode · NLP Reader' }[route.name] || 'NLP Reader';
+    document.title = { paper: route.tab === 'playground' ? 'Playground · NLP Reader' : 'Paper · NLP Reader', listen: 'Listen · NLP Reader', episode: 'Episode · NLP Reader' }[route.name] || 'NLP Reader';
   } catch (error) {
     view = failure(error);
   }
@@ -98,6 +98,7 @@ async function render() {
   main.replaceChildren(view);
   if (!firstRender) main.focus({ preventScroll: true });
   firstRender = false;
+  if (view.mounted) view.mounted(); // e.g. scroll to the cell a link asked for
   paintFreshness();
 }
 

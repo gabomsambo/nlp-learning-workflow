@@ -2,7 +2,8 @@
 
 Every table is read with an explicit column list, so a column the reader must
 not carry (``ground_pack``, ``options``, chunk text, embeddings) never leaves
-Postgres. ``export.py`` then applies a second allow-list over what arrived.
+Postgres. A playground's notebook is the one exception that is read whole: its
+saved outputs are reduced to the sanitized view in ``export.py``. ``export.py`` then applies a second allow-list over what arrived.
 """
 
 from __future__ import annotations
@@ -62,17 +63,32 @@ CLAIM_COLUMNS = (
     "evidence,evidence_status,dismissed_at"
 )
 
+# Playgrounds the reader shows (docs/PLAYGROUND.md). Only a study guide that was
+# written is published; the raw notebook is read so its saved outputs can be
+# reduced to the sanitized view, and nothing else of it leaves export.py.
+PLAYGROUND_COLUMNS = "id,paper_id,title,source_kind,notebook,steps,status"
+PLAYGROUND_STATUSES = ("ready", "partial")
+# A notebook can be megabytes of saved outputs, so these pages are short.
+_PLAYGROUND_PAGE = 5
+LINK_COLUMNS = "id,script_id,playground_id,mapping,status,script_sha256,updated_at"
+
 # Tables that exist only after a hand-applied migration.
 _MIGRATIONS = {
     "concepts": "docs/migrations/020_knowledge_graph.sql",
     "paper_concepts": "docs/migrations/020_knowledge_graph.sql",
     "graph_edges": "docs/migrations/020_knowledge_graph.sql",
     "podcast_fact_checks": "docs/migrations/022_podcast_fact_checks.sql",
+    "playgrounds": "docs/migrations/028_playgrounds.sql",
+    "playground_links": "docs/migrations/029_playground_links.sql",
 }
 
 
 class SourceError(Exception):
     """A table could not be read. An empty table is not an error."""
+
+
+class MissingTable(SourceError):
+    """The table needs a hand-applied migration. The message names it."""
 
 
 @dataclass
@@ -92,6 +108,12 @@ class CloudSource:
     review_events: List[dict] = field(default_factory=list)
     # Review events from the cloud that the cards above already include (cloud_sync_state).
     through_seq: int = 0
+    # Playgrounds with a study guide (ready or partial), notebook included.
+    playgrounds: List[dict] = field(default_factory=list)
+    # Ready follow-along links (playground_links).
+    playground_links: List[dict] = field(default_factory=list)
+    # What could not be read and was left out, for the export report.
+    warnings: List[str] = field(default_factory=list)
 
 
 def _raise_for(table: str, error) -> None:
@@ -101,13 +123,14 @@ def _raise_for(table: str, error) -> None:
         table in text
         and ("pgrst205" in text or "schema cache" in text or "does not exist" in text)
     ):
-        raise SourceError(
+        raise MissingTable(
             f"{table} is not available ({error}). Apply {migration} by hand."
         )
     raise SourceError(f"Could not read {table}: {error}")
 
 
-def _read(client, table: str, columns: str, order: str, **eq) -> List[dict]:
+def _read(client, table: str, columns: str, order: str, *, page_size: int = 0, **eq) -> List[dict]:
+    page_size = page_size or _PAGE
     rows: List[dict] = []
     offset = 0
     while True:
@@ -115,14 +138,14 @@ def _read(client, table: str, columns: str, order: str, **eq) -> List[dict]:
         for column, value in eq.items():
             query = query.eq(column, value)
         try:
-            response = query.order(order).limit(_PAGE).offset(offset).execute()
+            response = query.order(order).limit(page_size).offset(offset).execute()
         except Exception as exc:  # noqa: BLE001 — name the table, keep the cause
             raise SourceError(f"Could not read {table}: {exc}") from exc
         if response["error"]:
             _raise_for(table, response["error"])
         page = response["data"] or []
         rows.extend(page)
-        if len(page) < _PAGE:
+        if len(page) < page_size:
             return rows
         offset += len(page)
 
@@ -139,6 +162,31 @@ def latest_fact_checks(rows: List[dict]) -> List[dict]:
         ):
             newest[key] = row
     return [newest[key] for key in sorted(newest)]
+
+
+def _read_playgrounds(client, warnings: List[str]) -> tuple:
+    """Playgrounds with a study guide and the ready links.
+
+    Before migration 028 (or 029) is applied their part of the reader is empty
+    and the report says so: the rest of the library is worth sending without it.
+    """
+    playgrounds: List[dict] = []
+    links: List[dict] = []
+    try:
+        for status in PLAYGROUND_STATUSES:
+            playgrounds.extend(_read(
+                client, "playgrounds", PLAYGROUND_COLUMNS, "id",
+                page_size=_PLAYGROUND_PAGE, status=status,
+            ))
+    except MissingTable as exc:
+        warnings.append(f"playgrounds not published: {exc}")
+        return [], []
+    try:
+        links = _read(client, "playground_links", LINK_COLUMNS, "id", status="ready")
+    except MissingTable as exc:
+        warnings.append(f"follow-along not published: {exc}")
+    playgrounds.sort(key=lambda r: str(r["id"]))
+    return playgrounds, links
 
 
 REVIEW_LOG_COLUMNS = "id,card_id,rating,review_timestamp"
@@ -203,6 +251,8 @@ def load_source(client: Optional[object] = None) -> CloudSource:
             _read(client, "podcast_claims", CLAIM_COLUMNS, "id", fact_check_id=check["id"])
         )
     edges = _read(client, "graph_edges", EDGE_COLUMNS, EDGE_ORDER, kind="related_to")
+    warnings: List[str] = []
+    playgrounds, links = _read_playgrounds(client, warnings)
     return CloudSource(
         pillars=loaded["pillars"],
         papers=loaded["papers"],
@@ -217,4 +267,7 @@ def load_source(client: Optional[object] = None) -> CloudSource:
         edges=edges,
         review_events=review_events,
         through_seq=through_seq,
+        playgrounds=playgrounds,
+        playground_links=links,
+        warnings=warnings,
     )

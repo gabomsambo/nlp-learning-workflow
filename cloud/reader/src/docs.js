@@ -7,7 +7,7 @@
 const DOC_KEY = new RegExp(
   '^(?:manifest|library|schedule)\\.json$'
   + '|^papers/[A-Za-z0-9._-]{1,200}\\.json$'
-  + '|^episodes/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json$',
+  + '|^(?:episodes|playgrounds)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json$',
 );
 
 export function isDocKey(key) {

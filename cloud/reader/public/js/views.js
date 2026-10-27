@@ -1,9 +1,10 @@
 /* The four pages. Each takes the store and returns an element to mount. */
 import { bullets, callout, chip, emptyState, h } from './dom.js';
+import { playgroundPanel } from './playground-tab.js';
 import { asSnapshotCards } from './schedule.js';
 import {
   PAPER_TABS, audioSrc, authorLine, dueSummary, episodeHref, filterPapers, formatDate, formatDuration, greeting,
-  newestFirst, paperHref, pillarGlance, plural, readableScript, relativeTime, safePdfHref,
+  newestFirst, paperHref, pillarGlance, plural, readableScript, relativeTime, requestedCell, safePdfHref,
 } from './lib.js';
 
 const pillarClass = (id) => (id ? `pillar-${id}` : '');
@@ -168,7 +169,16 @@ function noteBlocks(note) {
     note.confidence_score ? h('p', { class: 'paper-muted', text: `Confidence ${note.confidence_score}` }) : null);
 }
 
-export async function paperView(store, id, tab) {
+/** The Playground panel's body. The notebook is fetched only when the tab is open: it can be megabytes. */
+async function playgroundBody(store, paper, tab, params) {
+  if (!paper.playground) return { node: h('p', { class: 'paper-muted', text: 'No playground for this paper. Import its notebook on the computer.' }) };
+  if (tab !== 'playground') return { node: null };
+  const pg = await store.doc(paper.playground.doc);
+  const node = playgroundPanel(pg, { cell: requestedCell(params) });
+  return { node, mounted: node.focusCell };
+}
+
+export async function paperView(store, id, tab, params = new URLSearchParams()) {
   const library = await store.library();
   const entry = library.papers.find((p) => p.id === id);
   if (!entry) {
@@ -194,7 +204,9 @@ export async function paperView(store, id, tab) {
     lesson: 'Lesson',
     cards: paper.quiz_cards?.length ? `Cards · ${paper.quiz_cards.length}` : 'Cards',
     episode: episodes.length ? `Episode · ${episodes.length}` : 'Episode',
+    playground: 'Playground',
   };
+  const playground = await playgroundBody(store, paper, tab, params);
 
   const panels = {
     summary: h('section', { class: 'paper-panel paper-prose' },
@@ -228,10 +240,13 @@ export async function paperView(store, id, tab) {
           episode.key_points?.length ? [h('h3', { text: 'Key points' }), bullets(episode.key_points)] : null,
           h('details', null, h('summary', { text: 'Script' }), h('div', { class: 'reader-script', text: readableScript(episode.script) }))))
         : h('p', { class: 'paper-muted', text: 'No episode for this paper yet.' })),
+    playground: h('section', { class: 'paper-panel' }, h('h2', { text: 'Playground' }), playground.node),
   };
   panels[tab].classList.add('is-active');
+  // The tab is offered only where there is something to study; a link to it still answers.
+  const tabs = PAPER_TABS.filter((name) => name !== 'playground' || paper.playground || tab === 'playground');
 
-  return h('div', { class: 'paper-page', 'data-paper-id': paper.id },
+  const page = h('div', { class: 'paper-page', 'data-paper-id': paper.id },
     h('nav', { class: 'crumb', 'aria-label': 'Breadcrumb' },
       h('a', { href: '#/library', text: 'Library' }),
       pillar ? [h('span', { 'aria-hidden': 'true', text: '/' }),
@@ -245,9 +260,11 @@ export async function paperView(store, id, tab) {
       h('h1', { class: 'paper-title', text: paper.title }),
       paper.authors?.length ? h('p', { class: 'paper-authors', text: authorLine(paper.authors, 8) }) : null,
       pdf ? h('div', { class: 'page-actions' }, h('a', { class: 'btn btn-secondary btn-md', href: pdf, target: '_blank', rel: 'noopener noreferrer', text: 'Open PDF' })) : null),
-    h('nav', { class: 'tabs', 'aria-label': 'Paper' }, PAPER_TABS.map((name) =>
+    h('nav', { class: 'tabs', 'aria-label': 'Paper' }, tabs.map((name) =>
       h('a', { href: paperHref(paper.id, name), 'aria-current': name === tab ? 'page' : null, text: labels[name] }))),
     h('div', { class: 'paper-panels' }, Object.values(panels)));
+  if (playground.mounted) page.mounted = playground.mounted;
+  return page;
 }
 
 export async function lessonsView(store) {

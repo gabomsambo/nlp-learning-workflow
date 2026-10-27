@@ -57,6 +57,9 @@ for file in manifest.json library.json schedule.json; do
 done
 npx --yes wrangler@4.147.0 r2 object put "nlp-reader-docs/papers/arxiv_3a1706.03762.json" \
   --file "$fixture/papers/arxiv_3a1706.03762.json" --content-type application/json --local --persist-to "$state" >/dev/null
+playground=$(cd "$fixture" && ls playgrounds/*.json | head -1)
+npx --yes wrangler@4.147.0 r2 object put "nlp-reader-docs/$playground" \
+  --file "$fixture/$playground" --content-type application/json --local --persist-to "$state" >/dev/null
 npx --yes wrangler@4.147.0 d1 migrations apply nlp-reader-reviews --local --persist-to "$state" -c test/wrangler.smoke.toml >/dev/null
 audio=$(cd "$fixture" && ls audio/*.mp3 | head -1)   # 22 bytes: enough to see real R2 slice it
 npx --yes wrangler@4.147.0 r2 object put "nlp-reader-docs/$audio" --file "$fixture/$audio" \
@@ -69,6 +72,9 @@ check "app.css is served from the build" 200 "$base/static/app.css"
 check "font is served"                   200 "$base/static/fonts/inter-latin.woff2"
 check "shared Listen helpers are served" 200 "$base/static/listen-core.js"
 check "episode page code is served"      200 "$base/js/episodes.js"
+check "shared Playground renderer is served" 200 "$base/static/playground.js"
+check "and the helpers it draws with"     200 "$base/static/playground-core.js"
+check "shared follow-along lookup is served" 200 "$base/static/follow-along.js"
 expect "security headers on assets"      "frame-ancestors 'none'" "$(curl -s -D- -o /dev/null "$base/")"
 expect "caller is reported"              '"email":"dev@example.com"' "$(curl -s "$base/api/me")"
 etag=$(curl -s -D- -o /dev/null "$base/api/manifest" | tr -d '\r' | awk -F': ' 'tolower($1)=="etag"{print $2}')
@@ -78,6 +84,8 @@ check "a changed ETag gets the body"     200 -H 'If-None-Match: "other"' "$base/
 check "document by key"                  200 "$base/api/doc/library.json"
 check "document with an encoded id"      200 "$base/api/doc/papers%2Farxiv_3a1706.03762.json"
 check "unpublished key"                  404 "$base/api/doc/episodes/00000000-0000-4000-8000-000000000000.json"
+check "a playground by its uuid name"    200 "$base/api/doc/$(printf %s "$playground" | sed 's|/|%2F|')"
+check "a playground by any other name"   404 "$base/api/doc/playgrounds%2Fnotes.json"
 check "audio is not served"              404 "$base/api/doc/audio/abc.mp3"
 
 echo "== audio: byte ranges against the simulated R2"

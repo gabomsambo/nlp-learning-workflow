@@ -31,7 +31,7 @@ export function parseRoute(hash) {
   return { name: 'notfound' };
 }
 
-export const PAPER_TABS = ['summary', 'notes', 'lesson', 'cards', 'episode'];
+export const PAPER_TABS = ['summary', 'notes', 'lesson', 'cards', 'episode', 'playground'];
 
 export function paperHref(id, tab) {
   const base = `#/paper/${encodeURIComponent(id)}`;
@@ -227,4 +227,83 @@ export function episodeMeta(episode, pillarName) {
 export function episodeInitial(title) {
   const match = /[0-9A-Za-z]/.exec(String(title || '').replace(/^\s*deep dive\s*:\s*/i, ''));
   return match ? match[0].toUpperCase() : 'E';
+}
+
+// ---- Playground (read-only; docs/PLAYGROUND.md) ------------------------------
+
+/** One cell on the Playground tab, the target of the code drawer's card. */
+export function playgroundCellHref(paperId, cellIndex) {
+  return `${paperHref(paperId, 'playground')}?cell=${Number(cellIndex)}`;
+}
+
+/** The cell a link asked for (`?cell=12`), or null. */
+export function requestedCell(params) {
+  const raw = params && typeof params.get === 'function' ? params.get('cell') : null;
+  if (raw == null || !/^[0-9]{1,5}$/.test(raw)) return null;
+  return Number(raw);
+}
+
+/**
+ * A published output in the shape playground.js's renderOutput reads. The
+ * export calls output text `body` (`text` is a key no document may carry).
+ * null for one the size caps left out.
+ */
+export function outputForRender(out) {
+  if (!out || typeof out !== 'object' || out.kind === 'dropped') return null;
+  if (!('body' in out)) return out;
+  const { body, ...rest } = out;
+  return { ...rest, text: body };
+}
+
+function sizeLabel(bytes) {
+  if (!(bytes > 0)) return '';
+  return bytes >= 1e6 ? ` (${(bytes / 1e6).toFixed(1)} MB)` : ` (${Math.max(1, Math.round(bytes / 1000))} KB)`;
+}
+
+/** Where a capped output was. */
+export function droppedNote(out) {
+  const what = out && out.what === 'figure' ? 'This figure' : 'This output';
+  return `${what}${sizeLabel(out && out.bytes)} was left out of the phone copy to keep it small. It is in the notebook on your computer.`;
+}
+
+/** One line for the top of the tab when the caps left anything out, else ''. */
+export function droppedSummary(dropped) {
+  const figures = Number(dropped && dropped.figures) || 0;
+  const outputs = Number(dropped && dropped.outputs) || 0;
+  if (!figures && !outputs) return '';
+  const parts = [figures ? plural(figures, 'figure') : '', outputs ? plural(outputs, 'output') : ''].filter(Boolean);
+  return `To keep the phone copy small, ${parts.join(' and ')} ${figures + outputs === 1 ? 'was' : 'were'} left out. They are in the notebook on your computer.`;
+}
+
+/**
+ * What the code drawer under the player can do for an episode, decided by the
+ * desktop panel's own `FollowAlong.availability` (passed in, as the page loads
+ * it as a classic script). `none` when the episode follows no notebook.
+ */
+export function codeDrawerState(FA, { hasAudio, timeline, scriptSha, links }) {
+  const list = Array.isArray(links) ? links : [];
+  if (!list.length || !FA) return { mode: 'none' };
+  const state = FA.availability({ hasAudio, timeline, scriptSha, links: list });
+  // The desktop offers its picker here. Matching again is the computer's job.
+  if (state.mode === 'pick') {
+    return { mode: 'off', link: state.link, reason: 'The script changed after it was matched to this notebook. Match it again on the computer.' };
+  }
+  return state;
+}
+
+/**
+ * What the drawer shows at `ms`, given what it shows now (`shown`, from the
+ * previous answer's `at`). Pure in `ms`, like `FollowAlong.followAt`, so
+ * seeking lands where playing would.
+ *
+ *   wait   before the first span: no card yet
+ *   same   nothing changed
+ *   dim    the same card, now inside or outside its span
+ *   card   a different card: `span` is the one to show
+ */
+export function drawerStep(FA, model, spans, ms, shown) {
+  const at = FA.followAt(model, spans, ms);
+  if (at.index === -1) return { kind: 'wait', at };
+  if (shown && shown.index === at.index) return { kind: shown.inside === at.inside ? 'same' : 'dim', at };
+  return { kind: 'card', at, span: spans[at.index] };
 }
