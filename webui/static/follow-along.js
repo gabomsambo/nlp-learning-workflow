@@ -166,7 +166,9 @@
       return { mode: 'pick', link: link, reason: 'The script changed after it was matched to this notebook. Match it again.' };
     }
     if (link && link.status === 'failed') {
-      return { mode: 'pick', link: link, reason: 'The last match failed: ' + (link.error || 'no reason recorded') + ' Try again.' };
+      var why = String(link.error || 'no reason recorded').trim();
+      if (!/[.!?]$/.test(why)) why += '.';
+      return { mode: 'pick', link: link, reason: 'The last match failed: ' + why + ' Try again.' };
     }
     return { mode: 'pick', link: link };
   }
@@ -328,13 +330,13 @@
       var snap = live();
       var ms = snap && isFinite(snap.time) ? snap.time * 1000 : 0;
       var at = snap ? followAt(model, spans, ms) : { index: -1, inside: false };
-      if (!force && at.index === shown.index && at.inside === shown.inside) return;
+      var wait = snap
+        ? 'The code shows up here when the narrator gets to it.'
+        : 'Press play. The code the narrator is talking about shows up here.';
+      if (!force && at.index === shown.index && at.inside === shown.inside &&
+          (at.index !== -1 || slot.textContent === wait)) return;
       if (at.index === -1) {
-        if (shown.index !== -1 || force) {
-          placeholder(snap
-            ? 'The code shows up here when the narrator gets to it.'
-            : 'Press play. The code the narrator is talking about shows up here.');
-        }
+        if (slot.textContent !== wait) placeholder(wait);
       } else if (at.index === shown.index && slot.firstChild && slot.firstChild.classList) {
         slot.firstChild.classList.toggle('is-dimmed', !at.inside);
       } else {
@@ -398,6 +400,7 @@
       if (pinBtn) pinBtn.hidden = true;
       if (changeBtn) changeBtn.hidden = true;
       if (sourceEl) sourceEl.textContent = '';
+      reason = reason || 'Pick the notebook whose code this episode should follow.';
       paintPicker(reason);
       loadCatalog().then(function () { paintPicker(reason); }).catch(function (err) {
         catalog = [];
@@ -623,6 +626,7 @@
           ep = null;
           data = null;
           loadToken += 1;
+          stopPoll();
           setVisible(false);
           return;
         }
@@ -635,6 +639,11 @@
           pinned = false;
           preferred = null;
           paintPin();
+          // A run being watched belongs to the previous episode. reload()
+          // reattaches if this one has a pass going.
+          stopPoll();
+          if (global.RunProgress) global.RunProgress.preview(null, runEls);
+          if (startBtn) startBtn.disabled = false;
           reload();
         } else if (data) {
           decide();
