@@ -272,3 +272,18 @@ def test_execute_turns_runner_outputs_into_safe_view_shapes(api):
     # Everything else about the answer passes through.
     assert body["truncated"] is True and body["dropped_outputs"] == 1
     assert "javascript" not in json.dumps(body) and "script" not in json.dumps(body)
+
+
+def test_routes_forward_the_setup_code_on_create_and_restart(api):
+    client, seen, _ = api
+    client.post("/api/playground/runner/sessions", json={"playground_id": "pg", "setup_code": "import numpy as np\n"})
+    assert seen[-1]["body"] == {"playground_id": "pg", "setup_code": "import numpy as np\n"}
+    # Setup code runs under the execution timeout, so the wait grows with it.
+    assert seen[-1]["read_timeout"] > 900
+    client.post("/api/playground/runner/sessions", json={"playground_id": "pg"})
+    assert seen[-1]["body"] == {"playground_id": "pg", "setup_code": ""}
+    assert seen[-1]["read_timeout"] == 90
+    client.post("/api/playground/runner/sessions/abc123/restart", json={"setup_code": "import pandas as pd\n"})
+    assert seen[-1]["body"] == {"setup_code": "import pandas as pd\n"}
+    client.post("/api/playground/runner/sessions/abc123/restart")
+    assert seen[-1]["body"] is None

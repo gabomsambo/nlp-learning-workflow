@@ -66,7 +66,7 @@ test('start creates one session for the playground, even when asked twice', asyn
   assert.ok(a && b);
   assert.strictEqual(s.id, 's1');
   assert.deepStrictEqual(p.calls.map((c) => c.key), ['POST /sessions']);
-  assert.deepStrictEqual(p.calls[0].body, { playground_id: 'pg-1' });
+  assert.deepStrictEqual(p.calls[0].body, { playground_id: 'pg-1', setup_code: '' });
   assert.deepStrictEqual(phases, ['starting', 'ready']);
 });
 
@@ -115,8 +115,9 @@ test('execute starts a session first and returns the runner result', async () =>
   assert.strictEqual(res.result.execution_count, 3);
   assert.strictEqual(started, 1);
   assert.deepStrictEqual(p.calls[1].body, { code: 'x = 1', timeout_s: 60 });
-  await s.execute('  y = 2\n  print(y)');
-  assert.strictEqual(p.calls[2].body.code, 'y = 2\nprint(y)');
+  // Sent as written: the runner strips a leading indent the way Jupyter did.
+  await s.execute('  y = 2\n  print(y)\n# note');
+  assert.strictEqual(p.calls[2].body.code, '  y = 2\n  print(y)\n# note');
   assert.strictEqual(s.phase, 'ready');
   s.markRan(4, res.generation);
   assert.ok(s.hasRan(4));
@@ -167,6 +168,24 @@ test('interrupt stops the running code and drops what is waiting', async () => {
   assert.strictEqual((await running).result.interrupted, true);
   assert.deepStrictEqual(await waiting, { cancelled: true });
   assert.strictEqual(p.calls.filter((c) => c.key.endsWith('/execute')).length, 1);
+});
+
+test('the setup code goes with every start and restart; a failed setup is the hint', async () => {
+  const p = fakeProxy({
+    'POST /sessions': () => [201, { session_id: 's1', playground_id: 'pg', setup: { status: 'ok' } }],
+    'POST /sessions/s1/restart': () => [200, { session_id: 's1', restarted: true,
+      setup: { status: 'error', ename: 'NameError', evalue: "name 'x' is not defined" } }],
+  });
+  const s = new Session({ playgroundId: 'pg', fetch: p.fetch, setupCode: 'import numpy as np\n' });
+  assert.strictEqual(await s.start(), true);
+  assert.deepStrictEqual(p.calls[0].body, { playground_id: 'pg', setup_code: 'import numpy as np\n' });
+  assert.deepStrictEqual(s.setup, { status: 'ok' });
+  assert.strictEqual(s.message, '');
+  s.setSetupCode('x\n');
+  assert.strictEqual(await s.restart(), true);
+  assert.deepStrictEqual(p.calls[1].body, { setup_code: 'x\n' });
+  assert.strictEqual(s.phase, 'ready');
+  assert.match(s.message, /^Setup code failed \(NameError: name 'x' is not defined\)/);
 });
 
 test('restart empties the ran set and a late result cannot mark the old kernel', async () => {

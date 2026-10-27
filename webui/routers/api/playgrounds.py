@@ -21,10 +21,11 @@ from pydantic import BaseModel, Field
 
 from nlp_pillars.config import get_settings
 from nlp_pillars.db import PipelineRunCreateError
-from nlp_pillars.playground import MIGRATION, store
+from nlp_pillars.playground import MIGRATION, SETUP_MIGRATION, store
 from nlp_pillars.playground import difference
 from nlp_pillars.playground import service as playground_service
 from nlp_pillars.playground.notebook import NotebookError, cells_view
+from nlp_pillars.playground.setup import suggest_setup
 from webui.services import run_service
 from webui.services.run_service import RunAlreadyActiveError
 from webui.services.spend_guard import require_spend_room
@@ -47,7 +48,12 @@ def _unavailable(exc: Exception) -> HTTPException:
 
 
 def public_playground(row: Dict[str, Any], notebook: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """What the Playground tab renders. The raw notebook stays on the server."""
+    """What the Playground tab renders. The raw notebook stays on the server.
+
+    ``setup_code`` is what was saved (None: never saved, use
+    ``setup_suggested``). ``setup_migration`` names migration 030 when the
+    column is missing, so the tab can say why Save will not work.
+    """
     return {
         "id": row.get("id"),
         "paper_id": row.get("paper_id"),
@@ -62,6 +68,9 @@ def public_playground(row: Dict[str, Any], notebook: Optional[Dict[str, Any]]) -
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "cells": cells_view(notebook or {}),
+        "setup_code": row.get("setup_code"),
+        "setup_suggested": suggest_setup(notebook or {}),
+        "setup_migration": None if "setup_code" in row else SETUP_MIGRATION,
     }
 
 
@@ -256,4 +265,39 @@ async def explain_difference(playground_id: str, body: DifferenceBody) -> Dict[s
         "explanation": result.explanation,
         "model": result.model,
         "cost_usd": result.cost_usd,
+    }
+
+
+#: Same cap as the runner's default PLAYGROUND_MAX_CODE_BYTES.
+SETUP_CODE_MAX = 1_000_000
+
+
+class SetupBody(BaseModel):
+    # None goes back to the suggestion computed from the notebook.
+    setup_code: Optional[str] = Field(None, max_length=SETUP_CODE_MAX)
+
+
+@router.put("/{playground_id}/setup")
+async def save_setup(playground_id: str, body: SetupBody) -> Dict[str, Any]:
+    """Save the playground's setup code (docs/PLAYGROUND.md, "Setup code").
+
+    It takes effect at the next session start or Restart. 503 names
+    migration 030 when the column is missing.
+    """
+    try:
+        playground_id = str(uuid.UUID(playground_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Playground not found")
+    try:
+        row = await asyncio.to_thread(store.get, playground_id, with_notebook=True)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Playground not found")
+        await asyncio.to_thread(store.save_setup, playground_id, body.setup_code)
+    except store.PlaygroundStoreError as exc:
+        raise _unavailable(exc)
+    suggested = suggest_setup(row.get("notebook") or {})
+    return {
+        "setup_code": body.setup_code,
+        "setup_suggested": suggested,
+        "message": "Setup code saved." if body.setup_code is not None else "Back to the suggested setup code.",
     }

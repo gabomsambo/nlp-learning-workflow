@@ -35,8 +35,19 @@ router = APIRouter(prefix="/api/playground/runner", tags=["playground"])
 SESSION_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 
 
+#: Same cap as the runner's default PLAYGROUND_MAX_CODE_BYTES.
+SETUP_CODE_MAX = 1_000_000
+
+
 class CreateSessionBody(BaseModel):
     playground_id: str = Field(..., min_length=1, max_length=128)
+    # The playground's setup code (docs/PLAYGROUND.md, "Setup code"): the
+    # runner runs it on this session's every start and restart.
+    setup_code: str = Field("", max_length=SETUP_CODE_MAX)
+
+
+class RestartBody(BaseModel):
+    setup_code: Optional[str] = Field(None, max_length=SETUP_CODE_MAX)
 
 
 class ExecuteBody(BaseModel):
@@ -76,7 +87,7 @@ async def list_sessions() -> Dict[str, Any]:
 
 @router.post("/sessions", status_code=201)
 async def create_session(body: CreateSessionBody) -> Dict[str, Any]:
-    return await _call(get_client().create_session(body.playground_id))
+    return await _call(get_client().create_session(body.playground_id, body.setup_code))
 
 
 @router.post("/sessions/{session_id}/execute")
@@ -94,8 +105,9 @@ async def interrupt(session_id: SessionId) -> Dict[str, Any]:
 
 
 @router.post("/sessions/{session_id}/restart")
-async def restart(session_id: SessionId) -> Dict[str, Any]:
-    return await _call(get_client().restart(session_id))
+async def restart(session_id: SessionId, body: Optional[RestartBody] = None) -> Dict[str, Any]:
+    setup_code = body.setup_code if body is not None else None
+    return await _call(get_client().restart(session_id, setup_code))
 
 
 @router.delete("/sessions/{session_id}")

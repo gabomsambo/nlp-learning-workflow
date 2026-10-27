@@ -118,7 +118,8 @@ jobs:
             tests/playground_runner/test_kernel_live.py \
             tests/playground_runner/test_api.py \
             tests/playground_runner/test_outputs.py \
-            tests/playground_runner/test_offline_data.py
+            tests/playground_runner/test_offline_data.py \
+            tests/playground_runner/test_indent.py
 
   tests:
     name: pytest (Python 3.12)

@@ -26,7 +26,8 @@ KERNEL_NAME = "playground"
 SETUP_CODE = (
     "def __playground_setup():\n"
     "    import os\n"
-    "    from playground_runner import offline_data\n"
+    "    from playground_runner import indent, offline_data\n"
+    "    indent.install(get_ipython())\n"
     "    offline_data.install(os.environ.get('PLAYGROUND_DATA_DIR', '/data'), os.environ.get('PLAYGROUND_ID'))\n"
     "    try:\n"
     "        import matplotlib\n"
@@ -78,6 +79,10 @@ class JupyterKernel:
         self.ipc_dir: Optional[Path] = None
         self.km = None
         self.kc = None
+        # The playground's setup code (docs/PLAYGROUND.md, "Setup code"): run
+        # after the runner's own setup on every start and restart.
+        self.setup_code = ""
+        self.setup_result: Dict[str, Any] = {"status": "none"}
 
     # -- lifecycle --------------------------------------------------------
 
@@ -144,6 +149,36 @@ class JupyterKernel:
                 "playground setup failed: "
                 f"{content.get('ename', 'no reply')}: {content.get('evalue', '')}"
             )
+        await self._run_user_setup()
+
+    async def _run_user_setup(self) -> None:
+        """Run the playground's setup code. Its failure is reported, not raised:
+        the session still starts, and the cell that needs a missing name says so."""
+        code = self.setup_code or ""
+        if not code.strip():
+            self.setup_result = {"status": "none"}
+            return
+        timeout = self.config.exec_timeout_s
+        msg_id = self.kc.execute(code, silent=True, store_history=False, allow_stdin=False)
+        reply = await self._shell_reply(msg_id, timeout)
+        if reply is None:
+            await self.interrupt()
+            await self._shell_reply(msg_id, self.config.interrupt_grace_s)
+            self.setup_result = {
+                "status": "error",
+                "ename": "TimeoutError",
+                "evalue": f"The setup code did not finish in {timeout:g} s and was interrupted.",
+            }
+            return
+        content = reply.get("content", {})
+        if content.get("status") == "ok":
+            self.setup_result = {"status": "ok"}
+        else:
+            self.setup_result = {
+                "status": "error",
+                "ename": content.get("ename") or "Error",
+                "evalue": content.get("evalue") or "",
+            }
 
     async def restart(self) -> None:
         if self.km is None:

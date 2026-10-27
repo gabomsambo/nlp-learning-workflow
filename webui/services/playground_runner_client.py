@@ -104,9 +104,15 @@ class PlaygroundRunnerClient:
     async def list_sessions(self) -> Dict[str, Any]:
         return await self._request("GET", "/sessions")
 
-    async def create_session(self, playground_id: str) -> Dict[str, Any]:
+    @staticmethod
+    def _start_wait(setup_code: Optional[str]) -> float:
         # Starting a kernel takes a few seconds; the runner's own cap is 60 s.
-        return await self._request("POST", "/sessions", json={"playground_id": playground_id}, read_timeout=90.0)
+        # Setup code then runs under the execution timeout.
+        return 90.0 + (EXECUTE_FALLBACK_TIMEOUT_S if (setup_code or "").strip() else 0.0)
+
+    async def create_session(self, playground_id: str, setup_code: str = "") -> Dict[str, Any]:
+        body = {"playground_id": playground_id, "setup_code": setup_code or ""}
+        return await self._request("POST", "/sessions", json=body, read_timeout=self._start_wait(setup_code))
 
     async def execute(self, session_id: str, code: str, timeout_s: Optional[float] = None) -> Dict[str, Any]:
         body: Dict[str, Any] = {"code": code}
@@ -118,8 +124,12 @@ class PlaygroundRunnerClient:
     async def interrupt(self, session_id: str) -> Dict[str, Any]:
         return await self._request("POST", f"/sessions/{self._sid(session_id)}/interrupt")
 
-    async def restart(self, session_id: str) -> Dict[str, Any]:
-        return await self._request("POST", f"/sessions/{self._sid(session_id)}/restart", read_timeout=90.0)
+    async def restart(self, session_id: str, setup_code: Optional[str] = None) -> Dict[str, Any]:
+        body = None if setup_code is None else {"setup_code": setup_code}
+        return await self._request(
+            "POST", f"/sessions/{self._sid(session_id)}/restart", json=body,
+            read_timeout=self._start_wait(setup_code),
+        )
 
     async def delete_session(self, session_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/sessions/{self._sid(session_id)}", read_timeout=30.0)

@@ -185,3 +185,18 @@ test('markdownParts shows short text whole and folds long text under its heading
   assert.equal(parts.head, 'Data has been preloaded');
   assert.ok(parts.rest.startsWith('word'));
 });
+
+test('setupCode runs what was saved, else the suggestion; an empty save runs nothing', () => {
+  assert.strictEqual(Playground.setupCode(null), '');
+  assert.strictEqual(Playground.setupCode({ setup_code: null, setup_suggested: 'import numpy as np\n' }), 'import numpy as np\n');
+  assert.strictEqual(Playground.setupCode({ setup_code: 'import pandas as pd\n', setup_suggested: 'x' }), 'import pandas as pd\n');
+  assert.strictEqual(Playground.setupCode({ setup_code: '', setup_suggested: 'import numpy as np\n' }), '');
+});
+
+test('setupSummary counts the lines that do something', () => {
+  assert.strictEqual(Playground.setupSummary('import numpy as np\n\nimport pandas as pd\n'), 'Setup · 2 lines');
+  assert.strictEqual(Playground.setupSummary('import numpy as np'), 'Setup · 1 line');
+  assert.strictEqual(Playground.setupSummary(''), 'Setup · nothing to run');
+  assert.strictEqual(Playground.setupRunText({ status: 'ok' }), 'Ran when this session started.');
+  assert.strictEqual(Playground.setupRunText({ status: 'none' }), '');
+});

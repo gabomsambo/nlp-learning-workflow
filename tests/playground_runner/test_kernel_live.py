@@ -197,3 +197,85 @@ async def test_kernel_cannot_open_ip_sockets(session):
     text = result["outputs"][0]["text"]
     assert "blocked 13" in text
     assert "OfflineDatasetError" in text
+
+
+# -- leading indent, as Jupyter ran it ------------------------------------------------
+
+
+async def test_an_indented_cell_runs(session):
+    manager, sid = session
+    result = await manager.execute(sid, "  x = 1\n  print(x + 1)\n", 30)
+    assert result["status"] == "ok"
+    assert result["outputs"][0]["text"] == "2\n"
+
+
+async def test_an_indented_cell_with_unindented_trailing_comments_runs(session):
+    manager, sid = session
+    result = await manager.execute(sid, "  y = 2\n  print(y)\n# trailing note\n#another\n", 30)
+    assert result["status"] == "ok", result
+    assert result["outputs"][0]["text"] == "2\n"
+
+
+async def test_a_normally_indented_cell_is_unchanged(session):
+    manager, sid = session
+    result = await manager.execute(sid, "for i in range(2):\n    print(i)\n", 30)
+    assert result["status"] == "ok"
+    assert result["outputs"][0]["text"] == "0\n1\n"
+
+
+async def test_a_mis_indented_cell_still_raises(session):
+    manager, sid = session
+    for code in ("x = 1\n  y = 2\n", "    x = 1\n  y = 2\n"):
+        result = await manager.execute(sid, code, 30)
+        assert result["status"] == "error"
+        assert result["outputs"][-1]["ename"] == "IndentationError"
+
+
+# -- setup code -----------------------------------------------------------------------
+
+
+@pytest.fixture
+async def manager(config):
+    m = SessionManager(config)
+    try:
+        yield m
+    finally:
+        await m.shutdown_all()
+
+
+async def test_setup_code_runs_before_any_cell(manager):
+    created = await manager.create("pg-live", "import numpy as np\nfrom IPython.display import display\n")
+    assert created.describe()["setup"] == {"status": "ok"}
+    result = await manager.execute(created.session_id, "print(int(np.where(np.array([0, 5]) > 1)[0][0]))", 30)
+    assert result["status"] == "ok", result
+    assert result["outputs"][0]["text"] == "1\n"
+    # It is not a cell: the first cell the learner runs is still In [1].
+    assert result["execution_count"] == 1
+
+
+async def test_restart_reruns_the_setup_code(manager):
+    created = await manager.create("pg-live", "import numpy as np\n")
+    sid = created.session_id
+    await manager.execute(sid, "x = 5", 30)
+    restarted = await manager.restart(sid)
+    assert restarted["setup"] == {"status": "ok"}
+    result = await manager.execute(sid, "print(np.ones(2).sum())\ntry:\n    x\nexcept NameError:\n    print('x gone')", 30)
+    assert result["outputs"][0]["text"] == "2.0\nx gone\n"
+
+
+async def test_a_kernel_restarted_by_the_runner_reruns_the_setup_code(config, manager):
+    created = await manager.create("pg-live", "import numpy as np\n")
+    sid = created.session_id
+    died = await manager.execute(sid, "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)", 30)
+    assert died["kernel_restarted"] is True
+    result = await manager.execute(sid, "print(np.zeros(1).size)", 30)
+    assert result["outputs"][0]["text"] == "1\n"
+
+
+async def test_failed_setup_code_is_reported_and_the_session_starts(manager):
+    created = await manager.create("pg-live", "import not_a_module_xyz\n")
+    setup = created.describe()["setup"]
+    assert setup["status"] == "error"
+    assert setup["ename"] == "ModuleNotFoundError"
+    result = await manager.execute(created.session_id, "1 + 1", 30)
+    assert result["outputs"] == [{"type": "text", "text": "2"}]

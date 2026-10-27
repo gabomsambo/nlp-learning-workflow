@@ -183,31 +183,11 @@
     }
   }
 
-  /**
-   * Remove the indent every non-blank line shares. Older Jupyter stripped a
-   * cell's leading indent before running it, so saved notebooks can carry
-   * cells like "  x = 1\n  print(x)" that ran there and are an
-   * IndentationError for the runner's IPython. Comment and blank lines do not
-   * count towards the shared indent; a line without it is left as it is. A
-   * cell with no common indent is returned unchanged.
-   */
-  function dedentCell(code) {
-    var text = String(code == null ? '' : code);
-    var lines = text.split('\n');
-    var common = null;
-    lines.forEach(function (line) {
-      // Blank lines and comments do not count: Python ignores their indent.
-      if (!line.trim() || /^[ \t]*#/.test(line)) return;
-      var indent = /^[ \t]*/.exec(line)[0];
-      if (common === null) { common = indent; return; }
-      var k = 0;
-      while (k < common.length && k < indent.length && common[k] === indent[k]) k++;
-      common = common.slice(0, k);
-    });
-    if (!common) return text;
-    return lines.map(function (line) {
-      return line.slice(0, common.length) === common ? line.slice(common.length) : line.replace(/^[ \t]+$/, '');
-    }).join('\n');
+  /** The chip hint for a failed setup report, or '' when it ran (or there was none). */
+  function setupFailure(setup) {
+    if (!setup || setup.status !== 'error') return '';
+    var what = [setup.ename, setup.evalue].filter(Boolean).join(': ');
+    return 'Setup code failed' + (what ? ' (' + what + ')' : '') + '. Fix it in Setup, then Restart.';
   }
 
   function isRunShortcut(ev) {
@@ -410,7 +390,7 @@
     errorMessage: errorMessage,
     sessionChip: sessionChip,
     isRunShortcut: isRunShortcut,
-    dedentCell: dedentCell,
+    setupFailure: setupFailure,
     treeText: treeText,
     outputText: outputText,
     outputsText: outputsText,

@@ -11,3 +11,6 @@ MIGRATION = "docs/migrations/028_playgrounds.sql"
 
 #: Follow-along: episode-to-playground links and the alignment pass.
 FOLLOW_MIGRATION = "docs/migrations/029_playground_links.sql"
+
+#: Setup code run before any cell (docs/PLAYGROUND.md, "Setup code").
+SETUP_MIGRATION = "docs/migrations/030_playground_setup_code.sql"

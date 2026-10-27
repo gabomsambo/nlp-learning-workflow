@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class Kernel(Protocol):
+    #: Run after every start and restart (docs/PLAYGROUND.md, "Setup code").
+    setup_code: str
+
     async def start(self) -> None: ...
     async def execute(self, code: str, timeout_s: float, abort: Optional[asyncio.Event] = None) -> Dict[str, Any]: ...
     async def interrupt(self) -> None: ...
@@ -71,7 +74,15 @@ class Session:
             "last_active_at": _iso(self.last_active_at),
             "busy": self.busy,
             "execution_count": self.execution_count,
+            "setup": setup_status(self.kernel),
         }
+
+
+def setup_status(kernel: Kernel) -> Dict[str, Any]:
+    """How the playground's setup code went on the kernel's last (re)start:
+    ``{"status": "none" | "ok" | "error", "ename"?, "evalue"?}``."""
+    result = getattr(kernel, "setup_result", None)
+    return dict(result) if isinstance(result, dict) else {"status": "none"}
 
 
 def _default_factory(config: RunnerConfig, session_id: str, playground_id: str) -> Kernel:
@@ -102,7 +113,7 @@ class SessionManager:
 
     # -- lifecycle --------------------------------------------------------
 
-    async def create(self, playground_id: str) -> Session:
+    async def create(self, playground_id: str, setup_code: str = "") -> Session:
         async with self._create_lock:
             if len(self.sessions) + self._starting >= self.config.max_sessions:
                 raise TooManySessions(
@@ -113,6 +124,7 @@ class SessionManager:
             self._starting += 1
         session_id = secrets.token_hex(12)
         kernel = self.kernel_factory(self.config, session_id, playground_id)
+        kernel.setup_code = setup_code or ""
         try:
             await kernel.start()
         finally:
@@ -164,15 +176,19 @@ class SessionManager:
             except Exception:
                 logger.warning("interrupt before stop failed for %s", session.session_id, exc_info=True)
 
-    async def restart(self, session_id: str) -> Dict[str, Any]:
+    async def restart(self, session_id: str, setup_code: Optional[str] = None) -> Dict[str, Any]:
+        """Fresh kernel. ``setup_code``, when given, replaces the session's
+        setup code before it runs again."""
         session = self.get(session_id)
         await self._stop_running(session)
         async with session.lock:
             session.abort.clear()
+            if setup_code is not None:
+                session.kernel.setup_code = setup_code
             await session.kernel.restart()
             session.execution_count = 0
             session.touch()
-        return {"session_id": session_id, "restarted": True}
+        return {"session_id": session_id, "restarted": True, "setup": setup_status(session.kernel)}
 
     async def delete(self, session_id: str) -> None:
         session = self.get(session_id)

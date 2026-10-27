@@ -845,6 +845,104 @@
     return box;
   }
 
+  /* ------------------------------------------------------------------ setup */
+
+  /** The setup code that runs: what was saved, else the suggestion. */
+  function setupCode(pg) {
+    if (!pg) return '';
+    return pg.setup_code != null ? String(pg.setup_code) : String(pg.setup_suggested || '');
+  }
+
+  /** The Setup card's summary line. */
+  function setupSummary(code) {
+    var n = String(code || '').split('\n').filter(function (l) { return l.trim(); }).length;
+    return n ? 'Setup · ' + n + ' line' + (n === 1 ? '' : 's') : 'Setup · nothing to run';
+  }
+
+  /** What the Setup card says about the last run of the setup code. */
+  function setupRunText(setup) {
+    if (!setup) return '';
+    if (setup.status === 'error') return Core.setupFailure(setup);
+    if (setup.status === 'ok') return 'Ran when this session started.';
+    return '';
+  }
+
+  /**
+   * "Setup": a small, collapsed card with the code the runner runs before any
+   * cell, on every start and Restart. Editable; Save stores it, Reset puts
+   * the suggestion back in the editor.
+   */
+  function renderSetup(pg, state) {
+    var box = el('details', 'pg-setup');
+    box.id = 'pg-setup';
+    var current = setupCode(pg);
+    var summary = el('summary', null, setupSummary(current));
+    box.appendChild(summary);
+    box.appendChild(el('p', 'pg-hint', 'Imports this notebook uses but never wrote down. ' +
+      'They run before any cell when the session starts, and again after Restart.'));
+    var draft = current;
+    var editor = buildEditor(current, function (value) { draft = value; paintNote(); });
+    editor.ta.setAttribute('aria-label', 'Setup code (editable)');
+    box.appendChild(editor.wrap);
+    var actions = el('div', 'pg-setup-actions');
+    var save = button('Save', 'btn-primary');
+    var reset = button('Reset to suggested');
+    actions.appendChild(save);
+    actions.appendChild(reset);
+    box.appendChild(actions);
+    var note = el('p', 'pg-hint pg-setup-note');
+    note.setAttribute('role', 'status');
+    box.appendChild(note);
+    var said = '';
+
+    function paintNote() {
+      var parts = [];
+      if (said) parts.push(said);
+      else if (draft !== current) parts.push('Not saved.');
+      if (pg.setup_migration) parts.push('Saving needs ' + pg.setup_migration + ' applied; the suggestion still runs.');
+      var live = state.live;
+      if (!said && draft === current && live && live.session.id) {
+        var ran = setupRunText(live.session.setup);
+        if (ran) parts.push(ran);
+      }
+      note.textContent = parts.join(' ');
+      note.className = 'pg-hint pg-setup-note' + (live && live.session.setup && live.session.setup.status === 'error' ? ' is-error' : '');
+      save.disabled = draft === current && pg.setup_code != null;
+    }
+
+    save.addEventListener('click', function () {
+      save.disabled = true;
+      var value = draft;
+      fetch('/api/playgrounds/' + encodeURIComponent(pg.id) + '/setup', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ setup_code: value }),
+      }).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          if (!res.ok) throw new Error((body && body.detail) || 'Could not save (HTTP ' + res.status + ').');
+          pg.setup_code = value;
+          current = value;
+          summary.textContent = setupSummary(value);
+          if (state.live) state.live.session.setSetupCode(value);
+          said = state.live && state.live.session.id ? 'Saved. Restart to run it now.' : 'Saved.';
+        });
+      }).catch(function (err) {
+        said = err.message;
+      }).then(paintNote);
+    });
+
+    reset.addEventListener('click', function () {
+      editor.ta.value = String(pg.setup_suggested || '');
+      editor.ta.dispatchEvent(new Event('input'));
+      said = '';
+      paintNote();
+    });
+
+    if (state.live) state.live.paintSetup = function () { said = ''; paintNote(); };
+    paintNote();
+    return box;
+  }
+
   function render(root, data, state) {
     var pg = data.playground;
     root.replaceChildren();
@@ -864,6 +962,7 @@
     head.appendChild(el('h3', 'pg-title', pg.title || 'Notebook'));
     if (pg.notebook_name) head.appendChild(el('p', 'paper-muted pg-file', pg.notebook_name));
     head.appendChild(renderDatasets(pg.datasets));
+    head.appendChild(renderSetup(pg, state));
     root.appendChild(head);
 
     if (pg.error && (pg.status === 'partial' || pg.status === 'failed' || pg.status === 'ready')) {
@@ -977,9 +1076,11 @@
       live.paintRan = function () {
         Object.keys(live.cells).forEach(function (k) { live.cells[k].paintRan(); });
       };
+      live.paintSetup = function () {};
       live.session = new SessionApi.Session({
         playgroundId: pg.id,
-        onChange: function () { paintSession(); live.paintRan(); },
+        setupCode: setupCode(pg),
+        onChange: function () { paintSession(); live.paintRan(); live.paintSetup(); },
       });
       state.live = live;
       paintSession();
@@ -1026,6 +1127,7 @@
       }).then(function (body) {
         state.data = body;
         ensureLive(body.playground);
+        if (state.live) state.live.session.setSetupCode(setupCode(body.playground));
         paint();
         showRequestedCell();
         var run = body.latest_run;
@@ -1186,6 +1288,9 @@
     safePng: safePng,
     markdownParts: markdownParts,
     requestedCell: requestedCell,
+    setupCode: setupCode,
+    setupSummary: setupSummary,
+    setupRunText: setupRunText,
     // The Listen page's follow-along panel renders its card with these, so a
     // cell looks the same (and is sanitized the same way) in both places.
     renderCode: renderCode,

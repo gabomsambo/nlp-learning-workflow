@@ -27,6 +27,10 @@
   function Session(opts) {
     opts = opts || {};
     this.playgroundId = opts.playgroundId;
+    // Run by the runner before any cell, on every start and restart.
+    this.setupCode = opts.setupCode || '';
+    // The runner's report on it: {status: 'none'|'ok'|'error', ename, evalue}.
+    this.setup = null;
     this._fetch = opts.fetch || (typeof global.fetch === 'function' ? global.fetch.bind(global) : null);
     this.onChange = opts.onChange || function () {};
     this.phase = 'idle';
@@ -82,6 +86,18 @@
     return Core.errorMessage(res.status, detail);
   };
 
+  /** Remember the runner's setup report; a failed setup is the chip's hint. */
+  Session.prototype._setupDone = function (body, okMessage) {
+    this.setup = (body && body.setup) || null;
+    var failed = Core.setupFailure(this.setup);
+    this._set('ready', failed || okMessage || '');
+  };
+
+  /** Code to run before any cell from the next start or restart on. */
+  Session.prototype.setSetupCode = function (code) {
+    this.setupCode = String(code == null ? '' : code);
+  };
+
   /** GET /health: the runner's limits, or null when it is not reachable. */
   Session.prototype.health = function () {
     var self = this;
@@ -125,7 +141,7 @@
     if (this._starting) return this._starting;
     this._set('starting');
     var create = function () {
-      return self._call('POST', '/sessions', { playground_id: self.playgroundId });
+      return self._call('POST', '/sessions', { playground_id: self.playgroundId, setup_code: self.setupCode });
     };
     this._starting = create().then(function (res) {
       if (res.status !== 429) return res;
@@ -135,7 +151,7 @@
       if (res.status === 201 || res.status === 200) {
         self.id = res.body.session_id;
         self._lost();
-        self._set('ready');
+        self._setupDone(res.body);
         return true;
       }
       var message = self._failed(res);
@@ -174,7 +190,9 @@
       return self.ensure().then(function (ok) {
         if (!ok) return { error: self.message || 'The session could not start.', status: 503 };
         if (seq !== self._cancelSeq) return { cancelled: true };
-        var body = { code: Core.dedentCell(code) };
+        // The runner strips a leading indent the way Jupyter did
+        // (playground_runner/indent.py), so the code goes as written.
+        var body = { code: String(code == null ? '' : code) };
         if (timeoutS) body.timeout_s = timeoutS;
         var generation = self.generation;
         self.running = true;
@@ -236,10 +254,10 @@
     this._cancelSeq += 1;
     if (!this.id) return this.start();
     this._set('starting');
-    return this._call('POST', this._sid() + '/restart').then(function (res) {
+    return this._call('POST', this._sid() + '/restart', { setup_code: this.setupCode }).then(function (res) {
       if (res.status === 200) {
         self._lost();
-        self._set('ready', 'Restarted. Every variable is gone.');
+        self._setupDone(res.body, 'Restarted. Every variable is gone.');
         return true;
       }
       if (res.status === 404) {

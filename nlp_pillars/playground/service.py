@@ -31,6 +31,7 @@ from .explain import (
     validate_draft,
 )
 from .notebook import NotebookError, cells_view, notebook_title, parse_notebook
+from .setup import suggest_setup
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ def import_notebook(
         notebook=nb,
         notebook_name=name,
         datasets=previous,
+        setup_code=suggest_setup(nb),
     )
     datasets = cache_datasets(playground_id, find_dataset_urls(nb), previous, cache=cache)
     store.save_datasets(playground_id, datasets)

@@ -25,11 +25,27 @@ class FakeKernel:
         self.restarts = 0
         self.shut = False
         self.release = None
+        self.setup_code = ""
+        self.setup_result = {"status": "none"}
+        self.setup_runs = []
         FakeKernel.instances.append(self)
+
+    def _setup(self):
+        """Like JupyterKernel._run_user_setup: run it, report, never raise."""
+        self.setup_runs.append(self.setup_code)
+        if not self.setup_code.strip():
+            self.setup_result = {"status": "none"}
+        elif self.setup_code == "fail":
+            self.setup_result = {"status": "error", "ename": "NameError", "evalue": "name 'fail' is not defined"}
+        else:
+            name, value = (part.strip() for part in self.setup_code.split("=", 1))
+            self.namespace[name] = value
+            self.setup_result = {"status": "ok"}
 
     async def start(self):
         if self.playground_id == "explodes":
             raise RuntimeError("kernel died at startup")
+        self._setup()
 
     async def execute(self, code, timeout_s, abort=None):
         self.count += 1
@@ -61,6 +77,7 @@ class FakeKernel:
         self.restarts += 1
         self.namespace = {}
         self.count = 0
+        self._setup()
 
     async def shutdown(self):
         self.shut = True
@@ -105,7 +122,7 @@ def test_session_lifecycle_and_state_persistence(client):
     assert listed["sessions"][0]["execution_count"] == 2
     assert listed["sessions"][0]["busy"] is False
 
-    assert client.post(f"/sessions/{sid}/restart").json() == {"session_id": sid, "restarted": True}
+    assert client.post(f"/sessions/{sid}/restart").json() == {"session_id": sid, "restarted": True, "setup": {"status": "none"}}
     assert client.post(f"/sessions/{sid}/execute", json={"code": "x"}).json()["outputs"][0]["text"] == "?"
 
     assert client.delete(f"/sessions/{sid}").json() == {"session_id": sid, "deleted": True}
@@ -225,3 +242,53 @@ def test_a_kernel_failure_during_execute_is_503_naming_restart(client):
     assert f"/sessions/{sid}/restart" in response.json()["detail"]
     # The session is not left marked busy.
     assert client.get("/sessions").json()["sessions"][0]["busy"] is False
+
+
+# -- setup code ---------------------------------------------------------------------
+
+
+def test_setup_code_runs_when_the_session_starts(client):
+    created = client.post("/sessions", json={"playground_id": "pg", "setup_code": "np = numpy"})
+    assert created.status_code == 201
+    assert created.json()["setup"] == {"status": "ok"}
+    sid = created.json()["session_id"]
+    res = client.post(f"/sessions/{sid}/execute", json={"code": "np"}).json()
+    assert res["outputs"] == [{"type": "text", "text": "numpy"}]
+    assert client.get("/sessions").json()["sessions"][0]["setup"] == {"status": "ok"}
+
+
+def test_restart_runs_the_setup_code_again(client):
+    sid = client.post("/sessions", json={"playground_id": "pg", "setup_code": "np = numpy"}).json()["session_id"]
+    client.post(f"/sessions/{sid}/execute", json={"code": "x = 1"})
+    restarted = client.post(f"/sessions/{sid}/restart").json()
+    assert restarted == {"session_id": sid, "restarted": True, "setup": {"status": "ok"}}
+    kernel = FakeKernel.instances[-1]
+    assert kernel.setup_runs == ["np = numpy", "np = numpy"]
+    assert kernel.namespace == {"np": "numpy"}  # x is gone, np is back
+
+
+def test_restart_can_replace_the_setup_code(client):
+    sid = client.post("/sessions", json={"playground_id": "pg", "setup_code": "np = numpy"}).json()["session_id"]
+    restarted = client.post(f"/sessions/{sid}/restart", json={"setup_code": "pd = pandas"}).json()
+    assert restarted["setup"] == {"status": "ok"}
+    assert FakeKernel.instances[-1].namespace == {"pd": "pandas"}
+    # A restart with no body keeps the code it has.
+    client.post(f"/sessions/{sid}/restart")
+    assert FakeKernel.instances[-1].setup_runs[-1] == "pd = pandas"
+
+
+def test_a_failed_setup_is_reported_and_the_session_still_starts(client):
+    created = client.post("/sessions", json={"playground_id": "pg", "setup_code": "fail"})
+    assert created.status_code == 201
+    assert created.json()["setup"] == {"status": "error", "ename": "NameError", "evalue": "name 'fail' is not defined"}
+
+
+def test_no_setup_code_is_status_none(client):
+    created = client.post("/sessions", json={"playground_id": "pg"}).json()
+    assert created["setup"] == {"status": "none"}
+
+
+def test_oversized_setup_code_is_413(client):
+    assert client.post("/sessions", json={"playground_id": "pg", "setup_code": "x" * 2_000}).status_code == 413
+    sid = client.post("/sessions", json={"playground_id": "pg"}).json()["session_id"]
+    assert client.post(f"/sessions/{sid}/restart", json={"setup_code": "x" * 2_000}).status_code == 413
