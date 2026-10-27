@@ -131,8 +131,9 @@ the script is not followed; the drawer says to match it again on the computer.
   8 MiB document limit, or that trips the secret guard (a key pasted into a cell), is left out
   whole with a warning; the rest of the library still publishes.
 - **Shared code.** The cards are drawn by the app's `playground.js` (`renderCode`, `renderOutput`,
-  the sanitizer's `buildTree`) and the drawer's time -> span -> card lookup is `follow-along.js`'s
-  (`normalizeSpans`, `followAt`, `cardFor`, `availability`), both copied by `build-assets.sh`.
+  the sanitizer's `buildTree`, and `lineDiff` from `playground-core.js`) and the drawer's
+  time -> span -> card lookup is `follow-along.js`'s (`normalizeSpans`, `followAt`, `cardFor`,
+  `availability`), all copied by `build-assets.sh`. `playground-session.js` (the runner) is not.
 - **Before migrations 028/029** the export publishes without playgrounds (or without follow-along)
   and the report says which migration is missing.
 - **Offline.** There is no offline layer yet (below), so a playground is fetched like any other

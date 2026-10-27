@@ -212,11 +212,11 @@ test('episode meta joins what is known', () => {
 test('the page loads the shared scripts before the module, and the asset build copies them', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const build = readFileSync(new URL('../scripts/build-assets.sh', import.meta.url), 'utf8');
-  const shared = ['factcheck.js', 'readalong.js', 'listen-core.js', 'playground.js', 'follow-along.js'];
+  const shared = ['factcheck.js', 'readalong.js', 'listen-core.js', 'playground-core.js', 'playground.js', 'follow-along.js'];
   const order = shared.map((name) => html.indexOf(`/static/${name}`));
   const module = html.indexOf('/js/reader.js');
   for (const at of order) assert.ok(at > -1 && at < module);
-  // follow-along.js reads ReadAlong and ListenCore when it loads.
-  assert.ok(order[4] > order[1] && order[4] > order[2]);
+  // follow-along.js reads ReadAlong and ListenCore, and playground.js PlaygroundCore, when they load.
+  assert.ok(order[5] > order[1] && order[5] > order[2] && order[4] > order[3]);
   for (const name of shared) assert.ok(build.includes(name), name);
 });

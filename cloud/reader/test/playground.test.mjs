@@ -14,6 +14,7 @@ installFakeDom();
 const require = createRequire(import.meta.url);
 const RA = require('../../../webui/static/readalong.js');
 const Core = require('../../../webui/static/listen-core.js');
+require('../../../webui/static/playground-core.js');
 require('../../../webui/static/playground.js');
 const FA = require('../../../webui/static/follow-along.js');
 

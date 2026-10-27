@@ -73,6 +73,7 @@ check "font is served"                   200 "$base/static/fonts/inter-latin.wof
 check "shared Listen helpers are served" 200 "$base/static/listen-core.js"
 check "episode page code is served"      200 "$base/js/episodes.js"
 check "shared Playground renderer is served" 200 "$base/static/playground.js"
+check "and the helpers it draws with"     200 "$base/static/playground-core.js"
 check "shared follow-along lookup is served" 200 "$base/static/follow-along.js"
 expect "security headers on assets"      "frame-ancestors 'none'" "$(curl -s -D- -o /dev/null "$base/")"
 expect "caller is reported"              '"email":"dev@example.com"' "$(curl -s "$base/api/me")"

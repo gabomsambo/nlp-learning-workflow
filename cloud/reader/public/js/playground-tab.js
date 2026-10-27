@@ -6,7 +6,8 @@
  * output and each "try this" as a before/after diff. Nothing runs here.
  *
  * The cards are drawn with the app's own playground.js (loaded as a classic
- * script before this module, index.html): renderCode for the lines and notes,
+ * script before this module, index.html, after the playground-core.js it
+ * takes lineDiff from): renderCode for the lines and notes,
  * renderOutput and buildTree for saved output, so a sanitized table is built
  * here exactly as on the computer. Everything else is createElement +
  * textContent.
@@ -15,8 +16,6 @@ import { h } from './dom.js';
 import { droppedNote, droppedSummary, outputForRender } from './lib.js';
 
 const PG = window.Playground;
-// lineDiff moves to playground-core.js once the live tab lands; take it from either.
-const lineDiff = (window.PlaygroundCore && window.PlaygroundCore.lineDiff) || PG.lineDiff;
 
 function storedHide() {
   try { return localStorage.getItem(PG.HIDE_KEY) === 'true'; } catch (error) { return false; }
@@ -33,7 +32,7 @@ export function renderSavedOutput(out) {
 
 function renderTry(source, attempt) {
   const diff = h('div', { class: 'pg-diff', 'aria-label': 'Original and changed code, line by line' },
-    lineDiff(source, attempt.code).map((row) =>
+    PG.lineDiff(source, attempt.code).map((row) =>
       h('div', {
         class: `pg-diff-line is-${row.op}`,
         'aria-label': row.op === 'same' ? null : `${row.op === 'add' ? 'added' : 'removed'}: ${row.text}`,
