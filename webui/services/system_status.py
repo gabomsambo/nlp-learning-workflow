@@ -1047,6 +1047,49 @@ async def _check_cloud_reader(
     return classify_cloud_reader(status, rows if isinstance(rows, list) else None, None, reviews)
 
 
+def classify_playground_runner(
+    url: Optional[str], status_code: Optional[int], payload: Any, error: Optional[str]
+) -> Dict[str, Any]:
+    """Activity row for the playground runner. Non-fatal: only Playground code
+    cells need it, so a stopped runner must not turn the shell chip red."""
+    if not url:
+        return make_check(
+            "playground-runner", "Playground runner", "ok", "Not configured.", None, fatal=False
+        )
+    if status_code == 200 and isinstance(payload, dict) and payload.get("status") == "ok":
+        sessions = payload.get("sessions", 0)
+        limit = payload.get("max_sessions", "?")
+        return make_check(
+            "playground-runner",
+            "Playground runner",
+            "ok",
+            f"Ready. {sessions} of {limit} code sessions open.",
+            None,
+            fatal=False,
+        )
+    why = error or (f"HTTP {status_code}" if status_code is not None else "no answer")
+    return make_check(
+        "playground-runner",
+        "Playground runner",
+        "down",
+        public_line(f"Not reachable at {url} ({why}). Playground code cells cannot run."),
+        "./workstation up",
+        fatal=False,
+    )
+
+
+async def _check_playground_runner(client: httpx.AsyncClient, settings: Any) -> Dict[str, Any]:
+    url = getattr(settings, "playground_runner_url", None)
+    if not url:
+        return classify_playground_runner(None, None, None, None)
+    base = str(url).rstrip("/")
+    try:
+        response = await client.get(base + "/health")
+    except httpx.HTTPError as exc:
+        return classify_playground_runner(base, None, None, type(exc).__name__)
+    return classify_playground_runner(base, response.status_code, _json_body(response), None)
+
+
 async def _check_searxng(
     client: httpx.AsyncClient,
     settings: Any,
@@ -1388,6 +1431,7 @@ async def collect_status(
         schedule,
         disk,
         cloud_reader,
+        playground_runner,
     ) = await asyncio.gather(
         safe_migrations(),
         _guard("qdrant", "Qdrant (local)", lambda: _check_qdrant(client, settings), secrets),
@@ -1418,6 +1462,13 @@ async def collect_status(
             secrets,
             fatal=False,
         ),
+        _guard(
+            "playground-runner",
+            "Playground runner",
+            lambda: _check_playground_runner(client, settings),
+            secrets,
+            fatal=False,
+        ),
     )
     checks = [
         web,
@@ -1433,6 +1484,7 @@ async def collect_status(
         schedule,
         disk,
         cloud_reader,
+        playground_runner,
     ]
     down = sum(1 for check in checks if counts_as_down(check))
     return {

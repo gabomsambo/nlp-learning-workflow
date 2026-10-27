@@ -1,0 +1,29 @@
+# Direct dependencies of the playground runner image. requirements.txt is the
+# full pinned set resolved from this file; regenerate it with:
+#
+#   uv pip compile docker/playground-runner/requirements.in \
+#     --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+#     -o docker/playground-runner/requirements.txt
+#
+# then rebuild: docker compose build playground-runner
+
+# What notebook code runs against.
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+# pandas.read_excel and pandas.read_parquet, both patched by the offline hook.
+openpyxl
+pyarrow
+
+# One Jupyter kernel per session.
+ipykernel
+jupyter_client
+
+# The runner's HTTP API.
+fastapi
+uvicorn
+
+# Kernel-side seccomp filter (ctypes binding to the system libseccomp).
+pyseccomp

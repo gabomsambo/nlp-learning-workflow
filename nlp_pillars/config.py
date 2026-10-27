@@ -143,6 +143,13 @@ class Settings(BaseSettings):
         env="INDEXTTS_START_COMMAND",
     )
     voices_dir: str = Field("/voices", env="VOICES_DIR")
+
+    # Locked-down Python runner for paper playgrounds (docs/PLAYGROUND_RUNNER.md).
+    # Reachable only over compose's internal `playground` network.
+    playground_runner_url: str = Field(
+        "http://playground-runner:8765",
+        env="PLAYGROUND_RUNNER_URL",
+    )
     # Cloud reader publishing (nlp_pillars/cloud/publish.py). Off unless
     # CLOUD_PUBLISH_ENABLED is true; the three below must then all be set. The
     # client id and secret are the Access service token that may reach /ingest

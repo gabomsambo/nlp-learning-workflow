@@ -477,3 +477,34 @@ async def test_rejected_semantic_scholar_key_is_on_the_status_page(caplog):
     assert "SEMANTIC_SCHOLAR_API_KEY" in caplog.text
     assert "not changed" in caplog.text
     assert status.counts_as_down(check) is False
+
+
+def test_playground_runner_row_is_non_fatal_and_names_the_fix():
+    up = status.classify_playground_runner(
+        "http://playground-runner:8765", 200, {"status": "ok", "sessions": 1, "max_sessions": 3}, None
+    )
+    assert up["state"] == "ok"
+    assert up["summary"] == "Ready. 1 of 3 code sessions open."
+    assert up["fatal"] is False
+
+    down = status.classify_playground_runner("http://playground-runner:8765", None, None, "ConnectError")
+    assert down["state"] == "down"
+    assert "ConnectError" in down["summary"]
+    assert down["fix"] == "./workstation up"
+    assert status.counts_as_down(down) is False
+
+    unset = status.classify_playground_runner(None, None, None, None)
+    assert unset["state"] == "ok" and unset["summary"] == "Not configured."
+
+
+async def test_playground_runner_probe_reads_health():
+    class _S:
+        playground_runner_url = "http://runner.test:8765/"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://runner.test:8765/health"
+        return httpx.Response(200, json={"status": "ok", "sessions": 0, "max_sessions": 3})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        row = await status._check_playground_runner(client, _S())
+    assert row["state"] == "ok"

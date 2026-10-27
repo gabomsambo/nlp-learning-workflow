@@ -31,9 +31,10 @@ you must not stack your own review or PR steps on top of it.
 
 ## Running the stack
 
-`docker compose up -d --build` starts **six** services: `webui` (FastAPI on :8000),
+`docker compose up -d --build` starts **seven** services: `webui` (FastAPI on :8000),
 `db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080),
-`qdrant` (host **6333** / **6334**) and `scheduler` (no ports). The build is slow
+`qdrant` (host **6333** / **6334**), `scheduler` (no ports) and `playground-runner`
+(no ports; internal network only, see `docs/PLAYGROUND_RUNNER.md`). The build is slow
 and the image is large — `requirements.txt` pulls torch and layoutparser. Search
 reads the local Qdrant. See "Which Qdrant the app talks to".
 

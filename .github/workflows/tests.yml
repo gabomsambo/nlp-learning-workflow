@@ -89,6 +89,37 @@ jobs:
       - name: Run cloud reader tests
         run: node --test cloud/reader/test/*.test.mjs
 
+  playground-runner:
+    name: playground runner (real kernels)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docker/playground-runner/requirements.txt
+
+      # The runner image's own pinned set, not the web app's lock: these tests
+      # start real Jupyter kernels, which the app's environment does not carry.
+      # test_kernel_live.py skips in the `tests` job for that reason; this is
+      # where it runs. The Docker build-and-run check runs in `tests`, where
+      # Docker is available.
+      - name: Install runner dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r docker/playground-runner/requirements.txt \
+            pytest==9.1.1 pytest-asyncio==1.4.0 pytest-cov==7.1.0 httpx==0.28.1
+
+      - name: Run runner tests
+        run: |
+          pytest -v --tb=short \
+            tests/playground_runner/test_kernel_live.py \
+            tests/playground_runner/test_api.py \
+            tests/playground_runner/test_outputs.py \
+            tests/playground_runner/test_offline_data.py
+
   tests:
     name: pytest (Python 3.12)
     runs-on: ubuntu-latest

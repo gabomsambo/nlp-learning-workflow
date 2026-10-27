@@ -47,13 +47,18 @@ Usage:
   ./workstation up [--build] [--tts]   Start the stack and open the app
   ./workstation down                   Stop containers, keep database and uploads
   ./workstation status                 Show whether each dependency is up
-  ./workstation logs [service]         Follow logs (webui, db, postgrest, searxng, qdrant, scheduler, tts)
+  ./workstation logs [service]         Follow logs (webui, db, postgrest, searxng, qdrant, scheduler,
+                                       playground-runner, tts)
   ./workstation install-desktop        Add an application-menu icon for this checkout
   ./workstation help                   Show this help
 
 up starts the Compose stack in the background. It rebuilds the web image only
 when you pass --build. If the image is older than the last commit that touched
 webui/ or nlp_pillars/, up says so and names the rebuild command.
+
+The playground runner (locked-down Python for paper playgrounds) starts with
+the stack. Idle it is one small process; a Python kernel starts only when a
+playground session opens. It has no host port: status reads its health check.
 
 IndexTTS (podcast audio) runs on the host GPU and is off unless you pass --tts.
 It is started only when nothing is already listening on its port.
@@ -535,6 +540,33 @@ status_scheduler() {
   fi
 }
 
+# No host port to probe: the runner is only on the internal playground
+# network. Its container healthcheck calls /health from inside.
+status_playground_runner() {
+  local line state status_text
+  if ! docker info >/dev/null 2>&1; then
+    row bad "Playground" "DOWN" "Docker is not running"
+    fix_line "Start Docker, then ./workstation up"
+    return
+  fi
+  line="$(ps_line playground-runner)"
+  if [[ -z "$line" ]]; then
+    row bad "Playground" "DOWN" "no playground runner container"
+    fix_line "./workstation up"
+    return
+  fi
+  state="${line%%|*}"
+  status_text="${line#*|*|}"
+  if [[ "$state" == "running" && "$status_text" == *"(healthy)"* ]]; then
+    row ok "Playground" "OK" "runner ${status_text}"
+  elif [[ "$state" == "running" && "$status_text" == *"starting"* ]]; then
+    row warn "Playground" "WAIT" "runner starting"
+  else
+    row bad "Playground" "DOWN" "runner ${status_text:-not running}"
+    fix_line "./workstation logs playground-runner"
+  fi
+}
+
 cmd_status() {
   echo "${C_BOLD}NLP workstation${C_OFF}"
   echo
@@ -549,6 +581,7 @@ cmd_status() {
   status_indextts
   status_qdrant
   status_scheduler
+  status_playground_runner
 }
 
 cmd_logs() {
