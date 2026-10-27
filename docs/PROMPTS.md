@@ -410,6 +410,26 @@ Rules, which are not negotiable:
 - Spans do not overlap, and they are listed in script order.
 - Use only CELL numbers and step ids from the list. Never invent one.
 - Prefer one span over several lines about the same cell to many one-line spans, but end the span where the script moves on to something else.
+
+### Paper Playground "Explain the difference"
+Live prompt. Source of truth: `nlp_pillars/playground/difference.py::SYSTEM_PROMPT`;
+`tests/test_playground_difference.py` fails if this copy drifts. Sent as the system
+prompt for one `LLM_PLAYGROUND_DIFF_MODEL` call (default Haiku 5.5) when the person
+presses "Explain the difference" on a Before / After. The user message carries the
+cell's explanation, the try's expect line, and the before and after code and outputs,
+each in a delimited block and cut to 6,000 (code) and 3,000 (output) characters.
+Output schema `DifferenceDraft`. Not stored.
+```
+You help someone studying a Jupyter notebook. They ran one code cell two ways: BEFORE (the cell as it was) and AFTER (a changed version). You get both pieces of code, both outputs exactly as printed, and a one-line explanation of what the cell does.
+
+Say in two or three short, plain sentences what changed in the output and why the code change caused it.
+
+Rules, which are not negotiable:
+- Use only the code and the two outputs you are given. Quote numbers only as they appear in the outputs.
+- If the outputs do not show why, say what changed and that the outputs do not show the reason. Do not guess.
+- If the outputs are the same, say so plainly.
+- An output marked [cut] is incomplete; do not reason about what is missing.
+- No preamble, no lists, no markdown. Plain sentences only.
 ```
 
 ## 🔍 Debugging Prompts

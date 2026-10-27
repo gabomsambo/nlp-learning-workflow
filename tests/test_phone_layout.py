@@ -50,3 +50,28 @@ def test_playground_cards_scroll_inside_themselves_on_a_phone():
     assert ".pg-import-row .btn { min-height: 40px; }" in phone
     # The tab is highlighted like the others when it is the target.
     assert '.paper-page:has(.panel-playground:target) .tabs a[data-panel="playground"]' in CSS
+
+
+def test_live_playground_controls_fit_a_phone():
+    # Before / After sits side by side on a desktop and stacks on a phone; both
+    # columns can shrink below their longest output line.
+    ba = CSS.split(".pg-ba {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in ba
+    assert "min-width: 0" in ba
+    for rule in (".pg-ba-col {", ".pg-try-result {", ".pg-compare {", ".pg-saved,\n.pg-live {"):
+        block = CSS.split(rule, 1)[1].split("}", 1)[0]
+        assert "grid-template-columns: minmax(0, 1fr)" in block
+        assert "min-width: 0" in block
+    # The editor scrolls inside itself; its text column may shrink.
+    editor = CSS.split(".pg-editor {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: auto minmax(0, 1fr)" in editor
+    assert "overflow" in CSS.split(".pg-ta {", 1)[1].split("}", 1)[0]
+    # Toolbars and the session bar wrap instead of pushing the page sideways.
+    for rule in (".pg-session {", ".pg-toolbar {", ".pg-run-status {"):
+        assert "flex-wrap: wrap" in CSS.split(rule, 1)[1].split("}", 1)[0]
+    phone = CSS.split("@media (max-width: 859px) {\n  .pg-card", 1)[1].split("\n}", 1)[0]
+    assert ".pg-ba { grid-template-columns: minmax(0, 1fr); }" in phone
+    assert ".pg-editor { font-size: 16px; }" in phone  # no focus zoom
+    for selector in (".pg-session .btn", ".pg-toolbar .btn", ".pg-run-status .btn", ".pg-try-notice .btn"):
+        assert selector in phone
+    assert "min-height: 40px" in phone

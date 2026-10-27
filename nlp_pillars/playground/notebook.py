@@ -200,6 +200,54 @@ def output_view(output: Dict[str, Any]) -> Dict[str, Any]:
     return {"kind": "unsupported", "mime": [str(kind)]}
 
 
+def runner_output_view(output: Dict[str, Any]) -> Dict[str, Any]:
+    """One live output from the playground runner, in the same shape as a saved one.
+
+    The runner answers with its own shapes (docs/PLAYGROUND_RUNNER.md); its
+    ``html`` is untrusted and raw. The execute proxy passes every output
+    through here, so the tab renders saved and live outputs with one renderer
+    and raw HTML never reaches the browser. The runner has already capped the
+    size; a cut output keeps ``truncated``.
+    """
+    kind = output.get("type")
+    cut = {"truncated": True} if output.get("truncated") else {}
+    if kind == "stream":
+        return {
+            "kind": "stream",
+            "name": "stderr" if output.get("name") == "stderr" else "stdout",
+            "text": strip_ansi(joined(output.get("text"))),
+            **cut,
+        }
+    if kind == "text":
+        return {"kind": "text", "text": joined(output.get("text")), **cut}
+    if kind == "error":
+        trace = strip_ansi(joined(output.get("traceback")))
+        head = f"{output.get('ename', 'Error')}: {output.get('evalue', '')}"
+        return {"kind": "error", "text": trace or head, **cut}
+    plain = output.get("text")
+    plain = joined(plain) if plain is not None else None
+    if kind == "html":
+        tree, truncated = sanitize_html(joined(output.get("html")))
+        if tree:
+            view: Dict[str, Any] = {"kind": "html", "tree": tree}
+            if truncated or cut:
+                view["truncated"] = True
+            if plain is not None:
+                view["plain"] = plain
+            return view
+        if plain is not None:
+            return {"kind": "text", "text": plain, **cut}
+        return {"kind": "unsupported", "mime": ["text/html"]}
+    if kind == "image":
+        png = _png(output.get("data")) if output.get("mime") == "image/png" else None
+        if png:
+            return {"kind": "png", "data": png, "alt": (plain or "Figure")[:200]}
+        if plain is not None:
+            return {"kind": "text", "text": plain, **cut}
+        return {"kind": "unsupported", "mime": [str(output.get("mime") or "image")]}
+    return {"kind": "unsupported", "mime": [str(kind)]}
+
+
 _TABLE_RULE = re.compile(r"^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*(:?-{3,}:?)?\s*$")
 
 

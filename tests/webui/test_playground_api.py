@@ -276,3 +276,96 @@ def test_playground_js_never_uses_innerhtml():
     assert "innerHTML" not in code
     assert "insertAdjacentHTML" not in code
     assert "outerHTML" not in code
+
+
+# -- explain the difference --------------------------------------------------------
+
+from nlp_pillars.playground import difference  # noqa: E402
+
+DIFF_BODY = {
+    "before_code": "print(df.shape)",
+    "after_code": "print(df.head(10).shape)",
+    "before_output": "(1000, 4)",
+    "after_output": "(10, 4)",
+    "explanation": "Shows the table's size.",
+    "expect": "Only ten rows are counted.",
+}
+
+
+def test_explain_difference_returns_the_sentences_and_stores_nothing(client, monkeypatch):
+    seen = {}
+
+    def fake(**fields):
+        seen.update(fields)
+        return difference.Difference(explanation="head(10) keeps ten rows, so the shape is (10, 4).",
+                                     model="claude-haiku-5-5", cost_usd=0.0004)
+
+    monkeypatch.setattr(difference, "explain_difference", fake)
+    for name in ("get", "get_for_paper", "save_steps", "update"):
+        if hasattr(store, name):
+            monkeypatch.setattr(store, name, MagicMock(side_effect=AssertionError("no database")))
+    res = client.post(f"/api/playgrounds/{PG_ID}/explain-difference", json=DIFF_BODY)
+    assert res.status_code == 200
+    assert res.json() == {
+        "explanation": "head(10) keeps ten rows, so the shape is (10, 4).",
+        "model": "claude-haiku-5-5",
+        "cost_usd": 0.0004,
+    }
+    assert seen == DIFF_BODY
+
+
+def test_explain_difference_with_a_mocked_model_sends_the_outputs(client, monkeypatch):
+    from nlp_pillars import llm_client
+
+    calls = []
+
+    def fake_structured(route, system, user, out_model, **kwargs):
+        calls.append({"route": route, "user": user, "out_model": out_model})
+        return llm_client.StructuredCall(
+            stage=route.stage, provider="anthropic", model="claude-haiku-5-5",
+            parsed=out_model(explanation="The shape went from (1000, 4) to (10, 4)."),
+            input_tokens=300, output_tokens=30, cost_usd=0.000045,
+        )
+
+    monkeypatch.setattr(difference, "structured", fake_structured)
+    res = client.post(f"/api/playgrounds/{PG_ID}/explain-difference", json=DIFF_BODY)
+    assert res.status_code == 200
+    assert res.json()["explanation"] == "The shape went from (1000, 4) to (10, 4)."
+    assert len(calls) == 1
+    assert calls[0]["route"].stage == "playground_diff"
+    for part in ("(1000, 4)", "(10, 4)", "print(df.shape)", "head(10)", "Shows the table's size."):
+        assert part in calls[0]["user"]
+
+
+def test_explain_difference_maps_failures(client, monkeypatch):
+    def unavailable(**_):
+        raise difference.DifferenceUnavailable("ANTHROPIC_API_KEY environment variable is required")
+
+    monkeypatch.setattr(difference, "explain_difference", unavailable)
+    res = client.post(f"/api/playgrounds/{PG_ID}/explain-difference", json=DIFF_BODY)
+    assert res.status_code == 503
+    assert "ANTHROPIC_API_KEY" in res.json()["detail"]
+
+    def failed(**_):
+        raise difference.DifferenceError("The model could not explain this difference: refusal")
+
+    monkeypatch.setattr(difference, "explain_difference", failed)
+    res = client.post(f"/api/playgrounds/{PG_ID}/explain-difference", json=DIFF_BODY)
+    assert res.status_code == 502
+    assert "could not explain" in res.json()["detail"]
+
+
+def test_explain_difference_validates_before_calling(client, monkeypatch):
+    monkeypatch.setattr(difference, "explain_difference", MagicMock(side_effect=AssertionError("no call")))
+    assert client.post("/api/playgrounds/not-a-uuid/explain-difference", json=DIFF_BODY).status_code == 404
+    assert client.post(f"/api/playgrounds/{PG_ID}/explain-difference", json={"after_code": "x"}).status_code == 422
+    huge = dict(DIFF_BODY, before_output="x" * 200_001)
+    assert client.post(f"/api/playgrounds/{PG_ID}/explain-difference", json=huge).status_code == 422
+
+
+def test_explain_difference_is_behind_the_spend_guard():
+    from webui.routers.api import playgrounds
+    from webui.services.spend_guard import require_spend_room
+
+    route = next(r for r in playgrounds.router.routes if r.path.endswith("/explain-difference"))
+    assert any(d.dependency is require_spend_room for d in route.dependencies)

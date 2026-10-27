@@ -24,8 +24,9 @@ Every stage is overridable by env without touching code:
 ``LLM_SUMMARIZE_MODEL``, ``LLM_SYNTHESIZE_MODEL``, ``LLM_QUIZ_MODEL``,
 ``LLM_DISCOVER_MODEL``, ``LLM_CONCEPTS_MODEL``,
 ``LLM_PODCAST_EXTRACTION_MODEL``, ``LLM_PODCAST_SYNTHESIS_MODEL``, the
-``LLM_FACTCHECK_*`` trio, ``LLM_PLAYGROUND_MODEL`` and
-``LLM_PLAYGROUND_ALIGN_MODEL``. The older ``PODCAST_*_MODEL`` and
+``LLM_FACTCHECK_*`` trio, ``LLM_PLAYGROUND_MODEL``,
+``LLM_PLAYGROUND_ALIGN_MODEL`` and ``LLM_PLAYGROUND_DIFF_MODEL``. The older
+``PODCAST_*_MODEL`` and
 ``FACTCHECK_*_MODEL`` names still work and are consulted second, so an
 existing ``.env`` keeps working.
 
@@ -326,6 +327,20 @@ PLAYGROUND_ALIGN_ROUTE = ModelRoute(
     thinking="disabled",
 )
 
+#: "Explain the difference" on a Playground Before / After
+#: (nlp_pillars/playground/difference.py): two or three sentences, on demand,
+#: so the cheapest model. No fallback: a failure says so and the person can
+#: press the button again, rather than one click quietly costing Sonnet.
+PLAYGROUND_DIFF_ROUTE = ModelRoute(
+    stage="playground_diff",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=None,
+    model_attrs=("llm_playground_diff_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
 
 def route_for(stage: str) -> ModelRoute:
     """The route for a stage name. Raises for an unknown stage."""
@@ -344,6 +359,7 @@ def route_for(stage: str) -> ModelRoute:
             FACTCHECK_REJUDGE,
             PLAYGROUND_ROUTE,
             PLAYGROUND_ALIGN_ROUTE,
+            PLAYGROUND_DIFF_ROUTE,
         )
     }
     try:

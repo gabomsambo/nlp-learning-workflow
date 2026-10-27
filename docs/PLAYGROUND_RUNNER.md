@@ -225,7 +225,11 @@ so the reason a cell failed is never lost; their traceback is cut to 64 KB.
 | `POST /api/playground/runner/sessions/{id}/restart` | `POST /sessions/{id}/restart` |
 | `DELETE /api/playground/runner/sessions/{id}` | `DELETE /sessions/{id}` |
 
-Bodies pass through unchanged. Status codes: the runner's 4xx pass through
+Bodies pass through unchanged, with one exception: execute's `outputs` come
+back in the Playground tab's view shape (`kind`: `stream`, `text`, `error`,
+`html` as a sanitized tag tree, `png`), the same shape as a saved output
+(`nlp_pillars/playground/notebook.py::runner_output_view`). The runner's raw
+`html` never reaches the browser. Status codes: the runner's 4xx pass through
 with its `detail`; **503** when the runner cannot be reached (the `detail`
 names the URL and says to run `./workstation up` or
 `docker compose up -d playground-runner`) or could not start a kernel;
