@@ -13,6 +13,7 @@ them. Later PRs extend it; keep it short and exact.
 | Explain the difference | `nlp_pillars/playground/difference.py`, `POST /api/playgrounds/{id}/explain-difference` |
 | Prompt | `nlp_pillars/playground/explain.py::SYSTEM_PROMPT`, copied in `docs/PROMPTS.md` |
 | Sandbox (running code) | [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md) |
+| Setup code | `playgrounds.setup_code`, `docs/migrations/030_playground_setup_code.sql` (hand-applied); `nlp_pillars/playground/setup.py`; `PUT /api/playgrounds/{id}/setup` |
 | Follow-along (Listen page) | `playground_links`, `docs/migrations/029_playground_links.sql` (hand-applied); `nlp_pillars/playground/{follow,links}.py`; `webui/routers/api/follow_along.py`; `webui/static/follow-along.js` |
 
 Until migration 028 is applied, the tab and the CLI say so and name the file;
@@ -36,6 +37,7 @@ place, keeps the row id, and clears `steps`.
 | `status` | text | `imported`, `ready`, `partial` or `failed`. |
 | `model` | text | Model(s) that wrote `steps`, after any fallback. |
 | `error` | text | Why the last pass was partial or failed. |
+| `setup_code` | text | Code run before any cell (below). NULL: never saved, so the suggestion runs. Migration 030. |
 | `created_at`, `updated_at` | timestamptz | |
 
 `steps`:
@@ -168,10 +170,49 @@ runner had to restart empties that record. A run that hits the time limit
 offers to run again with double the limit, up to `max_exec_timeout_s`.
 Shift+Enter runs the focused cell (or the try it is in).
 
-Before sending, the tab removes indentation that every non-blank,
-non-comment line of a cell shares. Older Jupyter did this itself, so saved
-notebooks can hold cells such as `"  x = 1\n  print(x)"` that ran there and
-are an `IndentationError` for the runner's IPython.
+**Leading indent.** The runner strips a cell's leading indent the way
+Jupyter did when most notebooks were written (IPython 8 and earlier): the
+first line's leading whitespace is removed from every line that starts with
+it. IPython 9 only removes an indent *every* line shares, comments included,
+so a cell such as `"  x = 1\n  print(x)\n# note"` ran in Jupyter but is an
+`IndentationError` there. The kernel's own transform is replaced at start
+(`docker/playground-runner/playground_runner/indent.py`), so Run, Run up to
+here, a try and edited code all get it. A cell whose first line is not
+indented is left alone.
+
+## Setup code
+
+A short block the runner runs at the start of every session and after every
+Restart (including a restart the runner does itself after a timeout or a dead
+kernel), before any cell. It is for the imports a notebook uses but never
+wrote down, usually because the import cell was deleted before the notebook
+was saved.
+
+**Suggestion.** `nlp_pillars/playground/setup.py::suggest_setup` parses every
+code cell (`%` and `!` lines ignored, leading indent stripped, cells that do
+not parse skipped) and collects names that are loaded but never assigned,
+defined or imported anywhere in the notebook. Scope is ignored: a name bound
+anywhere counts as defined. Only names in `KNOWN_IMPORTS` become import lines
+(`np`, `pd`, `plt`, `sns`, `display`, common scikit-learn estimators and
+helpers such as `IsolationForest`, a few standard-library modules); any other
+missing name is never guessed. The import stores the suggestion in
+`setup_code`; a re-import replaces it with the new notebook's.
+
+**Tab.** A collapsed "Setup" card at the top of the tab shows the code, an
+editor, Save (`PUT /api/playgrounds/{id}/setup` with `{"setup_code": …}`;
+`null` goes back to the suggestion) and "Reset to suggested", which puts the
+suggestion back in the editor. A saved change runs from the next start or
+Restart. The tab sends the code with `POST /sessions` and
+`POST /sessions/{id}/restart`; the runner reports how it went as `setup`
+(`none`, `ok`, or `error` with `ename`/`evalue`) on the session, and a
+failure is shown on the session bar and the card. It does not stop the
+session from starting and does not use up an `In [n]` number.
+
+`GET /api/playgrounds` returns `setup_code`, `setup_suggested` and
+`setup_migration`. Until migration 030 is applied, `setup_migration` names
+`docs/migrations/030_playground_setup_code.sql`, the import saves the notebook
+without setup code, the tab still runs the suggestion, and Save answers 503
+naming the file.
 
 **Outputs.** The execute proxy turns runner outputs into the same view shape
 as saved ones (`notebook.py::runner_output_view`), so `text/html` goes through

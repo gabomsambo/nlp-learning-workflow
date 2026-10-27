@@ -32,6 +32,11 @@ MPL_CACHE_SEED = Path("/opt/matplotlib-cache")
 
 class CreateSessionRequest(BaseModel):
     playground_id: str = Field(..., min_length=1, max_length=128)
+    setup_code: str = ""
+
+
+class RestartRequest(BaseModel):
+    setup_code: Optional[str] = None
 
 
 class ExecuteRequest(BaseModel):
@@ -88,6 +93,10 @@ def create_app(config: Optional[RunnerConfig] = None, kernel_factory: Optional[K
     app.state.manager = manager
     app.state.config = config
 
+    def check_code_size(code: Optional[str], what: str) -> None:
+        if code is not None and len(code.encode("utf-8")) > config.max_code_bytes:
+            raise HTTPException(status_code=413, detail=f"{what} is larger than {config.max_code_bytes} bytes")
+
     def not_found(session_id: str) -> HTTPException:
         return HTTPException(status_code=404, detail=f"No session {session_id}. It may have been closed after being idle.")
 
@@ -125,8 +134,9 @@ def create_app(config: Optional[RunnerConfig] = None, kernel_factory: Optional[K
                 status_code=422,
                 detail="playground_id may contain only letters, digits, '.', '_' and '-', and must start with a letter or digit.",
             )
+        check_code_size(body.setup_code, "setup_code")
         try:
-            session = await manager.create(body.playground_id)
+            session = await manager.create(body.playground_id, body.setup_code)
         except TooManySessions as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except Exception as exc:
@@ -136,8 +146,7 @@ def create_app(config: Optional[RunnerConfig] = None, kernel_factory: Optional[K
 
     @app.post("/sessions/{session_id}/execute")
     async def execute(session_id: str, body: ExecuteRequest) -> Dict[str, Any]:
-        if len(body.code.encode("utf-8")) > config.max_code_bytes:
-            raise HTTPException(status_code=413, detail=f"code is larger than {config.max_code_bytes} bytes")
+        check_code_size(body.code, "code")
         timeout_s = body.timeout_s if body.timeout_s is not None else config.exec_timeout_s
         if timeout_s > config.max_exec_timeout_s:
             raise HTTPException(
@@ -165,9 +174,11 @@ def create_app(config: Optional[RunnerConfig] = None, kernel_factory: Optional[K
             raise not_found(session_id) from None
 
     @app.post("/sessions/{session_id}/restart")
-    async def restart(session_id: str) -> Dict[str, Any]:
+    async def restart(session_id: str, body: Optional[RestartRequest] = None) -> Dict[str, Any]:
+        setup_code = body.setup_code if body is not None else None
+        check_code_size(setup_code, "setup_code")
         try:
-            return await manager.restart(session_id)
+            return await manager.restart(session_id, setup_code)
         except SessionNotFound:
             raise not_found(session_id) from None
         except Exception as exc:

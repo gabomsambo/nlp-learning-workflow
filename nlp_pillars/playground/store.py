@@ -11,12 +11,15 @@ never "the read failed".
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .. import db
-from . import MIGRATION
+from . import MIGRATION, SETUP_MIGRATION
+
+logger = logging.getLogger(__name__)
 
 TABLE = "playgrounds"
 
@@ -44,6 +47,10 @@ class PlaygroundTableMissing(PlaygroundStoreError):
     """Migration 028 has not been applied to this database."""
 
 
+class PlaygroundSetupColumnMissing(PlaygroundStoreError):
+    """Migration 030 (``playgrounds.setup_code``) has not been applied."""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -56,8 +63,21 @@ def _is_missing_table(error: Any) -> bool:
     )
 
 
+def _is_missing_setup_column(error: Any) -> bool:
+    text = str(error).lower()
+    return "setup_code" in text and any(
+        token in text
+        for token in ("pgrst204", "schema cache", "does not exist", "could not find")
+    )
+
+
 def store_error(error: Any, action: str) -> PlaygroundStoreError:
-    """Classify a PostgREST error. A missing table names the migration."""
+    """Classify a PostgREST error. A missing table or column names its migration."""
+    if _is_missing_setup_column(error):
+        return PlaygroundSetupColumnMissing(
+            f"Setup code is not set up in this database yet ({error}). "
+            f"Apply {SETUP_MIGRATION} by hand."
+        )
     if _is_missing_table(error):
         return PlaygroundTableMissing(
             f"Playgrounds are not set up in this database yet ({error}). "
@@ -151,13 +171,43 @@ def save_import(
     notebook: Dict[str, Any],
     notebook_name: str,
     datasets: List[Dict[str, Any]],
+    setup_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Insert or replace the paper's playground with a freshly imported notebook.
 
     One current playground per paper (``UNIQUE (paper_id)``). A re-import
     keeps the row id and clears the study guide, because the guide described
-    the notebook being replaced.
+    the notebook being replaced. ``setup_code`` (the suggestion for the new
+    notebook) replaces the stored one; a database without migration 030
+    saves the notebook without it.
     """
+    try:
+        return _save_import_row(
+            playground_id=playground_id, paper_id=paper_id, title=title,
+            notebook=notebook, notebook_name=notebook_name, datasets=datasets,
+            setup_code=setup_code,
+        )
+    except PlaygroundSetupColumnMissing as exc:
+        if setup_code is None:
+            raise
+        logger.warning("Playground %s: setup code not stored: %s", playground_id, exc)
+        return _save_import_row(
+            playground_id=playground_id, paper_id=paper_id, title=title,
+            notebook=notebook, notebook_name=notebook_name, datasets=datasets,
+            setup_code=None,
+        )
+
+
+def _save_import_row(
+    *,
+    playground_id: str,
+    paper_id: str,
+    title: str,
+    notebook: Dict[str, Any],
+    notebook_name: str,
+    datasets: List[Dict[str, Any]],
+    setup_code: Optional[str],
+) -> Dict[str, Any]:
     client = db.get_client()
     now = _now()
     row = {
@@ -174,6 +224,8 @@ def save_import(
         "error": None,
         "updated_at": now,
     }
+    if setup_code is not None:
+        row["setup_code"] = setup_code
     try:
         response = client.client.post(
             f"{client.base_url}/{TABLE}",
@@ -201,6 +253,12 @@ def _patch(playground_id: str, fields: Dict[str, Any], action: str) -> None:
         db.get_client().table(TABLE).eq("id", playground_id).update(fields)
     except Exception as exc:  # noqa: BLE001 - update() raises on HTTP errors
         raise store_error(_http_error_text(exc), action) from exc
+
+
+def save_setup(playground_id: str, setup_code: Optional[str]) -> None:
+    """Store the setup code; None goes back to the suggestion. Raises
+    :class:`PlaygroundSetupColumnMissing` before migration 030."""
+    _patch(playground_id, {"setup_code": setup_code}, "Could not save the setup code")
 
 
 def save_datasets(playground_id: str, datasets: List[Dict[str, Any]]) -> None:

@@ -369,3 +369,58 @@ def test_explain_difference_is_behind_the_spend_guard():
 
     route = next(r for r in playgrounds.router.routes if r.path.endswith("/explain-difference"))
     assert any(d.dependency is require_spend_room for d in route.dependencies)
+
+
+# -- setup code --------------------------------------------------------------------
+
+NEEDS_NP = {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": [
+    {"cell_type": "code", "source": "np.where(x > 1)", "metadata": {}, "outputs": [], "execution_count": 1},
+]}
+
+
+def test_get_carries_the_saved_and_suggested_setup_code(client, monkeypatch):
+    monkeypatch.setattr(store, "get_for_paper", lambda pid, with_notebook=False: _row(notebook=NEEDS_NP, setup_code=None))
+    monkeypatch.setattr(store, "latest_explain_run", lambda pid: None)
+    pg = client.get("/api/playgrounds", params={"paper_id": "arxiv:1"}).json()["playground"]
+    assert pg["setup_code"] is None
+    assert pg["setup_suggested"] == "import numpy as np\n"
+    assert pg["setup_migration"] is None
+
+
+def test_get_names_migration_030_when_the_column_is_missing(client, monkeypatch):
+    monkeypatch.setattr(store, "get_for_paper", lambda pid, with_notebook=False: _row(notebook=NEEDS_NP))
+    monkeypatch.setattr(store, "latest_explain_run", lambda pid: None)
+    pg = client.get("/api/playgrounds", params={"paper_id": "arxiv:1"}).json()["playground"]
+    assert pg["setup_migration"] == "docs/migrations/030_playground_setup_code.sql"
+    # The suggestion is still offered, and the tab still runs it.
+    assert pg["setup_suggested"] == "import numpy as np\n"
+
+
+def test_put_setup_saves_it(client, monkeypatch):
+    saved = []
+    monkeypatch.setattr(store, "get", lambda pid, with_notebook=True: _row(notebook=NEEDS_NP))
+    monkeypatch.setattr(store, "save_setup", lambda pid, code: saved.append((pid, code)))
+    res = client.put(f"/api/playgrounds/{PG_ID}/setup", json={"setup_code": "import numpy as np\nimport pandas as pd\n"})
+    assert res.status_code == 200
+    assert saved == [(PG_ID, "import numpy as np\nimport pandas as pd\n")]
+    assert res.json()["setup_suggested"] == "import numpy as np\n"
+    client.put(f"/api/playgrounds/{PG_ID}/setup", json={"setup_code": None})
+    assert saved[-1] == (PG_ID, None)
+
+
+def test_put_setup_names_migration_030_when_the_column_is_missing(client, monkeypatch):
+    monkeypatch.setattr(store, "get", lambda pid, with_notebook=True: _row())
+
+    def missing(pid, code):
+        raise store.PlaygroundSetupColumnMissing("Apply docs/migrations/030_playground_setup_code.sql by hand.")
+
+    monkeypatch.setattr(store, "save_setup", missing)
+    res = client.put(f"/api/playgrounds/{PG_ID}/setup", json={"setup_code": "x"})
+    assert res.status_code == 503
+    assert "030_playground_setup_code.sql" in res.json()["detail"]
+
+
+def test_put_setup_for_an_unknown_or_malformed_id_is_404(client, monkeypatch):
+    monkeypatch.setattr(store, "get", lambda pid, with_notebook=True: None)
+    assert client.put(f"/api/playgrounds/{PG_ID}/setup", json={"setup_code": "x"}).status_code == 404
+    assert client.put("/api/playgrounds/nope/setup", json={"setup_code": "x"}).status_code == 404

@@ -548,6 +548,9 @@ CREATE TABLE playgrounds (
         CHECK (status IN ('imported', 'ready', 'partial', 'failed')),
     model         TEXT,
     error         TEXT,
+    -- docs/migrations/030_playground_setup_code.sql. Run before any cell on
+    -- every runner start and restart. NULL: use the suggestion.
+    setup_code    TEXT,
     created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
     updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
 );

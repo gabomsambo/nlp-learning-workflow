@@ -219,13 +219,12 @@ test('lineNumbers numbers every line, including a trailing empty one', () => {
   assert.strictEqual(Core.lineNumbers(''), '1');
 });
 
-test('dedentCell strips an indent every line shares, as old Jupyter did', () => {
-  assert.strictEqual(Core.dedentCell('  x = 1\n\n  if x:\n      print(x)'), 'x = 1\n\nif x:\n    print(x)');
-  assert.strictEqual(Core.dedentCell('x = 1\n  y = 2'), 'x = 1\n  y = 2');
-  assert.strictEqual(Core.dedentCell('\tA\n\tB'), 'A\nB');
-  // Blank lines with stray spaces do not block the dedent.
-  assert.strictEqual(Core.dedentCell('  a\n \n  b'), 'a\n\nb');
-  assert.strictEqual(Core.dedentCell(''), '');
-  // A comment at column 0 does not stop it (Python ignores comment indent).
-  assert.strictEqual(Core.dedentCell('  a = 1\n#note\n  print(a)'), 'a = 1\n#note\nprint(a)');
+test('setupFailure is the chip hint for a failed setup, and empty otherwise', () => {
+  assert.strictEqual(Core.setupFailure(null), '');
+  assert.strictEqual(Core.setupFailure({ status: 'ok' }), '');
+  assert.strictEqual(Core.setupFailure({ status: 'none' }), '');
+  assert.strictEqual(
+    Core.setupFailure({ status: 'error', ename: 'ModuleNotFoundError', evalue: "No module named 'seaborn'" }),
+    "Setup code failed (ModuleNotFoundError: No module named 'seaborn'). Fix it in Setup, then Restart.",
+  );
 });

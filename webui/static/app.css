@@ -2801,6 +2801,11 @@ html[data-theme="cockpit"] .episode-card {
 .pg-datasets ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); font-size: var(--fs-caption); }
 .pg-datasets li { overflow-wrap: anywhere; }
 .pg-datasets li.is-error { color: var(--danger); }
+.pg-setup { min-width: 0; }
+.pg-setup > * + * { margin-top: var(--space-2); }
+.pg-setup summary { cursor: pointer; color: var(--muted); font-size: var(--fs-ui); }
+.pg-setup-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pg-setup-note.is-error { color: var(--danger); }
 .pg-error {
   margin: 0;
   padding: var(--space-3) var(--space-4);

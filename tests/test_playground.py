@@ -747,8 +747,14 @@ def test_migration_and_schema_agree_on_the_table_columns():
         body = sql.split(head, 1)[1].split("\n);", 1)[0]
         return [line.split()[0] for line in body.splitlines()
                 if re.match(r"\s{4}[a-z_]+\s", line)]
-    assert columns(MIGRATION_SQL, "CREATE TABLE IF NOT EXISTS playgrounds (") == \
-        columns(SCHEMA, "CREATE TABLE playgrounds (")
+    # 030 adds setup_code to the table 028 created.
+    later = re.findall(
+        r"ALTER TABLE playgrounds ADD COLUMN IF NOT EXISTS ([a-z_]+)",
+        (ROOT / "docs/migrations/030_playground_setup_code.sql").read_text(),
+    )
+    assert later == ["setup_code"]
+    assert sorted(columns(MIGRATION_SQL, "CREATE TABLE IF NOT EXISTS playgrounds (") + later) == \
+        sorted(columns(SCHEMA, "CREATE TABLE playgrounds ("))
 
 
 def _runs_table(index_pattern):

@@ -140,12 +140,18 @@ A `<session>` is:
 | `last_active_at` | string | ISO 8601, UTC. Idle reaping counts from here. |
 | `busy` | bool | Code is running now. |
 | `execution_count` | int | Last execution number; 0 after a restart. |
+| `setup` | object | The setup code on the last (re)start: `{"status": "none"}`, `{"status": "ok"}`, or `{"status": "error", "ename": "…", "evalue": "…"}`. |
 
 ### `POST /sessions`
 
-Request: `{"playground_id": "<id>"}`. Starts a kernel (a few seconds) and
-answers **201** with a `<session>`. Errors: **422** bad `playground_id`,
-**429** `max_sessions` already open, **503** the kernel could not start.
+Request: `{"playground_id": "<id>", "setup_code": "<python>"}`
+(`setup_code` optional, default empty). Starts a kernel (a few seconds), runs
+the setup code (silently, under `exec_timeout_s`, not counted as an
+execution) and answers **201** with a `<session>`. The setup code runs again
+on every restart, including one the runner does itself. A setup failure is
+reported in `setup`, not as an error status. Errors: **413** `setup_code`
+larger than `max_code_bytes`, **422** bad `playground_id`, **429**
+`max_sessions` already open, **503** the kernel could not start.
 
 ### `POST /sessions/{session_id}/execute`
 
@@ -153,7 +159,7 @@ Request:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `code` | string, required | Python source; IPython syntax (`%magic`, `!cmd`) works. |
+| `code` | string, required | Python source; IPython syntax (`%magic`, `!cmd`) works. A leading indent is stripped as Jupyter did (`playground_runner/indent.py`, see docs/PLAYGROUND.md). |
 | `timeout_s` | number, optional | Seconds, > 0 and ≤ `max_exec_timeout_s`. Default `exec_timeout_s`. |
 
 Response **200** (also for code that raised; check `status`):
@@ -193,8 +199,10 @@ error output. **404** unknown session.
 
 ### `POST /sessions/{session_id}/restart`
 
-Stops any running code, starts a fresh kernel (all variables gone) and re-runs
-the offline hook. Answers `{"session_id": "…", "restarted": true}`. **404**,
+Optional request: `{"setup_code": "<python>"}`, which replaces the session's
+setup code. Stops any running code, starts a fresh kernel (all variables gone)
+and re-runs the offline hook and the setup code. Answers
+`{"session_id": "…", "restarted": true, "setup": {…}}`. **404**, **413**,
 **503** when the new kernel does not start.
 
 ### `DELETE /sessions/{session_id}`
@@ -258,7 +266,7 @@ compile` command in the `.in` file's header. Rebuild with
 
 | File | Needs | Runs in CI |
 |---|---|---|
-| `tests/playground_runner/test_outputs.py`, `test_offline_data.py`, `test_api.py` | the app's test environment | `pytest`, `playground runner` jobs |
+| `tests/playground_runner/test_outputs.py`, `test_offline_data.py`, `test_api.py`, `test_indent.py` | the app's test environment | `pytest`, `playground runner` jobs |
 | `tests/playground_runner/test_compose_lockdown.py` | PyYAML | `pytest` job |
 | `tests/playground_runner/test_kernel_live.py` | the runner's requirements (real kernels) | `playground runner` job; skips elsewhere |
 | `tests/playground_runner/test_docker_integration.py` | Docker | wherever Docker is available; deselect with `-m "not docker"` |
