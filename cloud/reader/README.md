@@ -3,8 +3,8 @@
 A copy of the library for a phone or iPad, served from the personal Cloudflare
 account at `read.gabrielsambo.com` so it works with the computer off.
 It shows what `python -m nlp_pillars.cli cloud export` writes: Today, Library,
-Paper, Lessons and Listen (episodes with audio, read-along and fact-check
-highlights), and cards can be reviewed on it. `cloud publish` keeps it current; a review
+Paper (with a read-only Playground tab), Lessons and Listen (episodes with audio,
+read-along, fact-check highlights and the code drawer), and cards can be reviewed on it. `cloud publish` keeps it current; a review
 is the one thing that travels the other way. It has no offline mode and nothing that generates.
 
 Plan and reasoning: the cloud-reader report, sections 4, 7 and 9.
@@ -104,6 +104,39 @@ classic scripts, so the two pages cannot disagree about a line number, a word or
 verdict. The DOM and the `<audio>` element are the reader's. It remembers where you
 stopped and the playback speed in `localStorage`, and sets the lock-screen controls.
 Leaving the page stops the audio; there is no mini player yet.
+
+## Playground (read-only)
+
+A paper whose notebook has a study guide (`ready` or `partial`, docs/PLAYGROUND.md) gets a
+Playground tab: the steps, each code cell as a card with its explanation (Hide explanations
+for a self-quiz, Show explanation per card), the code with tap-a-line notes, the saved output,
+and each "try this" as a before/after diff with its expect line. Nothing runs on the phone, and
+the tab says so once. `#/paper/<id>/playground?cell=<n>` opens it at one cell.
+
+When an episode follows a notebook (a ready `playground_links` row), a Code drawer under the
+player shows the card for the code being talked about. It follows playback the way the desktop
+panel does, Pin keeps the card, and tapping it opens that cell on the Playground tab (leaving
+the episode, which stops it: there is no mini player). A mapping made for an older version of
+the script is not followed; the drawer says to match it again on the computer.
+
+- **In the bundle.** `playgrounds/<uuid>.json` per playground: title, status, steps (explanation,
+  line notes, tries, quiz), every cell's source, and saved outputs in the sanitized form the app's
+  tab uses (text, HTML as a tag tree, PNG). No notebook JSON, datasets, model or error. The paper
+  document carries a `playground` summary and each episode a `follow_along` list (spans, `stale`).
+  Same hashing as every other document, so an unchanged playground is not uploaded again.
+- **Caps.** Per playground, `CLOUD_PLAYGROUND_MAX_IMAGE_BYTES` (default 3 MB of base64 figure data)
+  and `CLOUD_PLAYGROUND_MAX_OUTPUT_BYTES` (1.5 MB of every other saved output, as JSON). What does
+  not fit is left out in notebook order, replaced by a `dropped` marker the card shows, counted in
+  the document's `dropped`, and named in the export report. A playground that would still pass the
+  8 MiB document limit, or that trips the secret guard (a key pasted into a cell), is left out
+  whole with a warning; the rest of the library still publishes.
+- **Shared code.** The cards are drawn by the app's `playground.js` (`renderCode`, `renderOutput`,
+  the sanitizer's `buildTree`) and the drawer's time -> span -> card lookup is `follow-along.js`'s
+  (`normalizeSpans`, `followAt`, `cardFor`, `availability`), both copied by `build-assets.sh`.
+- **Before migrations 028/029** the export publishes without playgrounds (or without follow-along)
+  and the report says which migration is missing.
+- **Offline.** There is no offline layer yet (below), so a playground is fetched like any other
+  document. When the offline step lands, a downloaded episode's `follow_along` docs belong in it.
 
 ## Reviewing on the phone
 
@@ -224,12 +257,15 @@ CF_ACCESS_CLIENT_SECRET=x python -m nlp_pillars.cli cloud pull-reviews`.
 ## Deploying
 
 `wrangler deploy` ships whatever branch it is run from, and the Worker's code and bindings come
-from that branch alone. Deploy from merged `main`, and apply the D1 migration first. A deploy
+from that branch alone. Deploy from merged `main`, and apply the D1 migration first. Deploy the
+Worker before the computer publishes a bundle with a new kind of key: a Worker older than the
+Playground refuses `playgrounds/<uuid>.json` (404 on `PUT /ingest/object`), and the publish fails
+and is retried until the deploy. A deploy
 from a branch that lacks `REVIEWS` drops the binding and `/api/reviews` answers 503 until the
 next deploy.
 
 ## Not here yet
 
 The offline service worker and install manifest (a page that is open keeps working without a
-connection; one that is closed needs it to load, and card text is fetched when the card is shown),
-and a mini player that outlives the page.
+connection; one that is closed needs it to load, and card text is fetched when the card is shown;
+playgrounds are fetched the same way), and a mini player that outlives the page.
