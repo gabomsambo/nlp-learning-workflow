@@ -54,6 +54,13 @@ containers and leaves the database and uploaded PDFs in place.
 that runs `up` in a terminal. Pass `--build` when the script says the web image
 is older than the code (`./workstation up --build`).
 
+The **playground runner** starts with the stack too. It runs notebook code
+for paper playgrounds in a locked-down container: no network, no host port,
+read-only root, memory/CPU/time limits. Idle it is one small process; a
+Python kernel starts only when a playground session opens. `./workstation
+status` shows it as **Playground**. Details, limits and its API:
+[docs/PLAYGROUND_RUNNER.md](docs/PLAYGROUND_RUNNER.md).
+
 `python get_started.py` is superseded by `./workstation`.
 
 `docker compose up -d --build` is the same stack, driven by Compose directly.
@@ -66,6 +73,8 @@ It brings up the services below, with the database schema applied automatically:
 | `searxng` | `nlp_searxng` | 8080 | Metasearch, used for paper discovery |
 | `qdrant` | `nlp_qdrant` | 6333/6334 | Local vector store — **offline option only**, see below |
 | `webui` | `nlp_webui` | 8000 | The FastAPI web UI |
+| `scheduler` | `nlp_scheduler` | — | Daily run; `Exited (0)` while `SCHEDULE_ENABLED=false` |
+| `playground-runner` | `nlp_playground_runner` | — (internal network only) | Locked-down Python for paper playgrounds |
 
 ```bash
 cp .env.example .env      # then edit — OPENAI_API_KEY and the Qdrant Cloud settings
@@ -310,7 +319,15 @@ pytest tests/test_agents.py
 
 # Run with coverage
 pytest --cov=nlp_pillars tests/
+
+# Skip the playground runner's Docker build-and-run check
+pytest tests/ -m "not docker"
 ```
+
+`tests/playground_runner/test_docker_integration.py` builds the runner image
+and runs it whenever Docker is available. `test_kernel_live.py` needs the
+runner's own dependencies and skips without them; see
+[docs/PLAYGROUND_RUNNER.md](docs/PLAYGROUND_RUNNER.md#tests).
 
 ## 🐛 Troubleshooting
 

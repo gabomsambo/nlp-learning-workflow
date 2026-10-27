@@ -98,7 +98,13 @@ asyncio_mode = "auto"
 # collapsed with `ModuleNotFoundError: No module named 'nlp_pillars'` on every
 # module — an undocumented constraint that cost the first CI run on this repo.
 # Requires pytest >= 7.
-pythonpath = ["."]
+#
+# docker/playground-runner is the runner image's own source root, so its
+# package (`playground_runner`) imports the same way in tests as in the image.
+pythonpath = [".", "docker/playground-runner"]
+markers = [
+    "docker: builds and runs the playground runner image; skipped when Docker is not available",
+]
 
 [tool.coverage.run]
 source = ["nlp_pillars"]

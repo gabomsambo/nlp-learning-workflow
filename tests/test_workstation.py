@@ -84,6 +84,13 @@ if [[ "$subcommand" == "ps" ]]; then
         *) printf '%s\\n' "exited|0|Exited (0) 2 days ago" ;;
       esac
       ;;
+    playground-runner)
+      case "${WORKSTATION_RUNNER:-healthy}" in
+        missing) ;;
+        unhealthy) printf '%s\\n' "running|0|Up 5 minutes (unhealthy)" ;;
+        *) printf '%s\\n' "running|0|Up 5 minutes (healthy)" ;;
+      esac
+      ;;
   esac
   exit 0
 fi
@@ -695,3 +702,30 @@ def test_readme_documents_workstation_and_port_7860():
     template = DESKTOP_TEMPLATE.read_text()
     assert "Terminal=true" in template
     assert "@EXEC@" in template
+
+
+def test_status_shows_the_playground_runner_from_its_healthcheck(launcher):
+    proc = launcher["run"](["status"])
+    assert proc.returncode == 0, proc.stderr
+    line = next(l for l in proc.stdout.splitlines() if l.startswith("Playground"))
+    assert "OK" in line and "(healthy)" in line
+    # No host port exists, so status must not curl one.
+    assert "8765" not in launcher["log"].read_text()
+
+
+def test_status_playground_runner_unhealthy_or_missing(launcher):
+    proc = launcher["run"](["status"], extra={"WORKSTATION_RUNNER": "unhealthy"})
+    assert proc.returncode == 0, proc.stderr
+    line = next(l for l in proc.stdout.splitlines() if l.startswith("Playground"))
+    assert "DOWN" in line and "unhealthy" in line
+    assert "./workstation logs playground-runner" in proc.stdout
+
+    proc = launcher["run"](["status"], extra={"WORKSTATION_RUNNER": "missing"})
+    line = next(l for l in proc.stdout.splitlines() if l.startswith("Playground"))
+    assert "DOWN" in line and "no playground runner container" in line
+
+
+def test_help_names_the_playground_runner(launcher):
+    proc = launcher["run"](["help"])
+    assert "playground-runner" in proc.stdout
+    assert "playground runner" in proc.stdout.lower()

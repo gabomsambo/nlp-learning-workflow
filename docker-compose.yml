@@ -252,8 +252,16 @@ services:
       # The scheduler refreshes the vault only when VAULT_EXPORT_ENABLED=true.
       VAULT_DIR: /vault
       VAULT_EXPORT_ENABLED: ${VAULT_EXPORT_ENABLED:-false}
+      # The playground runner, reached over the internal-only `playground`
+      # network below. It publishes no host port.
+      PLAYGROUND_RUNNER_URL: "${PLAYGROUND_RUNNER_URL:-http://playground-runner:8765}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      # `default` must be listed now that a second network is: a service with a
+      # `networks:` key joins only the networks it names.
+      - default
+      - playground
     volumes:
       # Captain's voice reference library — read-only; the app must not modify it.
       - /home/gabo/Desktop/indexttsvoices:/voices:ro
@@ -358,10 +366,76 @@ services:
     # while still restarting a scheduler that genuinely crashed.
     restart: on-failure
 
+  # ============================================
+  # Playground runner (locked-down Python for paper playgrounds)
+  #
+  # Runs notebook code in one Jupyter kernel per session. It holds no keys and
+  # no app code (its own image, built from docker/playground-runner/), and
+  # every line of the lockdown below is load-bearing — see
+  # docs/PLAYGROUND_RUNNER.md before loosening any of it. Idle it is one small
+  # uvicorn process; a kernel starts only when a session is created.
+  # ============================================
+  playground-runner:
+    build:
+      context: ./docker/playground-runner
+    image: nlp-playground-runner:local
+    container_name: nlp_playground_runner
+    # No `ports:`. Only webui can reach it, over the internal network.
+    networks:
+      - playground
+    read_only: true
+    tmpfs:
+      # Writable scratch on a read-only root. tmpfs is RAM and counts toward
+      # the memory limit below.
+      - /tmp:size=${PLAYGROUND_TMP_SIZE:-512m},mode=1777
+      - /work:size=${PLAYGROUND_WORK_SIZE:-2g},uid=10001,gid=10001,mode=0700
+    # joblib (scikit-learn n_jobs) memory-maps large arrays into /dev/shm;
+    # Docker's 64 MB default is smaller than one 1M-row float matrix.
+    shm_size: "${PLAYGROUND_SHM_SIZE:-1g}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: "${PLAYGROUND_RUNNER_MEMORY:-6g}"
+    # Same as mem_limit: no swap on top of it.
+    memswap_limit: "${PLAYGROUND_RUNNER_MEMORY:-6g}"
+    cpus: "${PLAYGROUND_RUNNER_CPUS:-4}"
+    pids_limit: ${PLAYGROUND_RUNNER_PIDS:-512}
+    environment:
+      PLAYGROUND_EXEC_TIMEOUT_S: "${PLAYGROUND_EXEC_TIMEOUT_S:-180}"
+      PLAYGROUND_MAX_EXEC_TIMEOUT_S: "${PLAYGROUND_MAX_EXEC_TIMEOUT_S:-900}"
+      PLAYGROUND_MAX_OUTPUT_BYTES: "${PLAYGROUND_MAX_OUTPUT_BYTES:-2000000}"
+      PLAYGROUND_MAX_SESSIONS: "${PLAYGROUND_MAX_SESSIONS:-3}"
+      PLAYGROUND_IDLE_TIMEOUT_S: "${PLAYGROUND_IDLE_TIMEOUT_S:-1800}"
+      # Keep BLAS/OpenMP thread pools inside the CPU limit.
+      OMP_NUM_THREADS: "${PLAYGROUND_RUNNER_CPUS:-4}"
+      OPENBLAS_NUM_THREADS: "${PLAYGROUND_RUNNER_CPUS:-4}"
+      MKL_NUM_THREADS: "${PLAYGROUND_RUNNER_CPUS:-4}"
+    volumes:
+      # Cached playground datasets, written by the web app (PR 1 of the
+      # playground work). Read-only here.
+      - playground_data:/data:ro
+    restart: unless-stopped
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  # Internal-only: Docker gives it no route off the host, so the runner has no
+  # egress. webui joins it to reach the runner. Not given a fixed name, so a
+  # second stack (-p <project>) gets its own.
+  playground:
+    internal: true
+
 # ============================================
 # Named Volumes (Docker-managed)
 # ============================================
 volumes:
+  # Playground dataset cache: /data/<playground_id>/ plus manifest.json.
+  # Re-downloadable, unlike pg_data and uploads_data, but still named so a
+  # rebuild or `down` keeps it.
+  playground_data:
+    name: nlp_playground_data
   # Local Qdrant storage. Shared with any other worktree running this compose
   # file. Never remove it to "clean up". A second worktree must override the
   # volume name or it attaches to this one.

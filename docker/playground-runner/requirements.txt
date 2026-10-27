@@ -1,0 +1,167 @@
+# Full pinned dependency set for the playground runner image.
+# Generated from requirements.in by uv pip compile; see that file for the
+# command. Do not edit by hand.
+annotated-doc==0.0.5
+    # via fastapi
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.15.1
+    # via starlette
+asttokens==3.0.2
+    # via stack-data
+click==8.5.0
+    # via uvicorn
+cloudpickle==3.1.2
+    # via joblib
+comm==0.2.3
+    # via ipykernel
+contourpy==1.4.0
+    # via matplotlib
+cycler==0.12.1
+    # via matplotlib
+debugpy==1.8.22
+    # via ipykernel
+et-xmlfile==2.0.0
+    # via openpyxl
+executing==2.3.0
+    # via stack-data
+fastapi==0.162.0
+    # via -r requirements.in
+fonttools==4.67.0
+    # via matplotlib
+h11==0.16.0
+    # via uvicorn
+idna==3.20
+    # via anyio
+ipykernel==7.4.0
+    # via -r requirements.in
+ipython==9.17.1
+    # via ipykernel
+ipython-pygments-lexers==1.1.1
+    # via ipython
+jedi==0.20.1
+    # via ipython
+joblib==1.6.0
+    # via scikit-learn
+jupyter-client==8.10.0
+    # via
+    #   -r requirements.in
+    #   ipykernel
+jupyter-core==5.9.1
+    # via
+    #   ipykernel
+    #   jupyter-client
+kiwisolver==1.5.1
+    # via matplotlib
+matplotlib==3.11.2
+    # via -r requirements.in
+matplotlib-inline==0.2.2
+    # via
+    #   ipykernel
+    #   ipython
+narwhals==2.27.1
+    # via scikit-learn
+nest-asyncio2==1.7.4
+    # via ipykernel
+numpy==2.5.4
+    # via
+    #   -r requirements.in
+    #   contourpy
+    #   matplotlib
+    #   pandas
+    #   scikit-learn
+    #   scipy
+openpyxl==3.1.5
+    # via -r requirements.in
+opentelemetry-api==1.45.1
+    # via fastapi
+packaging==26.3
+    # via
+    #   ipykernel
+    #   matplotlib
+pandas==3.1.0
+    # via -r requirements.in
+parso==0.8.7
+    # via jedi
+pexpect==4.9.0
+    # via ipython
+pillow==13.0.0
+    # via matplotlib
+platformdirs==4.13.5
+    # via jupyter-core
+prompt-toolkit==3.0.53
+    # via ipython
+psutil==7.2.2
+    # via ipython
+ptyprocess==0.7.0
+    # via pexpect
+pure-eval==0.2.4
+    # via stack-data
+pyarrow==26.0.0
+    # via -r requirements.in
+pydantic==2.14.1
+    # via fastapi
+pydantic-core==2.50.1
+    # via pydantic
+pygments==2.21.0
+    # via
+    #   ipython
+    #   ipython-pygments-lexers
+pyparsing==3.3.3
+    # via matplotlib
+pyseccomp==0.1.2
+    # via -r requirements.in
+python-dateutil==3.0.0
+    # via
+    #   jupyter-client
+    #   matplotlib
+    #   pandas
+pyzmq==27.2.0
+    # via
+    #   ipykernel
+    #   jupyter-client
+scikit-learn==1.9.1
+    # via -r requirements.in
+scipy==1.18.1
+    # via
+    #   -r requirements.in
+    #   scikit-learn
+six==1.17.0
+    # via python-dateutil
+stack-data==0.6.3
+    # via ipython
+starlette==1.10.0
+    # via fastapi
+threadpoolctl==3.7.0
+    # via scikit-learn
+tornado==6.6
+    # via
+    #   ipykernel
+    #   jupyter-client
+traitlets==5.16.1
+    # via
+    #   ipykernel
+    #   ipython
+    #   jupyter-client
+    #   jupyter-core
+    #   matplotlib-inline
+typing-extensions==4.16.0
+    # via
+    #   anyio
+    #   fastapi
+    #   jupyter-client
+    #   opentelemetry-api
+    #   pydantic
+    #   pydantic-core
+    #   starlette
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   fastapi
+    #   pydantic
+tzdata==2026.5
+    # via python-dateutil
+uvicorn==0.54.0
+    # via -r requirements.in
+wcwidth==0.9.4
+    # via prompt-toolkit
