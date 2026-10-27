@@ -2240,5 +2240,40 @@ def playground_import(
     raise typer.Exit(0)
 
 
+@playground_app.command("link")
+def playground_link(
+    script_id: str = typer.Argument(..., help="podcast_scripts id of the episode"),
+    playground_id: str = typer.Argument(..., help="playgrounds id (any paper's)"),
+):
+    """Link an episode to a playground and match its lines to the code cells.
+
+    One call to LLM_PLAYGROUND_ALIGN_MODEL (default claude-haiku-5-5). The
+    Listen page then shows the cell being talked about beside the transcript.
+    Apply docs/migrations/029_playground_links.sql first.
+    """
+    from .playground import follow
+    from .playground.store import PlaygroundStoreError
+
+    def on_stage(name: str, status: str, detail: Optional[str] = None) -> None:
+        if status in ("completed", "failed", "skipped"):
+            console.print(f"  {status:<9} {name}  {detail or ''}".rstrip(), markup=False)
+
+    try:
+        result = follow.run_align_job(script_id, playground_id, on_stage)
+    except (follow.PlaygroundAlignError, PlaygroundStoreError, ValueError) as exc:
+        console.print(f"Not linked: {exc}", markup=False)
+        raise typer.Exit(1)
+
+    console.print(
+        f"Linked episode {result['script_id']} to playground {result['playground_id']}: "
+        f"{result['spans']} spans over {result['lines_covered']} of "
+        f"{result['lines_total']} spoken lines, ${result['cost_usd']:.6f} ({result['model']})",
+        markup=False,
+    )
+    if result.get("error"):
+        console.print(f"  note: {result['error']}", markup=False)
+    raise typer.Exit(0)
+
+
 if __name__ == "__main__":
     app()

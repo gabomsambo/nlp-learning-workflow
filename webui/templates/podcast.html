@@ -172,6 +172,10 @@
       </div>
     </article>
 
+    {# On a phone the code panel is moved here, under the player, as a drawer
+       (follow-along.js). On a wide screen it sits beside the transcript. #}
+    <div id="follow-slot-narrow" class="follow-slot-narrow"></div>
+
     <div id="key-points">
       <h3 class="section-title">Key points</h3>
       <ul id="key-points-list"></ul>
@@ -219,6 +223,43 @@
         </div>
         <div id="script-content" class="script-body"></div>
       </section>
+      {# Follow along with code (docs/PLAYGROUND.md, "Follow-along"): the cell the
+         narrator is talking about, from a playground linked to this episode. #}
+      <aside id="follow-panel" class="follow-panel" aria-labelledby="follow-title" hidden>
+        <details id="follow-drawer" class="follow-drawer" open>
+          <summary class="follow-summary"><h3 id="follow-title" class="section-title">Code</h3></summary>
+          <div class="follow-body">
+            <div class="follow-toolbar">
+              <span id="follow-source" class="follow-source"></span>
+              <span class="follow-tools">
+                <button type="button" class="btn btn-ghost btn-sm" id="follow-change" hidden>Change</button>
+                <button type="button" class="btn btn-secondary btn-sm follow-pin" id="follow-pin" aria-pressed="false" hidden>Pin</button>
+              </span>
+            </div>
+            <p id="follow-status" class="follow-status" role="status" aria-live="polite"></p>
+            <div id="follow-card-slot" class="follow-card-slot" aria-live="off"></div>
+            <form id="follow-pick" class="follow-pick" hidden>
+              <label for="follow-search">Notebook to follow</label>
+              <input type="search" id="follow-search" placeholder="Search papers with a playground" autocomplete="off">
+              <select id="follow-select" size="5" aria-label="Papers with a playground"></select>
+              <p id="follow-pick-note" class="field-help" hidden></p>
+              <p class="field-help">One quick Claude Haiku call matches the episode’s lines to the notebook’s cells. Nothing starts until you press the button.</p>
+              <button type="submit" class="btn btn-primary btn-sm" id="follow-start" disabled>Follow along with code</button>
+            </form>
+            {{ run_panel(
+                title='Matching',
+                status_id='follow-run-status',
+                stages_id='follow-run-stages',
+                progress_id='follow-run-progress',
+                cancel_id='follow-run-cancel',
+                panel_id='follow-run-card',
+                cancel_label='Cancel',
+                progress_label='Follow-along progress',
+                hidden=True
+            ) }}
+          </div>
+        </details>
+      </aside>
       <aside id="factcheck-issues" class="factcheck-issues" aria-labelledby="factcheck-issues-title" hidden>
         <h3 id="factcheck-issues-title" class="section-title">Issues</h3>
         <div id="factcheck-issues-list"></div>
@@ -311,5 +352,7 @@
 <script src="/static/factcheck.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/readalong.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/listen-core.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/playground.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/follow-along.js?v={{ asset_v | default('1', true) }}"></script>
 <script src="/static/listen.js?v={{ asset_v | default('1', true) }}"></script>
 {% endblock %}

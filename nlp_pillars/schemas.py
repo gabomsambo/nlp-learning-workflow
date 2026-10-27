@@ -897,6 +897,11 @@ class StageName(str, Enum):
     PLAYGROUND_EXPLAIN = "playground_explain"
     PLAYGROUND_PERSIST = "playground_persist"
 
+    # Playground follow-along alignment (nlp_pillars/playground/follow.py).
+    PLAYGROUND_ALIGN_PREPARE = "playground_align_prepare"
+    PLAYGROUND_ALIGN = "playground_align"
+    PLAYGROUND_ALIGN_PERSIST = "playground_align_persist"
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
 #:
@@ -1015,6 +1020,15 @@ PLAYGROUND_EXPLAIN_STAGES: List[StageName] = [
     StageName.PLAYGROUND_PREPARE,
     StageName.PLAYGROUND_EXPLAIN,
     StageName.PLAYGROUND_PERSIST,
+]
+
+#: prepare reads the script and the playground's study guide (no model call).
+#: align is the one model call; its detail carries the cost the daily spend
+#: cap adds up. persist stores the mapping on the playground_links row.
+PLAYGROUND_ALIGN_STAGES: List[StageName] = [
+    StageName.PLAYGROUND_ALIGN_PREPARE,
+    StageName.PLAYGROUND_ALIGN,
+    StageName.PLAYGROUND_ALIGN_PERSIST,
 ]
 
 

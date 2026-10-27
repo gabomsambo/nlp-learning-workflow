@@ -62,6 +62,7 @@ class Settings(BaseSettings):
         None, env="LLM_FACTCHECK_REJUDGE_MODEL"
     )
     llm_playground_model: Optional[str] = Field(None, env="LLM_PLAYGROUND_MODEL")
+    llm_playground_align_model: Optional[str] = Field(None, env="LLM_PLAYGROUND_ALIGN_MODEL")
 
     # Legacy routing names, still honoured and consulted second. They used to
     # carry the defaults themselves; the registry does now.

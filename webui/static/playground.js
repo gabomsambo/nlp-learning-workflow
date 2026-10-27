@@ -160,6 +160,16 @@
     return { head: head, rest: lines.slice(1).join('\n').trim() };
   }
 
+  /**
+   * The cell a link asked for (`?cell=12#playground`, from the Listen page's
+   * code card), or null.
+   */
+  function requestedCell(search) {
+    var raw = new URLSearchParams(search || '').get('cell');
+    if (raw == null || !/^[0-9]{1,5}$/.test(raw)) return null;
+    return Number(raw);
+  }
+
   function safePng(data) {
     return typeof data === 'string' && data.length > 8 && BASE64.test(data) ? data : null;
   }
@@ -442,6 +452,7 @@
       }).then(function (body) {
         state.data = body;
         paint();
+        showRequestedCell();
         var run = body.latest_run;
         if (run && (run.status === 'pending' || run.status === 'running')) follow(run.id);
       }).catch(function (err) {
@@ -449,6 +460,15 @@
         explainBtn.hidden = true;
         say('');
       });
+    }
+
+    function showRequestedCell() {
+      var wanted = requestedCell(global.location.search);
+      if (wanted == null) return;
+      var card = document.getElementById('pg-cell-' + wanted);
+      if (!card) return;
+      card.classList.add('is-target');
+      card.scrollIntoView({ block: 'start' });
     }
 
     function follow(runId) {
@@ -554,6 +574,11 @@
     explainLabel: explainLabel,
     safePng: safePng,
     markdownParts: markdownParts,
+    requestedCell: requestedCell,
+    // The Listen page's follow-along panel renders its card with these, so a
+    // cell looks the same (and is sanitized the same way) in both places.
+    renderCode: renderCode,
+    renderOutput: renderOutput,
     HIDE_KEY: HIDE_KEY,
   };
   global.Playground = api;

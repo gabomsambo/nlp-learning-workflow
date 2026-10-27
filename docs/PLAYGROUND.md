@@ -12,6 +12,7 @@ them. Later PRs extend it; keep it short and exact.
 | Tab | `webui/templates/paper.html` (`#playground`), `webui/static/playground.js` |
 | Prompt | `nlp_pillars/playground/explain.py::SYSTEM_PROMPT`, copied in `docs/PROMPTS.md` |
 | Sandbox (running code) | [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md) |
+| Follow-along (Listen page) | `playground_links`, `docs/migrations/029_playground_links.sql` (hand-applied); `nlp_pillars/playground/{follow,links}.py`; `webui/routers/api/follow_along.py`; `webui/static/follow-along.js` |
 
 Until migration 028 is applied, the tab and the CLI say so and name the file;
 nothing is downloaded and no model is called.
@@ -149,3 +150,102 @@ reads this cache through `manifest.json`. Its API, limits and offline-data
 rules are [`docs/PLAYGROUND_RUNNER.md`](PLAYGROUND_RUNNER.md). The Playground
 tab does not call it yet; running and editing cells from the tab is the next
 change.
+
+## Follow-along
+
+While an episode plays on the Listen page, the code card the narrator is
+talking about shows beside the transcript (a drawer under the player on a
+phone). An episode can follow **any** playground, not only the one on its own
+paper: two study episodes made from study-guide papers can both follow one
+notebook attached to another paper.
+
+Until migration 029 is applied, the code panel, the API and the CLI say so and
+name `docs/migrations/029_playground_links.sql`; no model is called.
+
+### Stored shape
+
+`playground_links`, one row per (episode, playground) (`UNIQUE (script_id,
+playground_id)`). Deleting either side deletes the link.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | uuid | Link id. |
+| `script_id` | uuid | The episode (`podcast_scripts.id`). |
+| `playground_id` | uuid | The playground it follows. |
+| `mapping` | jsonb | The spans, below. `[]` until a pass has stored one. |
+| `model` | text | Model that wrote `mapping`, after any fallback. |
+| `status` | text | `pending` until a pass stores a mapping, then `ready`. `failed` when no pass has. |
+| `error` | text | Why the last pass failed, or which spans it dropped. A failed retry on a `ready` link keeps the mapping and says `The last attempt failed: …`. |
+| `script_sha256` | text | sha256 of the script text the mapping indexes. |
+| `created_at`, `updated_at` | timestamptz | |
+
+`mapping`:
+
+```json
+[
+  {"line_start": 12, "line_end": 15, "cell_index": 2, "step_id": "step-1"},
+  {"line_start": 31, "line_end": 31, "cell_index": 7, "step_id": "step-3"}
+]
+```
+
+Line numbers are `script.splitlines()` indexes, the numbering the read-along
+timeline (`audio_metadata.timeline`) uses. Lines about no particular code have
+no span.
+
+### Alignment pass
+
+`POST /api/follow-along` with `{script_id, playground_id}` starts a
+`pipeline_runs` job of kind `playground_align` (trigger `ui_playground`)
+behind `require_spend_room`. Stages: `playground_align_prepare`,
+`playground_align`, `playground_align_persist`. `result.script_id` and
+`result.playground_id` are set at insert; migration 029 allows one active pass
+per pair and exempts the kind from the one-run-per-pillar guard. The CLI runs
+the same pass in the foreground:
+`python -m nlp_pillars.cli playground link <script_id> <playground_id>`.
+
+Before any call it refuses an unknown episode or playground (404), a
+playground with no study guide or a script with no spoken lines (422).
+
+One call to `LLM_PLAYGROUND_ALIGN_MODEL` (default `claude-haiku-5-5`, Sonnet
+5.5 as fallback, thinking off). The model sees the spoken lines as
+`L<n>: text` and the study steps: step id, title and goal, then each cell's
+number, explanation and code (30 lines or 1,200 characters per cell). The
+prompt is `nlp_pillars/playground/follow.py::SYSTEM_PROMPT`, copied in
+`docs/PROMPTS.md`.
+
+Rules enforced before anything is stored (`follow.py::validate_spans`):
+
+- An answer that is not the `AlignDraft` schema is malformed and fails the pass.
+- Both ends of a span are spoken lines the model was shown, and start <= end.
+- `cell_index` is a cell of the study guide and `step_id` is the step that
+  lists it.
+- Spans do not overlap; of two that do, the earlier one is kept. Spans are
+  stored in script order.
+
+A span that breaks a rule is dropped and named in `error`. A pass whose every
+span was dropped fails. A pass with no spans at all is a `ready` link with an
+empty mapping. The align stage detail carries the call's cost, which is what
+the daily spend cap adds up.
+
+### Playback
+
+`GET /api/follow-along?script_id=…` returns the episode's links (each with its
+playground's paper and title), the playground on the episode's own paper (the
+picker's default) and the latest pass. `GET /api/follow-along/playgrounds`
+lists papers with a playground for the picker. The cards themselves come from
+`GET /api/playgrounds?paper_id=…`, rendered with `playground.js`'s
+`renderCode`/`renderOutput`, so the sanitizer is the Playground tab's.
+
+`follow-along.js` maps playback time to a line (`ReadAlong.positionAt`), the
+line to a span, and the span to a card: step title, explanation, code with line
+numbers and saved output. Between spans the last card stays, dimmed; before
+the first span there is none. Seeking lands on the same card as playing there.
+`Pin` stops auto-follow; unpinning snaps back to the current position. The
+card links to `/papers/<id>?cell=<n>#playground`, which scrolls the Playground
+tab to that cell.
+
+No follow-along is offered, and the panel says why, when the episode has no
+audio, no read-along timeline (`python -m nlp_pillars.cli timeline backfill`),
+or a timeline for an older version of the script. A link whose
+`script_sha256` no longer matches the script is offered again rather than
+followed. Spans whose cell is no longer in the study guide are skipped.

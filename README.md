@@ -173,6 +173,7 @@ stage can be moved with an env var — no code change:
 | Podcast script (call 5) | `LLM_PODCAST_SYNTHESIS_MODEL` | `claude-sonnet-5` |
 | Fact-check | `LLM_FACTCHECK_EXTRACT_MODEL`, `LLM_FACTCHECK_SCREEN_MODEL`, `LLM_FACTCHECK_REJUDGE_MODEL` | Haiku 5.5 / Haiku 5.5 / Sonnet 5.5 |
 | Playground study guide | `LLM_PLAYGROUND_MODEL` | `claude-sonnet-5` |
+| Episode follow-along (script lines to code cells) | `LLM_PLAYGROUND_ALIGN_MODEL` | `claude-haiku-5-5` |
 
 Every call's model, token counts and cost are shown in the run's stage detail
 and logged at WARNING.
