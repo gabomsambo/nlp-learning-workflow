@@ -17,6 +17,7 @@ const COSTLY = [
   '/api/podcast/generate',
   '/api/podcast/tts/generate',
   '/api/podcast/0b1c2d3e-0000-4000-8000-000000000000/factcheck',
+  '/api/follow-along',
 ];
 
 test('every costly POST is recognised, query strings ignored', () => {
@@ -33,6 +34,8 @@ test('reads and cheap writes are not gated', () => {
   assert.equal(matchAction('POST', pathOf('/api/pillars/x/queue')), null);
   assert.equal(matchAction('POST', pathOf('/api/pipeline-runs/abc/cancel')), null);
   assert.equal(matchAction('POST', pathOf('/api/papers/abc/refresh-metadata')), null);
+  assert.equal(matchAction('GET', pathOf('/api/follow-along?script_id=abc')), null);
+  assert.equal(matchAction('GET', pathOf('/api/follow-along/playgrounds')), null);
 });
 
 test('method comes from init, then the request, defaulting to GET', () => {

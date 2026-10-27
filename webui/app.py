@@ -20,6 +20,7 @@ load_dotenv()
 
 from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast, activity
 from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers, system_status as api_system_status, graph as api_graph, spend as api_spend, playground_runner as api_playground_runner, playgrounds as api_playgrounds
+from .routers.api import follow_along as api_follow_along
 from .access import AccessMiddleware
 from .services import cloud_publish_service, cloud_review_sync_service, run_service
 
@@ -126,6 +127,7 @@ def create_app() -> FastAPI:
     app.include_router(api_spend.router)
     app.include_router(api_playground_runner.router)
     app.include_router(api_playgrounds.router)
+    app.include_router(api_follow_along.router)
 
     # Include page routers
     app.include_router(dashboard.router)

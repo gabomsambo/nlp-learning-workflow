@@ -24,7 +24,8 @@ Every stage is overridable by env without touching code:
 ``LLM_SUMMARIZE_MODEL``, ``LLM_SYNTHESIZE_MODEL``, ``LLM_QUIZ_MODEL``,
 ``LLM_DISCOVER_MODEL``, ``LLM_CONCEPTS_MODEL``,
 ``LLM_PODCAST_EXTRACTION_MODEL``, ``LLM_PODCAST_SYNTHESIS_MODEL``, the
-``LLM_FACTCHECK_*`` trio, and ``LLM_PLAYGROUND_MODEL``. The older ``PODCAST_*_MODEL`` and
+``LLM_FACTCHECK_*`` trio, ``LLM_PLAYGROUND_MODEL`` and
+``LLM_PLAYGROUND_ALIGN_MODEL``. The older ``PODCAST_*_MODEL`` and
 ``FACTCHECK_*_MODEL`` names still work and are consulted second, so an
 existing ``.env`` keeps working.
 
@@ -311,6 +312,20 @@ PLAYGROUND_ROUTE = ModelRoute(
     thinking="adaptive",
 )
 
+#: Follow-along alignment (docs/PLAYGROUND.md, "Follow-along"): which lines of
+#: an episode's script are about which code cell. A mechanical matching task
+#: over supplied text, so the cheap Haiku the app already uses, thinking off.
+#: ``LLM_PLAYGROUND_ALIGN_MODEL`` overrides it.
+PLAYGROUND_ALIGN_ROUTE = ModelRoute(
+    stage="playground_align",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_playground_align_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
 
 def route_for(stage: str) -> ModelRoute:
     """The route for a stage name. Raises for an unknown stage."""
@@ -328,6 +343,7 @@ def route_for(stage: str) -> ModelRoute:
             FACTCHECK_SCREEN,
             FACTCHECK_REJUDGE,
             PLAYGROUND_ROUTE,
+            PLAYGROUND_ALIGN_ROUTE,
         )
     }
     try:

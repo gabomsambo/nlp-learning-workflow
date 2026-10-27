@@ -393,7 +393,8 @@ CREATE TABLE pipeline_runs (
         CONSTRAINT pipeline_runs_kind_check
         CHECK (kind IN ('run_daily', 'process_selected', 'discover',
                         'podcast_audio', 'upload', 'podcast_script',
-                        'podcast_factcheck', 'playground_explain')),
+                        'podcast_factcheck', 'playground_explain',
+                        'playground_align')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".
@@ -415,7 +416,8 @@ CREATE TABLE pipeline_runs (
     -- saved=false). 'podcast_factcheck' stores script_id at insert so the
     -- one-active-per-script index can see it, then replaces that object with
     -- counts when the run finishes. 'playground_explain' stores playground_id
-    -- at insert for the same reason. The rest leave it NULL. Written in a
+    -- at insert for the same reason, and 'playground_align' script_id plus
+    -- playground_id. The rest leave it NULL. Written in a
     -- single PATCH — so unlike the stage list it has no read-modify-write
     -- problem and does not need a child table.
     result           JSONB
@@ -549,6 +551,25 @@ CREATE TABLE playgrounds (
     created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
     updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
 );
+
+-- Playground follow-along. Same object as docs/migrations/029_playground_links.sql
+-- (hand-applied on an existing volume). Which script lines of an episode are
+-- about which code cell of a playground; see docs/PLAYGROUND.md.
+CREATE TABLE playground_links (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    script_id     UUID NOT NULL REFERENCES podcast_scripts(id) ON DELETE CASCADE,
+    playground_id UUID NOT NULL REFERENCES playgrounds(id) ON DELETE CASCADE,
+    mapping       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    model         TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'ready', 'failed')),
+    error         TEXT,
+    script_sha256 TEXT,
+    created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+    UNIQUE (script_id, playground_id)
+);
+CREATE INDEX idx_playground_links_playground ON playground_links (playground_id);
 
 
 -- One transaction: a failed insert rolls back the delete.
@@ -1332,8 +1353,8 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 -- correctness constraint, not a performance index: a check-then-insert in Python
 -- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
 --
--- Uploads, podcast_script, podcast_factcheck and playground_explain runs are
--- exempt (migrations 015 / 016 / 023 / 028). The guard is about two writers
+-- Uploads, podcast_script, podcast_factcheck, playground_explain and
+-- playground_align runs are exempt (migrations 015 / 016 / 023 / 028 / 029). The guard is about two writers
 -- driving one pillar's queue at once. Those kinds are scoped to one paper or
 -- one script, so refusing them because a discovery run is in flight would
 -- refuse work for a conflict that does not exist. One script still has at most
@@ -1342,7 +1363,7 @@ CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
     ON pipeline_runs (pillar_id)
     WHERE status IN ('pending', 'running')
       AND kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck',
-                       'playground_explain');
+                       'playground_explain', 'playground_align');
 CREATE UNIQUE INDEX pipeline_runs_one_active_factcheck_per_script
     ON pipeline_runs ((result->>'script_id'))
     WHERE kind = 'podcast_factcheck'
@@ -1350,6 +1371,10 @@ CREATE UNIQUE INDEX pipeline_runs_one_active_factcheck_per_script
 CREATE UNIQUE INDEX pipeline_runs_one_active_explain_per_playground
     ON pipeline_runs ((result->>'playground_id'))
     WHERE kind = 'playground_explain'
+      AND status IN ('pending', 'running');
+CREATE UNIQUE INDEX pipeline_runs_one_active_align_per_link
+    ON pipeline_runs ((result->>'script_id'), (result->>'playground_id'))
+    WHERE kind = 'playground_align'
       AND status IN ('pending', 'running');
 CREATE INDEX idx_pipeline_runs_pillar ON pipeline_runs(pillar_id, created_at DESC);
 CREATE INDEX idx_pipeline_runs_active ON pipeline_runs(status)
@@ -1403,6 +1428,7 @@ COMMENT ON COLUMN cloud_publish_state.content_hash IS 'sha256 (hex) of the bytes
 COMMENT ON COLUMN cloud_publish_state.byte_size IS 'Size of the uploaded object, summed to keep the bucket under its cap.';
 COMMENT ON TABLE cloud_sync_state IS 'Cursors for syncing with the cloud reader: reviews_seq (folded through) and reviews_pending (a pull in progress).';
 COMMENT ON TABLE playgrounds IS 'Paper Playground: one notebook per paper, its study guide (steps) and cached dataset records. See docs/PLAYGROUND.md.';
+COMMENT ON TABLE playground_links IS 'Playground follow-along: which script lines of an episode are about which code cell of a playground. See docs/PLAYGROUND.md.';
 COMMENT ON COLUMN chunk_embeddings.embedding IS 'float4[] (PostgreSQL real[]). Chosen over bytea so the array is readable without a codec, and over pgvector so the Postgres image stays unchanged.';
 COMMENT ON COLUMN chunk_embeddings.model_id IS 'Provider model id including the pinned revision, e.g. BAAI/bge-base-en-v1.5@<onnx sha>.';
 COMMENT ON TABLE paper_vectors IS 'One float32 title+abstract vector per paper per model. Rebuildable. Not the chunk index.';

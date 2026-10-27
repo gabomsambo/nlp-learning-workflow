@@ -2835,6 +2835,7 @@ html[data-theme="cockpit"] .episode-card {
 details.pg-md summary { cursor: pointer; color: var(--text); font-weight: 600; white-space: normal; }
 .pg-md-body { margin-top: var(--space-2); }
 .pg-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); min-width: 0; }
+.pg-card.is-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .pg-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .pg-count { color: var(--muted); font-family: var(--font-mono); font-size: var(--fs-caption); }
 .pg-explain { margin: 0; font-family: var(--font-read); font-size: var(--fs-body); line-height: 1.5; }
@@ -3635,6 +3636,71 @@ html[data-theme="cockpit"] .player-title {
 }
 
 .factcheck-issues .section-title { margin-top: 0; }
+
+/* Follow along with code (follow-along.js; docs/PLAYGROUND.md, "Follow-along").
+   Beside the transcript on a wide screen. With it showing, the issues panel
+   wraps below at full width rather than squeezing the transcript into a third
+   of the row. On a phone the script moves it under the player as a drawer. */
+.factcheck-layout.has-follow { flex-wrap: wrap; }
+.factcheck-layout.has-follow > .factcheck-script { flex: 1 1 0; }
+.factcheck-layout.has-follow > .factcheck-issues {
+  position: static;
+  flex: 1 1 100%;
+  max-height: none;
+}
+.follow-panel {
+  flex: 0 0 min(30rem, 44%);
+  min-width: 0;
+  max-height: min(78vh, 48rem);
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.follow-panel.is-drawer { flex: 1 1 auto; width: 100%; max-height: none; margin: var(--space-3) 0; }
+.follow-drawer > summary { cursor: pointer; list-style: none; }
+.follow-drawer > summary::-webkit-details-marker { display: none; }
+.follow-summary { display: flex; align-items: center; gap: var(--space-2); }
+.follow-summary .section-title { margin: 0; }
+.follow-summary::after { content: '▾'; color: var(--muted); font-size: var(--fs-caption); }
+.follow-drawer:not([open]) > .follow-summary::after { content: '▸'; }
+.follow-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); min-width: 0; margin-top: var(--space-3); }
+.follow-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.follow-source { min-width: 0; color: var(--muted); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.follow-tools { display: flex; gap: var(--space-2); }
+.follow-pin[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.follow-status { margin: 0; color: var(--muted); font-size: var(--fs-ui); }
+.follow-status:empty { display: none; }
+.follow-card-slot { min-width: 0; }
+.follow-card-slot:empty { display: none; }
+.follow-empty { margin: 0; color: var(--muted); font-size: var(--fs-ui); }
+.follow-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: opacity 160ms ease, border-color 160ms ease;
+}
+.follow-card:hover { border-color: var(--accent); }
+.follow-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Between spans the last card stays, quieter, so the code does not flicker away. */
+.follow-card.is-dimmed { opacity: 0.55; }
+.follow-kicker { margin: 0; color: var(--muted); font-family: var(--font-mono); font-size: var(--fs-caption); }
+.follow-step { margin: 0; font-family: var(--font-read); font-weight: 500; }
+.follow-explain { margin: 0; font-family: var(--font-read); line-height: 1.5; }
+.follow-card .pg-out { max-height: 240px; }
+.follow-open { color: var(--accent); font-size: var(--fs-ui); font-weight: 600; }
+.follow-pick { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-width: 0; }
+.follow-pick select { width: 100%; min-width: 0; }
+.follow-pick .btn { justify-self: start; }
+@media (prefers-reduced-motion: reduce) { .follow-card { transition: none; } }
 
 .factcheck-issue {
   position: relative;

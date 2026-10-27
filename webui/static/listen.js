@@ -1039,6 +1039,30 @@
       return true;
     }
 
+    /*
+     * The code panel beside the transcript (follow-along.js). It reads the same
+     * timeline and the same player as the read-along; this only tells it which
+     * episode is on screen.
+     */
+    var followPanel = null;
+    function syncFollow() {
+      if (!followPanel && global.FollowAlong) {
+        followPanel = global.FollowAlong.mount({
+          root: document.getElementById('follow-panel'),
+          live: liveSnapshot,
+          controller: controller,
+        });
+      }
+      if (!followPanel) return;
+      followPanel.setEpisode(currentScriptId ? {
+        scriptId: currentScriptId,
+        scriptText: currentScriptText,
+        scriptSha: currentScriptHash,
+        timeline: currentTimeline,
+        hasAudio: !!currentAudioHref,
+      } : null);
+    }
+
     /* The timeline can arrive after the page did: recording finishes while it is open. */
     function refreshTimeline() {
       if (!currentScriptId) return Promise.resolve();
@@ -1051,6 +1075,7 @@
         currentTimeline = audio.timeline || null;
         paintReadAlong();
         updateViewSwitch();
+        syncFollow();
       }).catch(function () { /* the highlight is a nicety; the audio is unaffected */ });
     }
 
@@ -1598,6 +1623,7 @@
       showStoredAudio(audio);
       setFollowing(true);
       updateViewSwitch();
+      syncFollow();
     }
 
     /*
@@ -1820,6 +1846,7 @@
           key_points: result.key_points,
         });
         showStoredAudio(null);
+        syncFollow();
         if (factcheckPanel) factcheckPanel.hidden = true;
         if (factcheckIssues) factcheckIssues.hidden = true;
         if (factcheckAudioWarning) factcheckAudioWarning.hidden = true;
@@ -1874,6 +1901,7 @@
       unsavedScript = null;
       currentScriptId = null;
       currentFactcheck = null;
+      syncFollow();
       if (factcheckPanel) factcheckPanel.hidden = true;
       if (factcheckIssues) factcheckIssues.hidden = true;
       if (factcheckAudioWarning) factcheckAudioWarning.hidden = true;

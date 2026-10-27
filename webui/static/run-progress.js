@@ -210,6 +210,9 @@
     playground_prepare: 'Reading the notebook',
     playground_explain: 'Explaining the code cells',
     playground_persist: 'Saving the study guide',
+    playground_align_prepare: 'Reading the episode and the study guide',
+    playground_align: 'Matching script lines to code cells',
+    playground_align_persist: 'Saving the follow-along',
   };
 
   function stageLabel(name) {
@@ -476,6 +479,16 @@
       }
       if (run.status === 'failed') {
         return 'Failed — the notebook is unchanged' + (run.error ? ' — ' + run.error : '');
+      }
+    }
+    if (run.kind === 'playground_align') {
+      var fa = run.result || {};
+      if (run.status === 'succeeded') {
+        if (!fa.spans) return 'Done — no line of this episode is clearly about a cell of this notebook';
+        return 'Done — ' + fa.spans + ' code card' + (fa.spans === 1 ? '' : 's') + ' will follow the episode';
+      }
+      if (run.status === 'failed') {
+        return 'Failed — no new follow-along was saved' + (run.error ? ' — ' + run.error : '');
       }
     }
     if (run.status === 'succeeded') {
