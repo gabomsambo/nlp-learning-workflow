@@ -2930,6 +2930,8 @@ details.pg-md summary { cursor: pointer; color: var(--text); font-weight: 600; w
 .pg-diff-line.is-add { background: var(--ok-soft); color: var(--ok); }
 .pg-diff-line.is-del { background: var(--danger-soft); color: var(--danger); text-decoration: line-through; }
 .pg-quiz { margin: 0; font-size: var(--fs-ui); }
+.pg-quiz p { margin: 0; }
+.pg-quiz .pg-quiz-answer { margin-top: var(--space-xs); }
 /* Live tab: session bar, run toolbar, editor, Before / After. */
 .pg-session {
   display: flex;

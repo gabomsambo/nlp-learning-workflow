@@ -125,12 +125,12 @@ test('explanations hide for a self-quiz, one card at a time can be revealed, and
 test('a card has its code with tap-a-line notes, the saved output, the try as a diff and the quiz', () => {
   const card = playgroundPanel(PLAYGROUND).querySelector('#pg-cell-1');
   const noted = card.querySelectorAll('.has-note');
-  assert.equal(noted.length, 1);
+  assert.equal(noted.length, 3);
   const note = card.querySelector('.pg-line-note');
   assert.equal(note.hidden, true);
   noted[0].click();
   assert.equal(note.hidden, false);
-  assert.equal(allText(note), 'read_csv turns the file into a table.');
+  assert.equal(allText(note), 'Imports pandas and gives it the short name pd.');
   // The sanitized table, built element by element, with its numeric colspan only.
   const td = card.querySelector('td');
   assert.equal(td.getAttribute('colspan'), '2');
@@ -140,7 +140,30 @@ test('a card has its code with tap-a-line notes, the saved output, the try as a 
   assert.equal(allText(attempt.querySelector('.pg-expect')), 'Only the first row is shown.');
   assert.deepEqual(attempt.querySelectorAll('.pg-diff-line').map((l) => l.className.replace('pg-diff-line ', '')),
     ['is-same', 'is-same', 'is-del', 'is-add']);
-  assert.match(allText(card.querySelector('.pg-quiz')), /^Can you answer: What does head\(\) show by default\?$/);
+  assert.equal(allText(card.querySelector('.pg-quiz-question')), 'Can you answer: What does head() show by default?');
+  assert.equal(allText(card.querySelector('.pg-quiz-answer')), "Answer: It shows the table's first five rows.");
+});
+
+test('every non-blank guided code line has a tappable note in the shared desktop and phone renderer', () => {
+  const root = playgroundPanel(PLAYGROUND);
+  const byCell = new Map(PLAYGROUND.cells.map((cell) => [cell.index, cell]));
+  for (const step of PLAYGROUND.steps) {
+    for (const guide of step.cells) {
+      const nonBlank = byCell.get(guide.cell_index).source.split('\n').filter((line) => line.trim()).length;
+      const card = root.querySelector(`#pg-cell-${guide.cell_index}`);
+      assert.equal(card.querySelectorAll('.has-note').length, nonBlank, `cell ${guide.cell_index}`);
+      assert.equal(card.querySelectorAll('.pg-line-note').length, nonBlank, `cell ${guide.cell_index}`);
+    }
+  }
+});
+
+test('a guide stored before quiz answers still renders its question', () => {
+  const old = structuredClone(PLAYGROUND);
+  for (const step of old.steps) for (const cell of step.cells) delete cell.quiz_answer;
+  const root = playgroundPanel(old);
+  assert.equal(root.querySelectorAll('.pg-quiz-question').length, 4);
+  assert.equal(root.querySelectorAll('.pg-quiz-answer').length, 0);
+  assert.equal(allText(root.querySelector('.pg-quiz-question')), 'Can you answer: What does head() show by default?');
 });
 
 test('saved outputs: stream text, a figure as a data image, an error, and a capped one says where it went', () => {

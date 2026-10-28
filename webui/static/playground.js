@@ -276,6 +276,22 @@
     return block;
   }
 
+  function renderQuiz(guide) {
+    if (!guide || !guide.quiz) return null;
+    var box = el('div', 'pg-quiz');
+    var question = el('p', 'pg-quiz-question');
+    question.appendChild(el('strong', null, 'Can you answer: '));
+    question.appendChild(document.createTextNode(guide.quiz));
+    box.appendChild(question);
+    if (guide.quiz_answer) {
+      var answer = el('p', 'pg-quiz-answer');
+      answer.appendChild(el('strong', null, 'Answer: '));
+      answer.appendChild(document.createTextNode(guide.quiz_answer));
+      box.appendChild(answer);
+    }
+    return box;
+  }
+
   function renderDiff(rows, label) {
     var diff = el('div', 'pg-diff');
     diff.setAttribute('aria-label', label || 'Original and changed code, line by line');
@@ -821,12 +837,8 @@
 
     if (guide) {
       (guide.tries || []).forEach(function (t) { card.appendChild(renderTry(cell.source, t, ctl)); });
-      if (guide.quiz) {
-        var quiz = el('p', 'pg-quiz');
-        quiz.appendChild(el('strong', null, 'Can you answer: '));
-        quiz.appendChild(document.createTextNode(guide.quiz));
-        card.appendChild(quiz);
-      }
+      var quiz = renderQuiz(guide);
+      if (quiz) card.appendChild(quiz);
     }
     return card;
   }
@@ -968,7 +980,7 @@
     if (pg.error && (pg.status === 'partial' || pg.status === 'failed' || pg.status === 'ready')) {
       var callout = el('div', 'pg-error');
       callout.setAttribute('role', 'note');
-      callout.appendChild(el('strong', null, pg.status === 'partial' ? 'Some cells were not explained. ' : 'The last attempt failed. '));
+      callout.appendChild(el('strong', null, pg.status === 'partial' ? 'The study guide is incomplete. ' : 'The last attempt failed. '));
       callout.appendChild(document.createTextNode(pg.error));
       root.appendChild(callout);
     }
@@ -1295,6 +1307,7 @@
     // cell looks the same (and is sanitized the same way) in both places.
     renderCode: renderCode,
     renderOutput: renderOutput,
+    renderQuiz: renderQuiz,
     HIDE_KEY: HIDE_KEY,
   };
   global.Playground = api;

@@ -431,11 +431,20 @@
               "explanation": "Reads the points file and shows the first rows.",
               "line_notes": [
                 {
+                  "line": 1,
+                  "note": "Imports pandas and gives it the short name pd."
+                },
+                {
                   "line": 2,
                   "note": "read_csv turns the file into a table."
+                },
+                {
+                  "line": 3,
+                  "note": "head displays the first rows of that table."
                 }
               ],
               "quiz": "What does head() show by default?",
+              "quiz_answer": "It shows the table's first five rows.",
               "tries": [
                 {
                   "code": "import pandas as pd\npoints = pd.read_csv('points.csv')\npoints.head(1)",
@@ -447,8 +456,14 @@
             {
               "cell_index": 2,
               "explanation": "Prints how many points there are.",
-              "line_notes": [],
+              "line_notes": [
+                {
+                  "line": 1,
+                  "note": "len counts the rows and print displays that count."
+                }
+              ],
               "quiz": "Why print the length?",
+              "quiz_answer": "It checks how many rows were loaded into points.",
               "tries": []
             }
           ],
@@ -461,15 +476,27 @@
             {
               "cell_index": 3,
               "explanation": "Draws the points.",
-              "line_notes": [],
+              "line_notes": [
+                {
+                  "line": 1,
+                  "note": "plot draws the values stored in points."
+                }
+              ],
               "quiz": "What is on the x axis?",
+              "quiz_answer": "The saved figure uses the table's row positions along the x axis.",
               "tries": []
             },
             {
               "cell_index": 4,
               "explanation": "Divides by zero on purpose.",
-              "line_notes": [],
+              "line_notes": [
+                {
+                  "line": 1,
+                  "note": "This asks Python to divide one by zero."
+                }
+              ],
               "quiz": "What error is raised?",
+              "quiz_answer": "Python raises a ZeroDivisionError.",
               "tries": []
             }
           ],
