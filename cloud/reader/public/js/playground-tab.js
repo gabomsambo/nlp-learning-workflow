@@ -86,7 +86,8 @@ function renderCard(cell, guide, state) {
 
   if (guide) {
     for (const attempt of guide.tries || []) card.append(renderTry(cell.source, attempt));
-    if (guide.quiz) card.append(h('p', { class: 'pg-quiz' }, h('strong', { text: 'Can you answer: ' }), guide.quiz));
+    const quiz = PG.renderQuiz(guide);
+    if (quiz) card.append(quiz);
   }
   return card;
 }

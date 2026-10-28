@@ -362,7 +362,7 @@ Create a podcast dialogue between two hosts discussing the paper:
 ### Paper Playground explain pass
 Live prompt. Source of truth: `nlp_pillars/playground/explain.py::SYSTEM_PROMPT`;
 `tests/test_playground.py` fails if this copy drifts. Sent as the system prompt,
-one call per part of up to 12 code cells, with the cells (markdown, code with
+one call per part of up to 3 code cells, with the cells (markdown, code with
 line numbers, saved outputs) as the user message. Output schema `ExplainDraft`;
 the stored shape and the validation rules are in `docs/PLAYGROUND.md`.
 ```
@@ -374,9 +374,10 @@ Group the code cells you are asked to explain into study steps that follow the n
 
 For each code cell write:
 - explanation: ONE plain sentence, at most 25 words, saying what the cell does and why it matters here. No jargon without a reason.
-- line_notes: notes for the NON-OBVIOUS lines only, by line number. Short. Skip lines whose meaning is plain. An empty list is fine.
+- line_notes: one short, plain, beginner-level note for EVERY non-blank code line, by line number. Explain even basic syntax and comment-only lines. Do not combine lines or skip a line because it looks obvious.
 - tries: zero to three "try this" tweaks, only where changing something teaches something (a parameter, a threshold, a column, a seed). Each has a short imperative label (for example "Use 256 rows per tree"), the FULL modified cell as code (not a fragment, not a diff), and expect: one sentence on what should change and why. Do not offer a try that only renames things or reformats.
 - quiz: one question the learner should be able to answer about this cell.
+- quiz_answer: the answer to that question, stated plainly and completely so the learner can study it immediately.
 
 Grounding rules, which are not negotiable:
 - Use only what is in the notebook: its code, its text and its saved outputs.

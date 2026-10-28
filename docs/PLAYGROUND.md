@@ -53,7 +53,11 @@ place, keeps the row id, and clears `steps`.
       {
         "cell_index": 2,
         "explanation": "Reads the points file into a dataframe and shows the first five rows to check the columns.",
-        "line_notes": [{"line": 3, "note": "head() shows five rows unless you pass a number."}],
+        "line_notes": [
+          {"line": 1, "note": "Imports pandas and gives it the short name pd."},
+          {"line": 2, "note": "Reads the CSV file into the dataframe named points."},
+          {"line": 3, "note": "head() shows five rows unless you pass a number."}
+        ],
         "tries": [
           {
             "label": "Show ten rows",
@@ -61,7 +65,8 @@ place, keeps the row id, and clears `steps`.
             "expect": "The table grows to ten rows; nothing else changes."
           }
         ],
-        "quiz": "What would head() show if the file had only three rows?"
+        "quiz": "What would head() show if the file had only three rows?",
+        "quiz_answer": "It would show all three rows because the file has fewer than five."
       }
     ]
   }
@@ -75,9 +80,13 @@ Rules the explain pass enforces before anything is stored
   code cell with source. Each appears once, in notebook order.
 - `explanation` is one sentence, at most 40 words (the prompt asks for 25).
 - `line_notes[].line` is 1-based within the cell and exists; one note per line.
+  Every non-blank source line, comment-only lines included, should have one;
+  blank lines need none. A cell that skips one is kept, the skipped lines are
+  listed in `error`, and the guide is stored as `partial`.
 - `tries` is 0 to 3 items; `code` is the whole modified cell and differs from
   the original.
-- `quiz` is one question.
+- `quiz` is one question and `quiz_answer` is its non-empty answer. Guides
+  stored before `quiz_answer` was added remain readable; they show only the question.
 - Step ids are assigned by the app (`step-1`, `step-2`, …), not the model.
 
 A pass that covers some cells is stored as `partial` with `error` listing what
@@ -93,7 +102,7 @@ Stages: `playground_prepare`, `playground_explain`, `playground_persist`.
 `result.playground_id` is set at insert; migration 028 allows one active pass
 per playground and exempts the kind from the one-run-per-pillar guard.
 
-The notebook is split into parts of at most 12 code cells (and about 60,000
+The notebook is split into parts of at most 3 code cells (and about 60,000
 prompt characters); each part is one call to `LLM_PLAYGROUND_MODEL` (default
 `claude-sonnet-5`, Sonnet 5.5 as fallback). The model sees markdown, code with
 line numbers, and saved outputs (text first, HTML tables as text, figures as a

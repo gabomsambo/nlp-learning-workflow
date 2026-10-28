@@ -662,7 +662,10 @@ def test_a_playground_is_published_read_only_and_sanitized():
     assert doc["cells"][3]["outputs"][0]["kind"] == "png"
     assert doc["cells"][4]["outputs"] == [{"kind": "error", "body": "ZeroDivisionError: division by zero"}]
     guide = doc["steps"][0]["cells"][0]
-    assert set(guide) == {"cell_index", "explanation", "line_notes", "tries", "quiz"}
+    assert set(guide) == {
+        "cell_index", "explanation", "line_notes", "tries", "quiz", "quiz_answer",
+    }
+    assert guide["quiz_answer"] == "It shows the table's first five rows."
     assert guide["tries"][0]["label"] == "Show one row" and guide["tries"][0]["code"].endswith("head(1)")
     assert doc["dropped"] == {"figures": 0, "outputs": 0}
 

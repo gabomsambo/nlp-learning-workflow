@@ -482,9 +482,9 @@ def test_batches_split_on_size_too():
     assert len(make_batches(cells, max_chars=15_000)) == 3
 
 
-def test_fixture_is_one_batch_without_the_blank_cell():
+def test_fixture_uses_small_batches_without_the_blank_cell():
     batches = make_batches(cells_view(_nb()))
-    assert len(batches) == 1 and batches[0].code_indices == [1, 2, 4, 5, 7]
+    assert [batch.code_indices for batch in batches] == [[1, 2, 4], [5, 7]]
 
 
 # -- explain pass: validation ----------------------------------------------------------
@@ -493,12 +493,18 @@ SOURCES = {c["index"]: c["source"] for c in cells_view(_nb()) if c["type"] == "c
 
 
 def _cell(idx, **over):
+    source = SOURCES.get(idx, "x = 1")
     base = dict(
         cell_index=idx,
         explanation="Loads the libraries the rest of the notebook needs.",
-        line_notes=[],
+        line_notes=[
+            LineNoteDraft(line=line, note=f"Explains line {line}.")
+            for line, text in enumerate(source.split("\n"), 1)
+            if text.strip()
+        ],
         tries=[],
         quiz="Which library reads the CSV?",
+        quiz_answer="Pandas reads the CSV file.",
     )
     base.update(over)
     return CellDraft(**base)
@@ -508,7 +514,9 @@ def _good_draft():
     return ExplainDraft(steps=[
         StepDraft(title="Load", goal="Read the points.", cells=[
             _cell(1),
-            _cell(2, line_notes=[LineNoteDraft(line=3, note="Shows five rows.")],
+            _cell(2, line_notes=[LineNoteDraft(line=1, note="Reads the CSV file."),
+                                 LineNoteDraft(line=2, note="Keeps an optional example as a comment."),
+                                 LineNoteDraft(line=3, note="Shows five rows.")],
                   tries=[TryDraft(label="Show ten rows", code=SOURCES[2].replace("head()", "head(10)"),
                                   expect="The table grows to ten rows.")]),
         ]),
@@ -522,9 +530,13 @@ def test_a_good_answer_validates_completely():
     assert out.explained == [1, 2, 4, 5, 7]
     assert [s["title"] for s in out.steps] == ["Load", "Fit"]
     cell = out.steps[0]["cells"][1]
-    assert cell["line_notes"] == [{"line": 3, "note": "Shows five rows."}]
+    assert cell["line_notes"] == [
+        {"line": 1, "note": "Reads the CSV file."},
+        {"line": 2, "note": "Keeps an optional example as a comment."},
+        {"line": 3, "note": "Shows five rows."},
+    ]
     assert cell["tries"][0]["code"].endswith("head(10)")
-    assert set(cell) == {"cell_index", "explanation", "line_notes", "tries", "quiz"}
+    assert set(cell) == {"cell_index", "explanation", "line_notes", "tries", "quiz", "quiz_answer"}
 
 
 def test_a_malformed_answer_keeps_only_what_checks_out():
@@ -537,8 +549,10 @@ def test_a_malformed_answer_keeps_only_what_checks_out():
             _cell(99),                                  # does not exist
             _cell(2, explanation=long),                 # too long
             _cell(4, quiz=""),                          # no quiz
+            _cell(7, quiz_answer=""),                   # no quiz answer
             _cell(5, line_notes=[LineNoteDraft(line=0, note="x"), LineNoteDraft(line=40, note="y"),
-                                 LineNoteDraft(line=2, note="kept"), LineNoteDraft(line=2, note="dup")],
+                                 LineNoteDraft(line=1, note="first"), LineNoteDraft(line=2, note="kept"),
+                                 LineNoteDraft(line=2, note="dup"), LineNoteDraft(line=3, note="third")],
                   tries=[TryDraft(label="Same", code=SOURCES[5], expect="nothing"),
                          TryDraft(label="", code="x", expect="y")]
                   + [TryDraft(label=f"T{i}", code=f"plt.plot([{i}])", expect="A line.") for i in range(5)]),
@@ -549,12 +563,37 @@ def test_a_malformed_answer_keeps_only_what_checks_out():
     out = validate_draft(draft, wanted=[1, 2, 4, 5, 7], sources=SOURCES)
     assert out.explained == [5]
     kept = out.steps[0]["cells"][0]
-    assert kept["line_notes"] == [{"line": 2, "note": "kept"}]
+    assert kept["line_notes"] == [
+        {"line": 1, "note": "first"},
+        {"line": 2, "note": "kept"},
+        {"line": 3, "note": "third"},
+    ]
     assert [t["label"] for t in kept["tries"]] == ["T0", "T1", "T2"]
     joined = " ".join(out.problems)
-    for needle in ("no title", "Cell 0 is not", "Cell 6 is not", "Cell 99", "60 words", "no quiz", "explained twice", "out of notebook order"):
+    for needle in ("no title", "Cell 0 is not", "Cell 6 is not", "Cell 99", "60 words", "no quiz question", "no quiz answer", "explained twice", "out of notebook order"):
         assert needle in joined
     assert any("did not change the code" in n for n in out.notes)
+
+
+def test_a_cell_missing_a_non_blank_line_note_is_kept_and_reported_but_blank_lines_need_none():
+    source = "x = 1\n\n# keep x\nprint(x)\n"
+    draft = ExplainDraft(steps=[StepDraft(title="Run", goal="Show x.", cells=[
+        _cell(1, line_notes=[
+            LineNoteDraft(line=1, note="Sets x."),
+            LineNoteDraft(line=3, note="Explains the comment."),
+        ]),
+    ])])
+    out = validate_draft(draft, wanted=[1], sources={1: source})
+    assert out.explained == [1]
+    assert out.incomplete == [1]
+    assert "no line note for line(s) 4" in " ".join(out.problems)
+
+    draft.steps[0].cells[0].line_notes.append(LineNoteDraft(line=4, note="Prints x."))
+    out = validate_draft(draft, wanted=[1], sources={1: source})
+    assert out.explained == [1]
+    assert out.incomplete == []
+    assert out.problems == []
+    assert [note["line"] for note in out.steps[0]["cells"][0]["line_notes"]] == [1, 3, 4]
 
 
 # -- explain pass: the job ---------------------------------------------------------------
@@ -601,16 +640,23 @@ def _run(row, answers, cancel=None):
 
 
 def test_a_good_pass_is_saved_ready_with_numbered_steps_and_its_cost():
-    result, stages, saved = _run(_row(), [_call(_good_draft())])
+    first = ExplainDraft(steps=[
+        StepDraft(title="Load", goal="Read the points.", cells=_good_draft().steps[0].cells),
+        StepDraft(title="Fit", goal="Recover the slope.", cells=_good_draft().steps[1].cells[:1]),
+    ])
+    second = ExplainDraft(steps=[
+        StepDraft(title="Check", goal="See the saved error.", cells=_good_draft().steps[1].cells[1:]),
+    ])
+    result, stages, saved = _run(_row(), [_call(first), _call(second)])
     assert result["status"] == "ready"
     assert result["cells_explained"] == result["cells_total"] == 5
     assert saved["how"] == "explain" and saved["status"] == "ready" and saved["error"] is None
-    assert [s["id"] for s in saved["steps"]] == ["step-1", "step-2"]
+    assert [s["id"] for s in saved["steps"]] == ["step-1", "step-2", "step-3"]
     assert saved["model"] == "claude-sonnet-5"
     final = [s for s in stages if s[1] in ("completed", "failed", "skipped")]
     assert [s[0] for s in final] == [s.value for s in PLAYGROUND_EXPLAIN_STAGES]
     explain_detail = [d for n, s, d in stages if n == "playground_explain" and s == "completed"][0]
-    assert "$0.012000" in explain_detail  # what the daily spend cap adds up
+    assert "$0.024000" in explain_detail  # what the daily spend cap adds up
 
 
 def test_a_pass_that_misses_cells_is_saved_partial_with_the_gaps_named():
@@ -619,6 +665,22 @@ def test_a_pass_that_misses_cells_is_saved_partial_with_the_gaps_named():
     assert result["status"] == "partial"
     assert saved["status"] == "partial"
     assert "3 of 5 code cells were not explained (cells 4, 5, 7)" in saved["error"]
+
+
+def test_a_pass_that_skips_a_line_note_keeps_the_cell_and_is_saved_partial():
+    good = _good_draft()
+    good.steps[0].cells[0].line_notes = good.steps[0].cells[0].line_notes[1:]
+    first = ExplainDraft(steps=[
+        StepDraft(title="Load", goal="Read the points.", cells=good.steps[0].cells),
+        StepDraft(title="Fit", goal="Recover the slope.", cells=good.steps[1].cells[:1]),
+    ])
+    second = ExplainDraft(steps=[
+        StepDraft(title="Check", goal="See the saved error.", cells=good.steps[1].cells[1:]),
+    ])
+    result, _, saved = _run(_row(), [_call(first), _call(second)])
+    assert result["status"] == "partial"
+    assert result["cells_explained"] == result["cells_total"] == 5
+    assert "Cell 1 has no line note for line(s) 1." in saved["error"]
 
 
 def test_a_pass_with_nothing_usable_fails_and_keeps_the_notebook():
@@ -644,12 +706,12 @@ def test_one_failed_part_keeps_the_other_parts():
         {"cell_type": "code", "source": f"x = {i}", "outputs": []} for i in range(15)
     ]})
     first = ExplainDraft(steps=[StepDraft(title="A", goal="g.", cells=[
-        _cell(i, explanation="Sets x.") for i in range(12)
+        _cell(i, explanation="Sets x.") for i in range(3)
     ])])
     result, stages, saved = _run(big, [_call(first, cost=0.5), RuntimeError("rate limited")])
     assert result["status"] == "partial"
-    assert result["cells_explained"] == 12 and result["cells_total"] == 15
-    assert "Part 2 of 2 failed: rate limited" in saved["error"]
+    assert result["cells_explained"] == 3 and result["cells_total"] == 15
+    assert "Part 2 of 5 failed: rate limited" in saved["error"]
     assert result["cost_usd"] == 0.5
 
 

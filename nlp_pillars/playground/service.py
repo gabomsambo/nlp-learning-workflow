@@ -267,6 +267,7 @@ def _explain(playground_id, stages: _Stages, cancel, client) -> Dict[str, Any]:
     steps: List[Dict[str, Any]] = []
     explained: List[int] = []
     problems: List[str] = []
+    incomplete: List[int] = []
     title = row.get("title") or "Notebook"
     for n, batch in enumerate(batches, 1):
         if cancel is not None and cancel.is_set():
@@ -290,6 +291,7 @@ def _explain(playground_id, stages: _Stages, cancel, client) -> Dict[str, Any]:
         steps.extend(checked.steps)
         explained.extend(checked.explained)
         problems.extend(checked.problems)
+        incomplete.extend(checked.incomplete)
         for note in checked.notes:
             logger.warning("Playground %s: %s", playground_id, note)
         stages.progress(
@@ -303,7 +305,7 @@ def _explain(playground_id, stages: _Stages, cancel, client) -> Dict[str, Any]:
         problems.insert(0, f"{len(missing)} of {total} code cells were not explained (cells {shown}).")
     if not steps:
         status = store.STATUS_FAILED
-    elif missing:
+    elif missing or incomplete:
         status = store.STATUS_PARTIAL
     else:
         status = store.STATUS_READY

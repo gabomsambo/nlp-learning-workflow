@@ -18,6 +18,7 @@ const {
   explainLabel,
   safePng,
   markdownParts,
+  renderQuiz,
 } = require('../../webui/static/playground.js');
 const { summarise, stageLabel } = require('../../webui/static/run-progress.js');
 
@@ -47,6 +48,7 @@ function tags(n, out) {
 
 function text(n) {
   if (n.text != null) return n.text;
+  if (n.textContent != null) return n.textContent;
   return (n.children || []).map(text).join('');
 }
 
@@ -155,6 +157,22 @@ test('safePng only passes base64', () => {
   assert.equal(safePng('iVBORw0KGgoAAAANSUhEUg=='), 'iVBORw0KGgoAAAANSUhEUg==');
   assert.equal(safePng('x" onerror="alert(1)'), null);
   assert.equal(safePng(null), null);
+});
+
+test('renderQuiz puts an optional stored answer directly below its question', () => {
+  const previous = global.document;
+  global.document = fakeDoc();
+  try {
+    const current = renderQuiz({ quiz: 'Why count rows?', quiz_answer: 'To check how much data loaded.' });
+    assert.deepEqual(current.children.map(text), [
+      'Can you answer: Why count rows?',
+      'Answer: To check how much data loaded.',
+    ]);
+    const legacy = renderQuiz({ quiz: 'Why count rows?' });
+    assert.deepEqual(legacy.children.map(text), ['Can you answer: Why count rows?']);
+  } finally {
+    global.document = previous;
+  }
 });
 
 /* ------------------------------------------------------------- run-progress */

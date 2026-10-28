@@ -120,7 +120,7 @@ the episode, which stops it: there is no mini player). A mapping made for an old
 the script is not followed; the drawer says to match it again on the computer.
 
 - **In the bundle.** `playgrounds/<uuid>.json` per playground: title, status, steps (explanation,
-  line notes, tries, quiz), every cell's source, and saved outputs in the sanitized form the app's
+  line notes, tries, quiz and answer), every cell's source, and saved outputs in the sanitized form the app's
   tab uses (text, HTML as a tag tree, PNG). No notebook JSON, datasets, model or error. The paper
   document carries a `playground` summary and each episode a `follow_along` list (spans, `stale`).
   Same hashing as every other document, so an unchanged playground is not uploaded again.

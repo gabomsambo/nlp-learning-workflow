@@ -9,7 +9,8 @@ Grounding: the model sees only the notebook — its markdown, its code with
 line numbers, and its saved outputs. It is told to explain from those and to
 invent no results. Validation then enforces the parts that can be checked:
 every cell index is a real code cell, cells are in notebook order and appear
-once, line notes point at real lines, at most three tries per cell, each try
+once, line notes point at real lines (a skipped non-blank line is reported
+and makes the guide partial), at most three tries per cell, each try
 actually changes the code, and the explanation is one short sentence.
 
 A batch whose answer cannot be used drops only that batch; what the other
@@ -27,9 +28,10 @@ from pydantic import BaseModel, Field
 
 from .notebook import cells_view, code_cell_indices, tree_text
 
-#: Code cells per model call. Bounded by the answer, not the prompt: each
-#: cell's tries repeat the whole cell, and the answer must fit MAX_TOKENS.
-BATCH_CODE_CELLS = 12
+#: Code cells per model call. Bounded by the answer, not the prompt: every
+#: non-blank line gets a note, each cell's tries repeat the whole cell, and
+#: the answer must fit MAX_TOKENS.
+BATCH_CODE_CELLS = 3
 
 #: Prompt characters per batch (cells plus outputs) before a split is forced.
 BATCH_CHARS = 60_000
@@ -58,9 +60,10 @@ Group the code cells you are asked to explain into study steps that follow the n
 
 For each code cell write:
 - explanation: ONE plain sentence, at most 25 words, saying what the cell does and why it matters here. No jargon without a reason.
-- line_notes: notes for the NON-OBVIOUS lines only, by line number. Short. Skip lines whose meaning is plain. An empty list is fine.
+- line_notes: one short, plain, beginner-level note for EVERY non-blank code line, by line number. Explain even basic syntax and comment-only lines. Do not combine lines or skip a line because it looks obvious.
 - tries: zero to three "try this" tweaks, only where changing something teaches something (a parameter, a threshold, a column, a seed). Each has a short imperative label (for example "Use 256 rows per tree"), the FULL modified cell as code (not a fragment, not a diff), and expect: one sentence on what should change and why. Do not offer a try that only renames things or reformats.
 - quiz: one question the learner should be able to answer about this cell.
+- quiz_answer: the answer to that question, stated plainly and completely so the learner can study it immediately.
 
 Grounding rules, which are not negotiable:
 - Use only what is in the notebook: its code, its text and its saved outputs.
@@ -92,6 +95,7 @@ class CellDraft(BaseModel):
     line_notes: List[LineNoteDraft]
     tries: List[TryDraft]
     quiz: str
+    quiz_answer: str
 
 
 class StepDraft(BaseModel):
@@ -209,6 +213,8 @@ class Validated:
     explained: List[int] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)  # dropped details, not gaps
+    #: Kept cells whose line notes skip a non-blank line. The guide is partial.
+    incomplete: List[int] = field(default_factory=list)
 
 
 def _words(text: str) -> int:
@@ -266,6 +272,7 @@ def _validate_cell(cell: CellDraft, source: str, out: Validated) -> Optional[Dic
     idx = cell.cell_index
     explanation = _one_line(cell.explanation)
     quiz = _one_line(cell.quiz)
+    quiz_answer = _one_line(cell.quiz_answer)
     if not explanation:
         out.problems.append(f"Cell {idx} had no explanation; dropped.")
         return None
@@ -278,6 +285,9 @@ def _validate_cell(cell: CellDraft, source: str, out: Validated) -> Optional[Dic
     if not quiz:
         out.problems.append(f"Cell {idx} had no quiz question; dropped.")
         return None
+    if not quiz_answer:
+        out.problems.append(f"Cell {idx} had no quiz answer; dropped.")
+        return None
 
     n_lines = len(source.split("\n"))
     notes: Dict[int, str] = {}
@@ -287,6 +297,17 @@ def _validate_cell(cell: CellDraft, source: str, out: Validated) -> Optional[Dic
             out.notes.append(f"Cell {idx}: line note for line {note.line} dropped.")
             continue
         notes.setdefault(note.line, text)
+
+    required_lines = [
+        line for line, text in enumerate(source.split("\n"), 1) if text.strip()
+    ]
+    missing_notes = [line for line in required_lines if line not in notes]
+    if missing_notes:
+        missing = ", ".join(str(line) for line in missing_notes)
+        # Keep the cell: a missed note should not cost the learner the
+        # explanation, the other notes and the quiz. The gap is reported.
+        out.problems.append(f"Cell {idx} has no line note for line(s) {missing}.")
+        out.incomplete.append(idx)
 
     tries = []
     for t in cell.tries:
@@ -310,6 +331,7 @@ def _validate_cell(cell: CellDraft, source: str, out: Validated) -> Optional[Dic
         "line_notes": [{"line": line, "note": notes[line]} for line in sorted(notes)],
         "tries": tries,
         "quiz": quiz,
+        "quiz_answer": quiz_answer,
     }
 
 
