@@ -1288,6 +1288,19 @@ volume; metadata is `podcast_scripts.audio_metadata` (migration 014, hand-applie
 Rebuild the webui image after compose changes — it adds `ffmpeg`, `gradio_client`,
 `extra_hosts`, and the voices mount.
 
+## The cloud reader has no path to AI, keys or spend
+
+`cloud/reader/` is a read-only Cloudflare Worker (R2 + D1 + static assets) that serves a
+published copy of the library. Postgres stays the truth; operations are in
+`docs/cloud-reader.md`, design in `cloud/reader/README.md`.
+
+`scripts/check_cloud_reader.py` (stdlib only, CI job `guard`) fails the build if
+`wrangler.toml` declares any binding but `DOCS`, `REVIEWS` and `ASSETS`, if the Worker source
+fetches anything but the Access key endpoint in `certs.js`, or if the page names another
+origin. A new binding, `[vars]` name or outbound call means editing that script's allow-lists
+deliberately; do not add a `--ignore` or skip the step. `tests/test_check_cloud_reader.py`
+holds a failing fixture per rule. Run the Worker tests with `node --test cloud/reader/test/*.test.mjs`.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
