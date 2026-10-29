@@ -461,7 +461,7 @@ def test_citation_fetch_uses_the_real_tool_interface_and_not_external_ids():
     """Mock(spec=...) fails if the builder calls a method the class lacks."""
     assert callable(SemanticScholarTool.get_references)
     assert callable(SemanticScholarTool.get_citations)
-    assert callable(SemanticScholarTool._enforce_rate_limit)
+    assert callable(SemanticScholarTool._request)
 
     tool = Mock(spec=SemanticScholarTool)
     external = PaperRef(id="ext:9", title="Outside", authors=["Z"])
