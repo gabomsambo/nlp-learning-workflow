@@ -11,6 +11,7 @@ export function parseRoute(hash) {
   if (parts[0] === 'lessons' && parts.length === 1) return { name: 'lessons' };
   if (parts[0] === 'review' && parts.length === 1) return { name: 'review' };
   if (parts[0] === 'listen' && parts.length === 1) return { name: 'listen' };
+  if (parts[0] === 'offline' && parts.length === 1) return { name: 'offline' };
   if (parts[0] === 'listen' && parts.length === 2) {
     try {
       return { name: 'episode', id: decodeURIComponent(parts[1]) };
