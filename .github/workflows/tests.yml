@@ -45,6 +45,13 @@ jobs:
       - name: Check for unquoted pillar slugs
         run: python scripts/check_bare_slugs.py
 
+      # Same reason, same job: scripts/check_cloud_reader.py is stdlib-only. It fails
+      # the build if the cloud reader's Worker gains a binding other than DOCS, REVIEWS
+      # and ASSETS, an outbound fetch beyond the Access key endpoint, or a page that
+      # reaches another origin. See docs/cloud-reader.md.
+      - name: Check the cloud reader makes no AI or outside calls
+        run: python scripts/check_cloud_reader.py
+
   shellcheck:
     name: workstation shellcheck
     runs-on: ubuntu-latest
