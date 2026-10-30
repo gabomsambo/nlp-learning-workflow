@@ -20,10 +20,10 @@ PID_FILE="$STATE_DIR/indextts.pid"
 LOG_FILE="$STATE_DIR/indextts.log"
 WEBUI_WAIT_SECONDS="${WEBUI_WAIT_SECONDS:-90}"
 TTS_WAIT_SECONDS="${TTS_WAIT_SECONDS:-180}"
-APP_URL="http://localhost:8000/"
-WEBUI_HEALTH_URL="http://127.0.0.1:8000/health"
-POSTGREST_URL_HOST="http://127.0.0.1:3000/"
-SEARXNG_HEALTH_URL="http://127.0.0.1:8080/healthz"
+APP_URL="http://localhost:3020/"
+WEBUI_HEALTH_URL="http://127.0.0.1:3020/health"
+POSTGREST_URL_HOST="http://127.0.0.1:3021/"
+SEARXNG_HEALTH_URL="http://127.0.0.1:3022/healthz"
 
 if [[ -t 1 ]]; then
   C_OK=$'\033[32m'
@@ -144,7 +144,7 @@ resolve() {
 host_tts_url() {
   local url
   url="$(resolve INDEXTTS_URL)"
-  [[ -n "$url" ]] || url="http://127.0.0.1:7860"
+  [[ -n "$url" ]] || url="http://127.0.0.1:3026"
   url="${url%/}"
   url="${url/host.docker.internal/127.0.0.1}"
   printf '%s' "$url"
@@ -157,7 +157,7 @@ port_from_url() {
   if [[ "$rest" == *:* ]]; then
     printf '%s' "${rest##*:}"
   else
-    printf '%s' "7860"
+    printf '%s' "3026"
   fi
 }
 
@@ -498,7 +498,7 @@ status_qdrant() {
   local cloud key
   # Published host port of the compose `qdrant` service. Inside the
   # containers QDRANT_URL is http://qdrant:6333; this probe is from the host.
-  status_qdrant_probe "Qdrant" "http://127.0.0.1:6333" "" "./workstation up"
+  status_qdrant_probe "Qdrant" "http://127.0.0.1:3023" "" "./workstation up"
   cloud="$(resolve QDRANT_CLOUD_URL)"
   if [[ -z "$cloud" ]]; then
     row ok "Qdrant Cloud" "OK" "not configured"

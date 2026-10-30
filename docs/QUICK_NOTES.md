@@ -122,7 +122,7 @@ Use it in your code:
 from deep_research.tools.searxng_search import SearXNGSearchTool, SearXNGSearchToolConfig, SearXNGSearchToolInputSchema
 
 # Configure and instantiate the tool
-search_config = SearXNGSearchToolConfig(base_url="http://localhost:8080")
+search_config = SearXNGSearchToolConfig(base_url="http://localhost:3022")
 search_tool = SearXNGSearchTool(search_config)
 
 # Run the tool with its specific input schema

@@ -341,13 +341,13 @@ def test_up_without_tts_does_not_start_indextts_or_rebuild(launcher):
     assert vault.is_dir()
     assert vault.stat().st_uid == os.getuid()
     assert "Waiting for the app ready." in proc.stdout
-    assert "App: http://localhost:8000/" in proc.stdout
+    assert "App: http://localhost:3020/" in proc.stdout
     assert not launcher["marker"].exists()
     log = _log(launcher)
     assert " up -d" in log
     assert "--build" not in log
     assert " stop" not in log
-    assert "xdg-open http://localhost:8000/" in log
+    assert "xdg-open http://localhost:3020/" in log
 
 
 def test_up_without_tts_notices_a_running_indextts(launcher):
@@ -668,7 +668,7 @@ def test_get_started_points_at_workstation():
 
 
 def test_compose_defaults_come_from_docker_compose():
-    """Host-side IndexTTS settings fall back to the compose file, port 7860."""
+    """Host-side IndexTTS settings fall back to the compose file, port 3026."""
     proc = subprocess.run(
         [
             "bash",
@@ -684,20 +684,20 @@ def test_compose_defaults_come_from_docker_compose():
     )
     assert proc.returncode == 0, proc.stderr
     url, command = proc.stdout.splitlines()
-    assert url == "http://host.docker.internal:7860"
-    assert "--port 7860" in command
+    assert url == "http://host.docker.internal:3026"
+    assert "--port 3026" in command
     assert "uv run webui.py" in command
 
 
-def test_readme_documents_workstation_and_port_7860():
+def test_readme_documents_workstation_and_port_3026():
     readme = (ROOT / "README.md").read_text()
     start = readme.split("### Start it", 1)[1].split("## ", 1)[0]
     assert "./workstation up" in start
     assert "./workstation up --tts" in start
-    assert "7860" in start
+    assert "3026" in start
     assert "7861" not in start
     agents = (ROOT / "AGENTS.md").read_text()
-    assert "http://host.docker.internal:7860" in agents
+    assert "http://host.docker.internal:3026" in agents
     assert "http://host.docker.internal:7861" not in agents
     template = DESKTOP_TEMPLATE.read_text()
     assert "Terminal=true" in template

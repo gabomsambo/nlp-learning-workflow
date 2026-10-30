@@ -181,13 +181,13 @@ jobs:
           # nlp_pillars/llm_routes.py now). It is still exported so a stale
           # .env line does not change the setting the ingest agent records.
           DEFAULT_MODEL: gpt-4o-mini
-          SUPABASE_URL: http://localhost:3000
+          SUPABASE_URL: http://localhost:3021
           SUPABASE_KEY: test-token-not-real
-          POSTGREST_URL: http://localhost:3000
-          QDRANT_URL: http://localhost:6333
+          POSTGREST_URL: http://localhost:3021
+          QDRANT_URL: http://localhost:3023
           QDRANT_API_KEY: ""
           DEEPSEEK_API_KEY: test-key-not-real
-          SEARXNG_URL: http://localhost:8080
+          SEARXNG_URL: http://localhost:3022
         # --continue-on-collection-errors so one unimportable module reports
         # alongside everything else instead of masking the whole run, which is
         # the failure mode that let the slug bug hide.
@@ -230,7 +230,7 @@ jobs:
       # — four tests better — and the difference is the local environment being
       # dishonest, not the runner being wrong:
       #   - the five test_cli tests PASS locally only when the compose stack
-      #     happens to be up, because they really do dial PostgREST on :3000
+      #     happens to be up, because they really do dial PostgREST on :3021
       #   - test_vectors' embedding-fallback test FAILS locally because
       #     config.py's `load_dotenv(override=True)` means the real
       #     OPENAI_API_KEY in .env beats the placeholder exported below, so the

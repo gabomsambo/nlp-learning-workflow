@@ -171,5 +171,5 @@ for pillar in pillars:
     else:
         print(f"❌ Failed: {pillar['name']} - {resp.status_code} - {resp.text[:200]}")
 
-print("\n✅ All pillars created! Check your WebUI at http://localhost:8000/pillars/")
+print("\n✅ All pillars created! Check your WebUI at http://localhost:3020/pillars/")
 

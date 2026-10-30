@@ -73,12 +73,12 @@ def test_chunk_synthesis_error_carries_index_and_reason():
 
 @pytest.mark.integration
 def test_captain_chunk_9_succeeds_after_prepare_on_live_indextts():
-    """Live gate: requires IndexTTS on localhost:7860."""
+    """Live gate: requires IndexTTS on localhost:3026."""
     from pathlib import Path
 
     from nlp_pillars.tts.indextts_client import IndexTtsClient
 
-    client = IndexTtsClient("http://127.0.0.1:7860", Path("/tmp/tts_test"))
+    client = IndexTtsClient("http://127.0.0.1:3026", Path("/tmp/tts_test"))
     if client.check_status().status.value != "ready":
         pytest.skip("IndexTTS not running")
 

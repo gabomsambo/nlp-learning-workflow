@@ -55,7 +55,7 @@ GEN_SINGLE_PARAMS: List[str] = [
 ]
 
 DEFAULT_START_COMMAND = (
-    "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860"
+    "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 3026"
 )
 
 _PROGRESS_RE = re.compile(r"speech synthesis\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)

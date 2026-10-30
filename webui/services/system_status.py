@@ -136,7 +136,7 @@ _KEY_FAILURES = (
 
 
 def resolve_postgrest_url() -> str:
-    url = os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL") or "http://localhost:3000"
+    url = os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL") or "http://localhost:3021"
     url = url.rstrip("/")
     if "supabase.co" in url and "/rest/v1" not in url:
         url = f"{url}/rest/v1"
