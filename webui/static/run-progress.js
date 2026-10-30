@@ -214,6 +214,13 @@
     playground_align_prepare: 'Reading the episode and the study guide',
     playground_align: 'Matching script lines to code cells',
     playground_align_persist: 'Saving the follow-along',
+    map_load: 'Reading works, citations and vectors',
+    map_graph: 'Connecting the works',
+    map_communities: 'Finding communities',
+    map_lineage: 'Tracing the line of development',
+    map_layout: 'Placing the works on the map',
+    map_suggest: 'Ranking suggestions and the queue',
+    map_persist: 'Saving the map',
   };
 
   function stageLabel(name) {
@@ -490,6 +497,19 @@
       }
       if (run.status === 'failed') {
         return 'Failed — no new follow-along was saved' + (run.error ? ' — ' + run.error : '');
+      }
+    }
+    if (run.kind === 'map_build') {
+      // A map build changes only its own snapshot, so a failure leaves the
+      // previous map in place; say so rather than "start again".
+      var mp = (run.result && run.result.stats) || {};
+      if (run.status === 'succeeded') {
+        return 'Done — map saved: ' + (mp.works || 0) + ' works, ' +
+          (mp.topics || 0) + ' topic' + (mp.topics === 1 ? '' : 's') + ', ' +
+          (mp.suggestions || 0) + ' suggestion' + (mp.suggestions === 1 ? '' : 's');
+      }
+      if (run.status === 'failed') {
+        return 'Failed — the previous map is unchanged' + (run.error ? ' — ' + run.error : '');
       }
     }
     if (run.status === 'succeeded') {

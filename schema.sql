@@ -388,13 +388,14 @@ CREATE TABLE pipeline_runs (
         CHECK (trigger_source IN ('ui_pipeline', 'ui_select', 'ui_discover',
                                   'scheduler', 'ui_podcast_audio', 'ui_upload',
                                   'ui_podcast_script', 'ui_podcast_factcheck',
-                                  'auto_podcast_factcheck', 'ui_playground')),
+                                  'auto_podcast_factcheck', 'ui_playground',
+                                  'ui_map')),
     kind             TEXT NOT NULL
         CONSTRAINT pipeline_runs_kind_check
         CHECK (kind IN ('run_daily', 'process_selected', 'discover',
                         'podcast_audio', 'upload', 'podcast_script',
                         'podcast_factcheck', 'playground_explain',
-                        'playground_align')),
+                        'playground_align', 'map_build')),
     -- NOT NULL with a default on purpose: TableQuery.eq() renders Python None as the
     -- string "None", so nothing here may be filtered while nullable. Lookups use
     -- status, never "finished_at IS NULL".
@@ -1417,17 +1418,23 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 -- correctness constraint, not a performance index: a check-then-insert in Python
 -- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
 --
--- Uploads, podcast_script, podcast_factcheck, playground_explain and
--- playground_align runs are exempt (migrations 015 / 016 / 023 / 028 / 029). The guard is about two writers
+-- Uploads, podcast_script, podcast_factcheck, playground_explain,
+-- playground_align and map_build runs are exempt (migrations 015 / 016 / 023 /
+-- 028 / 029 / 034). The guard is about two writers
 -- driving one pillar's queue at once. Those kinds are scoped to one paper or
 -- one script, so refusing them because a discovery run is in flight would
 -- refuse work for a conflict that does not exist. One script still has at most
--- one active fact-check, and one playground one active explain pass.
+-- one active fact-check, one playground one active explain pass, and one
+-- pillar one active map build.
 CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
     ON pipeline_runs (pillar_id)
     WHERE status IN ('pending', 'running')
       AND kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck',
-                       'playground_explain', 'playground_align');
+                       'playground_explain', 'playground_align', 'map_build');
+CREATE UNIQUE INDEX pipeline_runs_one_active_map_build
+    ON pipeline_runs (pillar_id)
+    WHERE kind = 'map_build'
+      AND status IN ('pending', 'running');
 CREATE UNIQUE INDEX pipeline_runs_one_active_factcheck_per_script
     ON pipeline_runs ((result->>'script_id'))
     WHERE kind = 'podcast_factcheck'
@@ -1868,3 +1875,81 @@ COMMENT ON VIEW paper_citations IS
 
 GRANT EXECUTE ON FUNCTION work_display_id(UUID) TO web_anon;
 GRANT EXECUTE ON FUNCTION apply_work_batch(JSONB, JSONB, JSONB, JSONB) TO web_anon;
+
+-- ==========================================
+-- PAPER MAP SNAPSHOTS  (docs/migrations/034_map_snapshots.sql)
+-- One rebuildable snapshot per pillar, written by `map build`
+-- (nlp_pillars/map_build.py, nlp_pillars/map_store.py).
+-- ==========================================
+
+CREATE TABLE map_snapshots (
+    scope        TEXT PRIMARY KEY CHECK (btrim(scope) <> ''),
+    built_at     TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
+    params_hash  TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    model_id     TEXT,
+    run_id       UUID,
+    stats        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    positions    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    layout_key   TEXT,
+    payload      JSONB NOT NULL,
+    CONSTRAINT map_snapshots_payload_object CHECK (jsonb_typeof(payload) = 'object'),
+    CONSTRAINT map_snapshots_positions_object CHECK (jsonb_typeof(positions) = 'object')
+);
+
+COMMENT ON TABLE map_snapshots IS
+    'The paper map per scope (pillar id): a rebuildable projection written by `map build`. See nlp_pillars/map_build.py.';
+COMMENT ON COLUMN map_snapshots.positions IS
+    'node id -> [x, y] from payload.nodes, so the next build can warm-start its layout cheaply.';
+COMMENT ON COLUMN map_snapshots.layout_key IS
+    'Hash of the graph the positions were laid out for. An identical graph reuses them unchanged, so an unchanged map keeps its payload_hash.';
+
+-- Returns {scope, built_at, changed}. changed is false when the stored payload
+-- already had this hash: the map did not move, only built_at did.
+CREATE OR REPLACE FUNCTION put_map_snapshot(
+    p_scope        TEXT,
+    p_params_hash  TEXT,
+    p_payload_hash TEXT,
+    p_model_id     TEXT,
+    p_stats        JSONB,
+    p_positions    JSONB,
+    p_layout_key   TEXT,
+    p_payload      JSONB,
+    p_run_id       UUID
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    previous TEXT;
+    stamped  TIMESTAMPTZ := timezone('utc', now());
+BEGIN
+    SELECT payload_hash INTO previous FROM map_snapshots WHERE scope = p_scope;
+    INSERT INTO map_snapshots (
+        scope, built_at, params_hash, payload_hash, model_id, run_id,
+        stats, positions, layout_key, payload
+    )
+    VALUES (
+        p_scope, stamped, p_params_hash, p_payload_hash, p_model_id, p_run_id,
+        COALESCE(p_stats, '{}'::jsonb), COALESCE(p_positions, '{}'::jsonb),
+        p_layout_key, p_payload
+    )
+    ON CONFLICT (scope) DO UPDATE SET
+        built_at = EXCLUDED.built_at,
+        params_hash = EXCLUDED.params_hash,
+        payload_hash = EXCLUDED.payload_hash,
+        model_id = EXCLUDED.model_id,
+        run_id = EXCLUDED.run_id,
+        stats = EXCLUDED.stats,
+        positions = EXCLUDED.positions,
+        layout_key = EXCLUDED.layout_key,
+        payload = EXCLUDED.payload;
+    RETURN jsonb_build_object(
+        'scope', p_scope,
+        'built_at', stamped,
+        'changed', previous IS DISTINCT FROM p_payload_hash
+    );
+END;
+$$;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON map_snapshots TO web_anon;
+GRANT EXECUTE ON FUNCTION put_map_snapshot(TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT, JSONB, UUID) TO web_anon;

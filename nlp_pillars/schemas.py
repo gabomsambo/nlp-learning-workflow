@@ -905,6 +905,15 @@ class StageName(str, Enum):
     PLAYGROUND_ALIGN = "playground_align"
     PLAYGROUND_ALIGN_PERSIST = "playground_align_persist"
 
+    # Paper map build (nlp_pillars/map_build.py, nlp_pillars/map_store.py).
+    MAP_LOAD = "map_load"
+    MAP_GRAPH = "map_graph"
+    MAP_COMMUNITIES = "map_communities"
+    MAP_LINEAGE = "map_lineage"
+    MAP_LAYOUT = "map_layout"
+    MAP_SUGGEST = "map_suggest"
+    MAP_PERSIST = "map_persist"
+
 
 #: Stages for a full `run_daily`, in order. Index + 1 is the stored `seq`.
 #:
@@ -1035,6 +1044,19 @@ PLAYGROUND_ALIGN_STAGES: List[StageName] = [
     StageName.PLAYGROUND_ALIGN_PREPARE,
     StageName.PLAYGROUND_ALIGN,
     StageName.PLAYGROUND_ALIGN_PERSIST,
+]
+
+#: One pillar's paper map. load reads works, citations, vectors and the queue
+#: (and embeds the pillar goal with the local model; no paid call). The middle
+#: five are pure computation. persist writes the map_snapshots row.
+MAP_BUILD_STAGES: List[StageName] = [
+    StageName.MAP_LOAD,
+    StageName.MAP_GRAPH,
+    StageName.MAP_COMMUNITIES,
+    StageName.MAP_LINEAGE,
+    StageName.MAP_LAYOUT,
+    StageName.MAP_SUGGEST,
+    StageName.MAP_PERSIST,
 ]
 
 

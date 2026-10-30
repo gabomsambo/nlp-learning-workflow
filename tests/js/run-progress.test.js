@@ -381,6 +381,39 @@ test('fact-check stages have prose labels and a claim summary', () => {
   assert.equal(statusColor(failed), 'run-danger');
 });
 
+test('map build stages have prose labels and the map is summarised', () => {
+  const names = ['map_load', 'map_graph', 'map_communities', 'map_lineage',
+                 'map_layout', 'map_suggest', 'map_persist'];
+  for (const name of names) {
+    assert.notEqual(stageLabel(name), name);
+  }
+  const running = {
+    kind: 'map_build',
+    status: 'running',
+    current_stage: 'map_lineage',
+    stages: names.map((name, i) => ({
+      name,
+      status: i < 3 ? 'completed' : (i === 3 ? 'running' : 'pending'),
+    })),
+  };
+  assert.equal(summarise(running), 'Step 4 of 7 — Tracing the line of development');
+  const done = {
+    kind: 'map_build',
+    status: 'succeeded',
+    stages: names.map((name) => ({ name, status: 'completed' })),
+    result: { pillar_id: 'p', stats: { works: 457, topics: 4, suggestions: 1 } },
+  };
+  assert.equal(summarise(done), 'Done — map saved: 457 works, 4 topics, 1 suggestion');
+  const failed = {
+    kind: 'map_build',
+    status: 'failed',
+    stages: names.map((name) => ({ name, status: 'completed' })),
+    error: 'Apply docs/migrations/034_map_snapshots.sql by hand.',
+  };
+  assert.match(summarise(failed), /previous map is unchanged/);
+  assert.match(summarise(failed), /034_map_snapshots/);
+});
+
 test('an unsaved podcast script is not painted as a clean success', () => {
   const run = {
     kind: 'podcast_script',
