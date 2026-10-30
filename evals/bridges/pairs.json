@@ -1,0 +1,432 @@
+[
+ {
+  "id": "C01",
+  "kind": "cites",
+  "a_arxiv": "1905.05950",
+  "b_arxiv": "1810.04805",
+  "a_label": "Tenney et al. 2019",
+  "b_label": "Devlin et al. 2018",
+  "citing": "a",
+  "context": "Pre-trained sentence encoders such as ELMo (Peters et al. 2018a) and BERT (Devlin et al. 2019) have rapidly improved the state of the art on many NLP tasks, and seem poised to displace both static word embeddings (Mikolov et al. 2013) and discrete pipelines (Manning et al. 2014) as the basis for natural language processing systems."
+ },
+ {
+  "id": "C02",
+  "kind": "cites",
+  "a_arxiv": "1905.05950",
+  "b_arxiv": "1310.4546",
+  "a_label": "Tenney et al. 2019",
+  "b_label": "Mikolov et al. 2013",
+  "citing": "a",
+  "context": "Pre-trained sentence encoders such as ELMo (Peters et al. 2018a) and BERT (Devlin et al. 2019) have rapidly improved the state of the art on many NLP tasks, and seem poised to displace both static word embeddings (Mikolov et al. 2013) and discrete pipelines (Manning et al. 2014) as the basis for natural language processing systems."
+ },
+ {
+  "id": "C03",
+  "kind": "cites",
+  "a_arxiv": "1905.05950",
+  "b_arxiv": "1808.09031",
+  "a_label": "Tenney et al. 2019",
+  "b_label": "Marvin and Linzen 2018",
+  "citing": "a",
+  "context": "Much of this work is behavior-based, designing controlled test sets and analyzing errors in order to reverse-engineer the types of abstractions the model may or may not be representing (Conneau et al. 2018; Marvin and Linzen 2018; Poliak et al. 2018, e.g.)."
+ },
+ {
+  "id": "C04",
+  "kind": "cites",
+  "a_arxiv": "1905.05950",
+  "b_arxiv": "1805.01070",
+  "a_label": "Tenney et al. 2019",
+  "b_label": "Conneau et al. 2018",
+  "citing": "a",
+  "context": "Much of this work is behavior-based, designing controlled test sets and analyzing errors in order to reverse-engineer the types of abstractions the model may or may not be representing (Conneau et al. 2018; Marvin and Linzen 2018; Poliak et al. 2018, e.g.)."
+ },
+ {
+  "id": "C05",
+  "kind": "cites",
+  "a_arxiv": "1902.10186",
+  "b_arxiv": "1409.0473",
+  "a_label": "Jain and Wallace 2019",
+  "b_label": "Bahdanau et al. 2014",
+  "citing": "a",
+  "context": "Attention mechanisms Bahdanau et al. 2014 induce conditional distributions over input units to compose a weighted context vector for downstream modules."
+ },
+ {
+  "id": "C06",
+  "kind": "cites",
+  "a_arxiv": "1902.10186",
+  "b_arxiv": "1612.08220",
+  "a_label": "Jain and Wallace 2019",
+  "b_label": "Li et al. 2016",
+  "citing": "a",
+  "context": "Li et al. Li et al. 2016 summarized this commonly held view in NLP: “Attention provides an important way to explain the workings of neural models\"."
+ },
+ {
+  "id": "C07",
+  "kind": "cites",
+  "a_arxiv": "1902.10186",
+  "b_arxiv": "1608.05745",
+  "a_label": "Jain and Wallace 2019",
+  "b_label": "Choi et al. 2016",
+  "citing": "a",
+  "context": "Indeed, claims that attention provides interpretability are common in the literature, e.g., Xu et al. 2015; Choi et al. 2016; Lei et al. 2017; Martins and Astudillo 2016; Xie et al. 2017; Mullenbach et al. 2018. 1 1 1 We do not intend to single out any particular work; indeed one of the authors has himself presented (supervised) attention as providing interpretability Zhang et al. 2016."
+ },
+ {
+  "id": "C08",
+  "kind": "cites",
+  "a_arxiv": "1902.10186",
+  "b_arxiv": "1704.05908",
+  "a_label": "Jain and Wallace 2019",
+  "b_label": "Xie et al. 2017",
+  "citing": "a",
+  "context": "Indeed, claims that attention provides interpretability are common in the literature, e.g., Xu et al. 2015; Choi et al. 2016; Lei et al. 2017; Martins and Astudillo 2016; Xie et al. 2017; Mullenbach et al. 2018. 1 1 1 We do not intend to single out any particular work; indeed one of the authors has himself presented (supervised) attention as providing interpretability Zhang et al. 2016."
+ },
+ {
+  "id": "C09",
+  "kind": "cites",
+  "a_arxiv": "1906.04341",
+  "b_arxiv": "1511.01432",
+  "a_label": "Clark et al. 2019",
+  "b_label": "Dai and Le 2015",
+  "citing": "a",
+  "context": "Large pre-trained language models achieve very high accuracy when fine-tuned on supervised tasks (Dai and Le 2015; Peters et al. 2018; Radford et al. 2018), but it is not fully understood why."
+ },
+ {
+  "id": "C10",
+  "kind": "cites",
+  "a_arxiv": "1906.04341",
+  "b_arxiv": "1802.05365",
+  "a_label": "Clark et al. 2019",
+  "b_label": "Peters et al. 2018",
+  "citing": "a",
+  "context": "Large pre-trained language models achieve very high accuracy when fine-tuned on supervised tasks (Dai and Le 2015; Peters et al. 2018; Radford et al. 2018), but it is not fully understood why."
+ },
+ {
+  "id": "C11",
+  "kind": "cites",
+  "a_arxiv": "1906.04341",
+  "b_arxiv": "1608.04207",
+  "a_label": "Clark et al. 2019",
+  "b_label": "Adi et al. 2016",
+  "citing": "a",
+  "context": "Recent work has investigated this question by examining the outputs of language models on carefully chosen input sentences (Linzen et al. 2016) or examining the internal vector representations of the model through methods such as probing classifiers Adi et al. 2017; Belinkov et al. 2017."
+ },
+ {
+  "id": "C12",
+  "kind": "cites",
+  "a_arxiv": "1906.04341",
+  "b_arxiv": "1409.0473",
+  "a_label": "Clark et al. 2019",
+  "b_label": "Bahdanau et al. 2014",
+  "citing": "a",
+  "context": "Attention (Bahdanau et al. 2015) has been a highly successful neural network component."
+ },
+ {
+  "id": "C13",
+  "kind": "cites",
+  "a_arxiv": "1906.04341",
+  "b_arxiv": "1810.04805",
+  "a_label": "Clark et al. 2019",
+  "b_label": "Devlin et al. 2018",
+  "citing": "a",
+  "context": "(Devlin et al. 2019), a large pre-trained Transformer (Vaswani et al. 2017) network that has demonstrated excellent performance on many tasks."
+ },
+ {
+  "id": "C14",
+  "kind": "cites",
+  "a_arxiv": "1906.04341",
+  "b_arxiv": "1706.03762",
+  "a_label": "Clark et al. 2019",
+  "b_label": "Vaswani et al. 2017",
+  "citing": "a",
+  "context": "(Devlin et al. 2019), a large pre-trained Transformer (Vaswani et al. 2017) network that has demonstrated excellent performance on many tasks."
+ },
+ {
+  "id": "C15",
+  "kind": "cites",
+  "a_arxiv": "1909.03368",
+  "b_arxiv": "1810.04805",
+  "a_label": "Hewitt and Liang 2019",
+  "b_label": "Devlin et al. 2018",
+  "citing": "a",
+  "context": "As large-scale unsupervised representations such as BERT and ELMo improve downstream performance on a wide range of natural language tasks Devlin et al. 2019; Peters et al. 2018a; Radford et al. 2019, what these models learn about language remains an open scientific question."
+ },
+ {
+  "id": "C16",
+  "kind": "cites",
+  "a_arxiv": "1909.03368",
+  "b_arxiv": "1802.05365",
+  "a_label": "Hewitt and Liang 2019",
+  "b_label": "Peters et al. 2018",
+  "citing": "a",
+  "context": "As large-scale unsupervised representations such as BERT and ELMo improve downstream performance on a wide range of natural language tasks Devlin et al. 2019; Peters et al. 2018a; Radford et al. 2019, what these models learn about language remains an open scientific question."
+ },
+ {
+  "id": "C17",
+  "kind": "cites",
+  "a_arxiv": "1909.03368",
+  "b_arxiv": "1711.10203",
+  "a_label": "Hewitt and Liang 2019",
+  "b_label": "Hupkes et al. 2017",
+  "citing": "a",
+  "context": "Probing papers tend to acknowledge this uncertainty, putting accuracies in context using random representation baselines Zhang and Bowman 2018 and careful task design Hupkes et al. 2018."
+ },
+ {
+  "id": "C18",
+  "kind": "cites",
+  "a_arxiv": "1909.03368",
+  "b_arxiv": "1809.10040",
+  "a_label": "Hewitt and Liang 2019",
+  "b_label": "Zhang and Bowman 2018",
+  "citing": "a",
+  "context": "Probing papers tend to acknowledge this uncertainty, putting accuracies in context using random representation baselines Zhang and Bowman 2018 and careful task design Hupkes et al. 2018."
+ },
+ {
+  "id": "C19",
+  "kind": "cites",
+  "a_arxiv": "1909.03368",
+  "b_arxiv": "1809.03992",
+  "a_label": "Hewitt and Liang 2019",
+  "b_label": "Ettinger et al. 2018",
+  "citing": "a",
+  "context": "Early probing papers used linear functions Shi et al. 2016; Ettinger et al. 2016; Alain and Bengio 2016, which are still used Bisazza and Tump 2018; Liu et al. 2019, but multi-layer perceptron (MLP) probes are at least as popular Belinkov et al. 2017; Conneau et al. 2018; Adi et al. 2017; Tenney et al. 2019; Ettinger et al. 2018."
+ },
+ {
+  "id": "C20",
+  "kind": "cites",
+  "a_arxiv": "1909.03368",
+  "b_arxiv": "1610.01644",
+  "a_label": "Hewitt and Liang 2019",
+  "b_label": "Alain and Bengio 2016",
+  "citing": "a",
+  "context": "Early probing papers used linear functions Shi et al. 2016; Ettinger et al. 2016; Alain and Bengio 2016, which are still used Bisazza and Tump 2018; Liu et al. 2019, but multi-layer perceptron (MLP) probes are at least as popular Belinkov et al. 2017; Conneau et al. 2018; Adi et al. 2017; Tenney et al. 2019; Ettinger et al. 2018."
+ },
+ {
+  "id": "C21",
+  "kind": "cites",
+  "a_arxiv": "2004.03061",
+  "b_arxiv": "1801.07772",
+  "a_label": "Pimentel et al. 2020",
+  "b_label": "Belinkov et al. 2018",
+  "citing": "a",
+  "context": "Many speculate that these representations encode a continuous analogue of discrete linguistic properties, e.g., part-of-speech tags, due to the networks’ impressive performance on many NLP tasks (Belinkov et al. 2017)."
+ },
+ {
+  "id": "C22",
+  "kind": "cites",
+  "a_arxiv": "2004.03061",
+  "b_arxiv": "1805.01070",
+  "a_label": "Pimentel et al. 2020",
+  "b_label": "Conneau et al. 2018",
+  "citing": "a",
+  "context": "As a result of this speculation, one common thread of research focuses on the construction of probes, i.e., supervised models that are trained to extract the linguistic properties directly (Belinkov et al. 2017; Conneau et al. 2018; Peters et al. 2018b; Zhang and Bowman 2018; Naik et al. 2018; Tenney et al. 2019)."
+ },
+ {
+  "id": "C23",
+  "kind": "cites",
+  "a_arxiv": "2004.03061",
+  "b_arxiv": "1808.08949",
+  "a_label": "Pimentel et al. 2020",
+  "b_label": "Peters et al. 2018",
+  "citing": "a",
+  "context": "As a result of this speculation, one common thread of research focuses on the construction of probes, i.e., supervised models that are trained to extract the linguistic properties directly (Belinkov et al. 2017; Conneau et al. 2018; Peters et al. 2018b; Zhang and Bowman 2018; Naik et al. 2018; Tenney et al. 2019)."
+ },
+ {
+  "id": "C24",
+  "kind": "cites",
+  "a_arxiv": "2004.03061",
+  "b_arxiv": "1909.03368",
+  "a_label": "Pimentel et al. 2020",
+  "b_label": "Hewitt and Liang 2019",
+  "citing": "a",
+  "context": "A syntactic probe, then, is a model for extracting syntactic properties, such as part of speech, from the representations Hewitt and Liang 2019."
+ },
+ {
+  "id": "C25",
+  "kind": "cites",
+  "a_arxiv": "2003.12298",
+  "b_arxiv": "1812.08951",
+  "a_label": "Voita and Titov 2020",
+  "b_label": "Belinkov and Glass 2018",
+  "citing": "a",
+  "context": "To estimate to what extent representations (e.g., ELMo Peters et al. 2018 or BERT Devlin et al. 2019) capture a linguistic property, most previous work uses ‘probing tasks’ (aka ‘probes’ and ‘diagnostic classifiers’); see Belinkov and Glass 2019 for a comprehensive review."
+ },
+ {
+  "id": "C26",
+  "kind": "cites",
+  "a_arxiv": "2003.12298",
+  "b_arxiv": "1810.04805",
+  "a_label": "Voita and Titov 2020",
+  "b_label": "Devlin et al. 2018",
+  "citing": "a",
+  "context": "To estimate to what extent representations (e.g., ELMo Peters et al. 2018 or BERT Devlin et al. 2019) capture a linguistic property, most previous work uses ‘probing tasks’ (aka ‘probes’ and ‘diagnostic classifiers’); see Belinkov and Glass 2019 for a comprehensive review."
+ },
+ {
+  "id": "C27",
+  "kind": "cites",
+  "a_arxiv": "2003.12298",
+  "b_arxiv": "1909.03368",
+  "a_label": "Voita and Titov 2020",
+  "b_label": "Hewitt and Liang 2019",
+  "citing": "a",
+  "context": "Analogously, their accuracy can be similar when probing for genuine linguistic labels and probing for tags randomly associated to word types (‘control tasks’, Hewitt and Liang 2019)."
+ },
+ {
+  "id": "C28",
+  "kind": "cites",
+  "a_arxiv": "2003.12298",
+  "b_arxiv": "math/0406077",
+  "a_label": "Voita and Titov 2020",
+  "b_label": "Grunwald 2004",
+  "citing": "a",
+  "context": "If the inputs and the outputs come from a true joint distribution q ⁡ (x, y) q(x,y), then, for any transmission method with codelength L L, it holds 𝔼 q ​ [ L ⁡ (y | x) ] ≥ H ⁡ (y | x) \\mathbb{E}_{q}[L(y|x)]\\geq H(y|x) Grunwald 2004."
+ },
+ {
+  "id": "C29",
+  "kind": "cites",
+  "a_arxiv": "2003.12298",
+  "b_arxiv": "1705.08665",
+  "a_label": "Voita and Titov 2020",
+  "b_label": "Louizos et al. 2017",
+  "citing": "a",
+  "context": "In our experiments, we use the network compression method of Louizos et al. 2017."
+ },
+ {
+  "id": "C30",
+  "kind": "co-cited",
+  "a_arxiv": "1810.04805",
+  "b_arxiv": "1310.4546",
+  "a_label": "Devlin et al. 2018",
+  "b_label": "Mikolov et al. 2013",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C31",
+  "kind": "co-cited",
+  "a_arxiv": "1409.0473",
+  "b_arxiv": "1612.08220",
+  "a_label": "Bahdanau et al. 2014",
+  "b_label": "Li et al. 2016",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C32",
+  "kind": "co-cited",
+  "a_arxiv": "1511.01432",
+  "b_arxiv": "1802.05365",
+  "a_label": "Dai and Le 2015",
+  "b_label": "Peters et al. 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C33",
+  "kind": "co-cited",
+  "a_arxiv": "1810.04805",
+  "b_arxiv": "1802.05365",
+  "a_label": "Devlin et al. 2018",
+  "b_label": "Peters et al. 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C34",
+  "kind": "co-cited",
+  "a_arxiv": "1801.07772",
+  "b_arxiv": "1805.01070",
+  "a_label": "Belinkov et al. 2018",
+  "b_label": "Conneau et al. 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C35",
+  "kind": "co-cited",
+  "a_arxiv": "1812.08951",
+  "b_arxiv": "1810.04805",
+  "a_label": "Belinkov and Glass 2018",
+  "b_label": "Devlin et al. 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "U36",
+  "kind": "unrelated",
+  "a_arxiv": "1502.03044",
+  "b_arxiv": "1802.05695",
+  "a_label": "Xu et al. 2015",
+  "b_label": "Mullenbach et al. 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "U37",
+  "kind": "unrelated",
+  "a_arxiv": "1310.4546",
+  "b_arxiv": "1608.05745",
+  "a_label": "Mikolov et al. 2013",
+  "b_label": "Choi et al. 2016",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C38",
+  "kind": "co-cited",
+  "a_arxiv": "1802.05365",
+  "b_arxiv": "1808.09031",
+  "a_label": "Peters et al. 2018",
+  "b_label": "Marvin and Linzen 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C39",
+  "kind": "co-cited",
+  "a_arxiv": "1608.05745",
+  "b_arxiv": "1704.05908",
+  "a_label": "Choi et al. 2016",
+  "b_label": "Xie et al. 2017",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C40",
+  "kind": "co-cited",
+  "a_arxiv": "1608.04207",
+  "b_arxiv": "1409.0473",
+  "a_label": "Adi et al. 2016",
+  "b_label": "Bahdanau et al. 2014",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C41",
+  "kind": "co-cited",
+  "a_arxiv": "1711.10203",
+  "b_arxiv": "1809.10040",
+  "a_label": "Hupkes et al. 2017",
+  "b_label": "Zhang and Bowman 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C42",
+  "kind": "co-cited",
+  "a_arxiv": "1808.08949",
+  "b_arxiv": "1806.00692",
+  "a_label": "Peters et al. 2018",
+  "b_label": "Naik et al. 2018",
+  "citing": null,
+  "context": null
+ },
+ {
+  "id": "C43",
+  "kind": "co-cited",
+  "a_arxiv": "1802.05365",
+  "b_arxiv": "1909.03368",
+  "a_label": "Peters et al. 2018",
+  "b_label": "Hewitt and Liang 2019",
+  "citing": null,
+  "context": null
+ }
+]

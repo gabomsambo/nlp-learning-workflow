@@ -175,6 +175,12 @@ stage can be moved with an env var — no code change:
 | Playground study guide | `LLM_PLAYGROUND_MODEL` | `claude-sonnet-5` |
 | Episode follow-along (script lines to code cells) | `LLM_PLAYGROUND_ALIGN_MODEL` | `claude-haiku-5-5` |
 | Playground "Explain the difference" | `LLM_PLAYGROUND_DIFF_MODEL` | `claude-haiku-5-5` |
+| Paper-map community names | `LLM_MAP_NAMES_MODEL` | `claude-haiku-5-5` |
+| Paper-map bridge sentences | `LLM_MAP_BRIDGE_MODEL` | `claude-haiku-5-5` |
+| Concept anchoring | `LLM_CONCEPT_ANCHOR_MODEL` | `claude-haiku-5-5` |
+
+The last three are the paper map's knowledge layer ([docs/KNOWLEDGE_LAYER.md](docs/KNOWLEDGE_LAYER.md)).
+`MAP_ENRICHMENT_ENABLED=false` turns all three off.
 
 Every call's model, token counts and cost are shown in the run's stage detail
 and logged at WARNING.

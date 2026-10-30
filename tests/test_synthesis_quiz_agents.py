@@ -45,7 +45,9 @@ def _lesson_draft(**overrides):
             "Self-attention captures long-range dependencies",
         ],
         "practice_ideas": ["Implement a mini-transformer"],
-        "connections": ["BERT uses the encoder"],
+        "connections": [
+            {"work": "Devlin et al. 2018", "relation": "uses", "why": "BERT uses the encoder"}
+        ],
         "examples": [],
     }
     values.update(overrides)

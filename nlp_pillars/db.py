@@ -323,7 +323,7 @@ def _dict_to_paper_note(row: Dict[str, Any]) -> PaperNote:
 
 def _lesson_to_dict(lesson: Lesson) -> Dict[str, Any]:
     """Convert Lesson to lessons table row."""
-    return {
+    row = {
         'paper_id': lesson.paper_id,
         'pillar_id': lesson.pillar_id,
         'tl_dr': lesson.tl_dr,
@@ -334,6 +334,11 @@ def _lesson_to_dict(lesson: Lesson) -> Dict[str, Any]:
         'estimated_time': lesson.estimated_time,
         'created_at': _stored_created_at(),
     }
+    if lesson.connection_links:
+        # Added by docs/migrations/035_knowledge_layer.sql. Left out when empty
+        # so a lesson with nothing typed never depends on the column.
+        row['connection_links'] = lesson.connection_links
+    return row
 
 
 def _dict_to_lesson(row: Dict[str, Any]) -> Lesson:
@@ -347,6 +352,7 @@ def _dict_to_lesson(row: Dict[str, Any]) -> Lesson:
         takeaways=row.get('takeaways', []),
         practice_ideas=row.get('practice_ideas', []),
         connections=row.get('connections', []),
+        connection_links=row.get('connection_links') or [],
         examples=[],  # Not stored in DB, provide empty list
         podcast_script=None,  # Not stored in lessons table
         difficulty=row.get('difficulty', 2),
@@ -1801,6 +1807,21 @@ def add_lesson(lesson: Lesson) -> bool:
         data = _lesson_to_dict(lesson)
 
         response = client.table('lessons').insert(data)
+
+        # Same degradation as podcast_scripts.source_material: a database that
+        # has not had migration 035 run still saves the lesson, without its
+        # typed copy of the connections, and says so.
+        if (
+            response['error']
+            and 'connection_links' in data
+            and _is_missing_column(response['error'], 'connection_links')
+        ):
+            logger.error(
+                "lessons has no connection_links column - run "
+                "docs/migrations/035_knowledge_layer.sql. Saving the lesson without it."
+            )
+            data.pop('connection_links', None)
+            response = client.table('lessons').insert(data)
 
         if response['error']:
             logger.error(f"Failed to add lesson for paper {lesson.paper_id}: {response['error']}")

@@ -71,7 +71,13 @@ class SynthesisAgentImpl:
                 "Be concise but comprehensive in your synthesis",
                 "Focus on what the reader can learn and apply",
                 "Return valid Lesson JSON only (no extra text)",
-                "Limit takeaways to 3-5 items, practice ideas to 2-3 items"
+                "Limit takeaways to 3-5 items, practice ideas to 2-3 items",
+                "Each connection names ONE other work the paper itself cites or discusses: "
+                "`work` is its author(s) and year as the paper writes them "
+                "(e.g. 'Hewitt and Liang 2019'), `title` is its title only when the paper "
+                "prints it (else empty), `relation` is one of builds_on, uses, critiques, "
+                "compares, alternative, background, and `why` is one sentence from the paper. "
+                "Never name a work the paper does not mention; give 0-6 connections"
             ]
         )
 
