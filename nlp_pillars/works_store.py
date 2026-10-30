@@ -149,6 +149,40 @@ def load_library() -> List[LibraryPaper]:
     ]
 
 
+def load_external_works(have: Set[str]) -> Tuple[List[dict], int]:
+    """External works that still need a vector, and how many external works there are.
+
+    Returns ``([{id, title, abstract}, ...], total)``. ``have`` is the work ids
+    that already carry the vector, so a rerun reads title and abstract only for
+    works that still need one. A work is external when no ``papers.work_id``
+    points at it. Fails with ``WorksUnavailable`` before migration 031.
+    """
+    linked = {
+        str(row["work_id"])
+        for row in _read_all("papers", "id,work_id", "id")
+        if row.get("work_id")
+    }
+    external = [
+        str(row["id"])
+        for row in _read_all("works", "id", "id")
+        if str(row["id"]) not in linked
+    ]
+    wanted = sorted(work_id for work_id in external if work_id not in have)
+    out: List[dict] = []
+    for chunk in _chunks(wanted, _IN_CHUNK):
+        rows = _read_all(
+            "works",
+            "id,title,abstract",
+            "id",
+            narrow=lambda query, chunk=chunk: query.in_("id", list(chunk)),
+        )
+        out.extend(
+            {"id": str(row["id"]), "title": row.get("title"), "abstract": row.get("abstract")}
+            for row in rows
+        )
+    return out, len(external)
+
+
 def _lookup_keys(keys: Sequence[WorkKey]) -> WorkIndex:
     """A partial index holding only these keys, from one query per kind."""
     by_kind: Dict[str, List[str]] = {}

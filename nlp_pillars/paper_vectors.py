@@ -1,8 +1,15 @@
-"""One title+abstract vector per library paper, stored in ``paper_vectors``.
+"""One title+abstract vector per library paper and per external work.
 
 Chunk embeddings stay the search copy. These rows are what ``related_to``
 reads. The command always uses the pinned local bge model: the cosine floor
 in ``graph.py`` was measured on that model, and this path does not call OpenAI.
+
+Library papers are ``ref_kind='paper'`` keyed by ``papers.id``. A work in the
+citation neighbourhood that is not a library paper is ``ref_kind=
+'external_paper'`` keyed by ``works.id`` (migration 031): the percentile floor
+in ``similarity.py`` needs them to know what a typical pair in the scope looks
+like. Semantic Scholar's own SPECTER2 vectors are not stored; bge is the one
+space (paper-map scout, section 3.2).
 
 A paper that already has ``(paper, id, model_id, title_abstract)`` is left
 alone, so a second run writes nothing and does not load the model. A paper
@@ -23,6 +30,7 @@ from .embeddings import EmbeddingError, EmbeddingProvider
 MIGRATION = "docs/migrations/021_paper_vectors.sql"
 SOURCE_TITLE_ABSTRACT = "title_abstract"
 REF_KIND_PAPER = "paper"
+REF_KIND_EXTERNAL = "external_paper"
 
 
 def title_abstract_text(title: Optional[str], abstract: Optional[str]) -> str:
@@ -41,6 +49,7 @@ class PaperVectorReport:
     dry_run: bool
     model_id: str
     source: str
+    ref_kind: str = REF_KIND_PAPER
     library: int = 0
     already: int = 0
     skipped_empty: int = 0
@@ -52,11 +61,12 @@ class PaperVectorReport:
 
     def render(self) -> str:
         """Plain-text summary. Markup is left off so ids are not styled."""
+        total = "external" if self.ref_kind == REF_KIND_EXTERNAL else "library"
         lines = [
             f"dry_run: {'true' if self.dry_run else 'false'}",
             f"model_id: {self.model_id}",
             f"source: {self.source}",
-            f"library: {self.library}",
+            f"{total}: {self.library}",
             f"already: {self.already}",
             f"skipped_empty: {self.skipped_empty}",
             f"missing: {self.missing}",
@@ -90,6 +100,7 @@ def embed_paper_vector_rows(
     papers: Sequence[dict],
     provider: EmbeddingProvider,
     save: Callable[[Sequence[dict]], int],
+    ref_kind: str = REF_KIND_PAPER,
 ) -> int:
     """Embed ``papers`` in provider-sized batches and ``save`` each batch.
 
@@ -133,7 +144,7 @@ def embed_paper_vector_rows(
                     written=written,
                 )
             rows.append({
-                "ref_kind": REF_KIND_PAPER,
+                "ref_kind": ref_kind,
                 "ref_id": paper["ref_id"],
                 "model_id": provider.model_id,
                 "source": SOURCE_TITLE_ABSTRACT,
@@ -155,8 +166,9 @@ def run_paper_vector_backfill(
     papers: Sequence[Any],
     already: Set[str],
     embed: Optional[Callable[[Sequence[dict]], int]] = None,
+    ref_kind: str = REF_KIND_PAPER,
 ) -> PaperVectorReport:
-    """Count or embed library papers that lack ``model_id``.
+    """Count or embed papers (or external works) that lack ``model_id``.
 
     Dry-run does not call ``embed``. Neither does a second pass whose
     ``already`` set covers every paper that has text. ``embed`` receives only
@@ -166,6 +178,7 @@ def run_paper_vector_backfill(
         dry_run=dry_run,
         model_id=model_id,
         source=SOURCE_TITLE_ABSTRACT,
+        ref_kind=ref_kind,
         library=len(papers),
     )
     pending: List[dict] = []

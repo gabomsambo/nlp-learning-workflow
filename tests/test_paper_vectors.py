@@ -320,6 +320,7 @@ def test_cli_dry_run_uses_local_bge_and_does_not_load_it():
     with (
         patch("nlp_pillars.db.list_all_papers", return_value=papers),
         patch("nlp_pillars.db.list_paper_vector_ref_ids", return_value=[]) as listed,
+        patch("nlp_pillars.works_store.load_external_works", return_value=([], 0)),
         patch("nlp_pillars.embeddings.get_embedding_provider") as build,
     ):
         result = CliRunner().invoke(app, ["embeddings", "papers", "--dry-run"])
@@ -329,7 +330,7 @@ def test_cli_dry_run_uses_local_bge_and_does_not_load_it():
     assert f"model_id: {LOCAL_MODEL_ID}" in result.output
     assert "source: title_abstract" in result.output
     assert "would_write: 1" in result.output
-    listed.assert_called_once_with(LOCAL_MODEL_ID, SOURCE_TITLE_ABSTRACT)
+    listed.assert_any_call(LOCAL_MODEL_ID, SOURCE_TITLE_ABSTRACT)
     build.assert_not_called()
 
 
@@ -339,8 +340,9 @@ def test_cli_second_run_does_not_load_the_provider_when_nothing_is_missing():
         patch("nlp_pillars.db.list_all_papers", return_value=papers),
         patch(
             "nlp_pillars.db.list_paper_vector_ref_ids",
-            return_value=["arxiv:1"],
+            side_effect=[["arxiv:1"], []],
         ),
+        patch("nlp_pillars.works_store.load_external_works", return_value=([], 0)),
         patch("nlp_pillars.embeddings.get_embedding_provider") as build,
     ):
         result = CliRunner().invoke(app, ["embeddings", "papers"])
@@ -364,6 +366,9 @@ def test_cli_writes_with_the_local_provider(monkeypatch):
     monkeypatch.setattr("nlp_pillars.db.list_all_papers", lambda: papers)
     monkeypatch.setattr("nlp_pillars.db.list_paper_vector_ref_ids", lambda *_a: [])
     monkeypatch.setattr("nlp_pillars.db.insert_paper_vectors", _save)
+    monkeypatch.setattr(
+        "nlp_pillars.works_store.load_external_works", lambda have: ([], 0)
+    )
     with patch(
         "nlp_pillars.embeddings.get_embedding_provider",
         return_value=provider,
@@ -390,8 +395,113 @@ def test_cli_exits_nonzero_when_the_table_is_missing():
                 "missing table. Apply docs/migrations/021_paper_vectors.sql by hand."
             ),
         ),
+        patch("nlp_pillars.works_store.load_external_works", return_value=([], 0)),
     ):
         result = CliRunner().invoke(app, ["embeddings", "papers", "--dry-run"])
 
     assert result.exit_code == 1
     assert "021_paper_vectors" in result.output
+
+
+def _external(work_id, title, abstract=None):
+    return {"id": work_id, "title": title, "abstract": abstract}
+
+
+def test_external_works_are_stored_as_external_paper_rows():
+    provider = FakeProvider()
+    saved = []
+
+    def save(rows):
+        saved.extend(rows)
+        return len(rows)
+
+    works = [
+        _external("w-1", "Probing", "Control tasks."),
+        _external("w-2", "Stub known only by an id"),
+        _external("w-3", None, None),
+    ]
+    report = run_paper_vector_backfill(
+        model_id=provider.model_id,
+        dry_run=False,
+        papers=works,
+        already=set(),
+        embed=lambda batch: embed_paper_vector_rows(
+            batch, provider, save, ref_kind="external_paper"
+        ),
+        ref_kind="external_paper",
+    )
+    assert report.skipped_empty == 1
+    assert report.written == 2
+    assert {row["ref_kind"] for row in saved} == {"external_paper"}
+    assert [row["ref_id"] for row in saved] == ["w-1", "w-2"]
+    assert provider.documents == [["Probing\n\nControl tasks.", "Stub known only by an id"]]
+    assert report.render().splitlines()[3] == "external: 3"
+
+
+def test_cli_embeds_external_works_after_the_library_with_the_local_model(monkeypatch):
+    provider = FakeProvider()
+    provider.model_id = LOCAL_MODEL_ID
+    saved = []
+
+    def _save(rows):
+        saved.extend(rows)
+        return len(rows)
+
+    lists = []
+
+    def _list(model_id, source, ref_kind="paper"):
+        lists.append(ref_kind)
+        return ["arxiv:1"] if ref_kind == "paper" else ["w-old"]
+
+    seen = {}
+
+    def _external(have):
+        seen["have"] = have
+        # three external works in all, one of them already has its vector
+        return [{"id": "w-1", "title": "Probing", "abstract": "Control tasks."}], 3
+
+    monkeypatch.setattr(
+        "nlp_pillars.db.list_all_papers",
+        lambda: [_paper("arxiv:1", "Attention", "Transformers.")],
+    )
+    monkeypatch.setattr("nlp_pillars.db.list_paper_vector_ref_ids", _list)
+    monkeypatch.setattr("nlp_pillars.db.insert_paper_vectors", _save)
+    monkeypatch.setattr("nlp_pillars.works_store.load_external_works", _external)
+    with patch(
+        "nlp_pillars.embeddings.get_embedding_provider", return_value=provider
+    ) as build:
+        result = CliRunner().invoke(app, ["embeddings", "papers"])
+
+    assert result.exit_code == 0, result.output
+    assert lists == ["paper", "external_paper"]
+    assert seen["have"] == {"w-old"}
+    assert [(row["ref_kind"], row["ref_id"]) for row in saved] == [
+        ("external_paper", "w-1")
+    ]
+    build.assert_called_once_with(provider="local", model=LOCAL_MODEL_ID)
+    assert provider.queries == []
+    assert "external: 3" in result.output
+    assert "already: 2" in result.output
+    assert "written: 1" in result.output
+
+
+def test_cli_skips_external_works_and_says_so_before_migration_031():
+    from nlp_pillars.works_store import WorksUnavailable
+
+    with (
+        patch(
+            "nlp_pillars.db.list_all_papers",
+            return_value=[_paper("arxiv:1", "Attention", "Transformers.")],
+        ),
+        patch("nlp_pillars.db.list_paper_vector_ref_ids", return_value=[]),
+        patch(
+            "nlp_pillars.works_store.load_external_works",
+            side_effect=WorksUnavailable("no works. Apply docs/migrations/031_works_identity.sql by hand."),
+        ),
+    ):
+        result = CliRunner().invoke(app, ["embeddings", "papers", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "library: 1" in result.output
+    assert "external: skipped" in result.output
+    assert "031_works_identity" in result.output

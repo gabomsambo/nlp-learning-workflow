@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pytest
 from typer.testing import CliRunner
 
@@ -291,6 +292,117 @@ def test_related_edges_stop_at_top_k_when_every_pair_clears_the_floor():
         neighbours = by_src[paper["id"]]
         assert len(neighbours) == RELATED_TOP_K
         assert paper["id"] not in neighbours
+
+
+def _scope(size, spread, seed, *, external=0):
+    """``size`` library papers (and ``external`` external works) scattered ``spread``
+    around one direction, so every pair in the scope is similar."""
+    rng = np.random.default_rng(seed)
+    base = rng.normal(size=32)
+    papers = [_paper(f"p{index:03d}") for index in range(size)]
+    vectors = [
+        _title_abstract(paper["id"], list(base + spread * rng.normal(size=32)))
+        for paper in papers
+    ]
+    for index in range(external):
+        vectors.append({
+            "ref_kind": "external_paper",
+            "ref_id": f"w{index:03d}",
+            "model_id": "bge",
+            "source": SOURCE_TITLE_ABSTRACT,
+            "vector": list(base + spread * rng.normal(size=32)),
+        })
+    return papers, vectors
+
+
+def _degrees(plan):
+    degrees = {}
+    for edge in plan.edges:
+        if edge.kind == "related_to":
+            degrees[edge.src_id] = degrees.get(edge.src_id, 0) + 1
+    return degrees
+
+
+@pytest.mark.parametrize("external", [0, 200])
+def test_a_scope_of_uniformly_high_cosines_yields_at_most_k_edges_per_paper(external):
+    """Every pair scores above 0.9, so the old fixed 0.70 floor passed all of them.
+
+    With 25 papers and no externals the scope is under the percentile minimum and
+    the absolute floor applies, so only the rank cut bounds the degree. With 200
+    external works the percentile floor applies. Either way: at most k each.
+    """
+    papers, vectors = _scope(25, spread=0.05, seed=7, external=external)
+    plan = build_plan(GraphSnapshot(papers=papers, paper_vectors=vectors))
+    degrees = _degrees(plan)
+    assert degrees, "a uniformly similar scope must still link its closest papers"
+    assert max(degrees.values()) <= RELATED_TOP_K
+    if not external:
+        assert degrees == {paper["id"]: RELATED_TOP_K for paper in papers}
+
+
+def test_external_works_set_the_floor_but_never_become_a_neighbour():
+    papers, vectors = _scope(12, spread=0.4, seed=8, external=120)
+    plan = build_plan(GraphSnapshot(papers=papers, paper_vectors=vectors))
+    library = {paper["id"] for paper in papers}
+    related = [edge for edge in plan.edges if edge.kind == "related_to"]
+    assert {edge.src_id for edge in related} | {edge.dst_id for edge in related} <= library
+    assert plan.similarity.floor.source == "percentile"
+    assert plan.similarity.floor.scope_size == 132
+    assert plan.similarity.hubness.scope_size == 132
+
+
+def test_the_floor_follows_the_scope_where_a_fixed_cosine_would_not():
+    """The same 12 papers: a tight scope raises the floor above 0.70, a loose one lowers it."""
+    tight_papers, tight = _scope(12, spread=0.3, seed=9, external=120)
+    loose_papers, loose = _scope(12, spread=2.0, seed=9, external=120)
+    tight_floor = build_plan(GraphSnapshot(papers=tight_papers, paper_vectors=tight)).similarity.floor
+    loose_floor = build_plan(GraphSnapshot(papers=loose_papers, paper_vectors=loose)).similarity.floor
+    assert tight_floor.value > RELATED_MIN_COSINE > loose_floor.value
+
+
+def test_a_library_only_scope_keeps_the_absolute_floor_and_says_so():
+    snapshot = GraphSnapshot(
+        papers=[_paper("arxiv:1"), _paper("arxiv:2")],
+        paper_vectors=[
+            _title_abstract("arxiv:1", [1.0, 0.0]),
+            _title_abstract("arxiv:2", [0.8, 0.6]),
+        ],
+    )
+    health = build_plan(snapshot).similarity
+    assert (health.floor.value, health.floor.source) == (RELATED_MIN_COSINE, "absolute")
+    assert "absolute" in health.render()
+
+
+def test_an_external_vector_for_a_work_now_in_the_library_is_not_counted_twice():
+    papers, vectors = _scope(3, spread=0.4, seed=10)
+    papers[0]["work_id"] = "w-now-mine"
+    vectors.append({
+        "ref_kind": "external_paper",
+        "ref_id": "w-now-mine",
+        "model_id": "bge",
+        "source": SOURCE_TITLE_ABSTRACT,
+        "vector": vectors[0]["vector"],
+    })
+    plan = build_plan(GraphSnapshot(papers=papers, paper_vectors=vectors))
+    assert plan.similarity.floor.scope_size == 3
+
+
+def test_no_library_vector_means_no_related_edges_even_with_external_ones():
+    papers, vectors = _scope(0, spread=0.4, seed=11, external=40)
+    plan = build_plan(GraphSnapshot(papers=[_paper("arxiv:1")], paper_vectors=vectors))
+    assert plan.embedding_model is None
+    assert plan.similarity is None
+    assert [edge for edge in plan.edges if edge.kind == "related_to"] == []
+
+
+def test_the_build_report_carries_the_similarity_line():
+    papers, vectors = _scope(12, spread=0.4, seed=12, external=60)
+    report = run_graph_build(
+        GraphSnapshot(papers=papers, paper_vectors=vectors), dry_run=True
+    )
+    line = next(row for row in report.render().splitlines() if row.startswith("similarity:"))
+    assert "72 vectors" in line
+    assert "k-occurrence skewness" in line
 
 
 def test_related_rebuild_does_not_duplicate_edges():
