@@ -2010,6 +2010,39 @@ def update_podcast_audio_metadata(script_id: str, metadata: AudioMetadata) -> No
         raise PodcastScriptSaveError(str(e)) from e
 
 
+def update_podcast_source_material_warnings(script_id: str, warnings: List[str]) -> None:
+    """Replace ``source_material.warnings`` on a script, leaving its other keys alone.
+
+    Raises:
+        PodcastScriptSaveError: the row is missing, has no ``source_material``
+            record to add to, or the write failed.
+    """
+    client = get_client()
+    row = (client.table('podcast_scripts').select('source_material')
+           .eq('id', script_id).execute())
+    if row['error']:
+        raise PodcastScriptSaveError(str(row['error']))
+    if not row['data']:
+        raise PodcastScriptSaveError(f"No podcast script {script_id}")
+    material = row['data'][0].get('source_material')
+    if not material:
+        raise PodcastScriptSaveError(
+            f"Script {script_id} has no source_material record to add warnings to"
+        )
+    try:
+        response = (
+            client.table('podcast_scripts')
+            .eq('id', script_id)
+            .update({'source_material': {**material, 'warnings': warnings}})
+        )
+    except Exception as e:
+        raise PodcastScriptSaveError(str(e)) from e
+    if response['error']:
+        raise PodcastScriptSaveError(str(response['error']))
+    if not response['data']:
+        raise PodcastScriptSaveError(f"No podcast script updated for id {script_id}")
+
+
 def _factcheck_store_error(error: Any, action: str) -> FactcheckSaveError:
     """Name migration 022 when the fact-check tables or function are missing."""
     text = str(error)
