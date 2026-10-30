@@ -48,3 +48,21 @@ test('pdf links allow http, https, and file, and refuse scripts', () => {
   assert.strictEqual(safePdfHref('data:text/html,hi'), null);
   assert.strictEqual(safePdfHref(''), null);
 });
+
+test('fit sort orders by verdict then rank, keeps every row, and puts unscored last', () => {
+  const { sortCandidates, fitInfo } = require('../../webui/static/add-papers.js');
+  const list = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ paper: { id } }));
+  const fits = {
+    a: { verdict: 'off_topic', rank_fraction: 0.9 },
+    b: { verdict: 'close_related', rank_fraction: 0.2 },
+    c: { verdict: 'close_strong', rank_fraction: 0.04 },
+    d: { verdict: 'close_related', rank_fraction: 0.1 },
+    // e has no verdict at all
+  };
+  const ids = (rows) => rows.map((c) => c.paper.id);
+  assert.deepStrictEqual(ids(sortCandidates(list, 'fit', fits)), ['c', 'd', 'b', 'a', 'e']);
+  assert.deepStrictEqual(ids(sortCandidates(list, 'default', fits)), ['a', 'b', 'c', 'd', 'e']);
+  assert.deepStrictEqual(ids(sortCandidates(list, 'fit', null)), ['a', 'b', 'c', 'd', 'e']);
+  assert.strictEqual(fitInfo(undefined).label, 'Not scored');
+  assert.strictEqual(fitInfo({ verdict: 'close_strong' }).label, 'Strong fit');
+});
