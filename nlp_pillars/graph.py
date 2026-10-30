@@ -15,8 +15,15 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .citations import fetch_library_citations
-from .paper_vectors import SOURCE_TITLE_ABSTRACT
+from .paper_vectors import REF_KIND_EXTERNAL, REF_KIND_PAPER, SOURCE_TITLE_ABSTRACT
 from .schemas import PaperCitation
+from .similarity import (
+    SimilarityHealth,
+    k_occurrence_skewness,
+    scope_floor,
+    top_k_neighbours,
+    unit_matrix,
+)
 from .work_ids import WorkKey, parse_paper_id
 
 # Surface variants of one concept ("Self-Attention" / "self attention mechanism")
@@ -24,19 +31,24 @@ from .work_ids import WorkKey, parse_paper_id
 # bge cosine between NLP phrases sits high, and a low cut collapses the vocabulary.
 CONCEPT_MERGE_COSINE = 0.92
 
-# Neighbours kept per paper after the cosine floor. Five was already the rank
-# cut; without a floor it linked every paper to five others.
+# Neighbours kept per paper. The rank cut is what bounds a paper's degree.
 RELATED_TOP_K = 5
 
-# Title+abstract bge cosines on the measured 12-paper library span 0.43–0.84
-# (std 0.093). Mean-pooled chunk centroids span 0.79–0.97 (std 0.042), so
-# top-k alone emitted 60 edges, 39 of them cross-pillar, all weighted
-# 0.84–0.97. Minimalist Grammars' five neighbours score 0.50–0.62 on
-# title+abstract; on-topic pairs in that measurement sit at 0.76–0.84
-# (DeepSeek-V4 ↔ DeepSeek-VL 0.84, the AML trio 0.76–0.81, Attention ↔ BPE
-# 0.77). 0.70 is in that gap, and it is the suggestion-eligibility floor
-# from the graph-page report (section 6). Pairs below it are dropped before
-# the rank cut. The floor is for this bge title+abstract space only.
+# The cosine floor is the scope's own percentile (``similarity.RELATED_PERCENTILE``
+# of every pairwise title+abstract cosine among library and external works), not
+# a constant: the fixed 0.70 passes 20.7% of all pairs once the 1,227-work
+# citation neighbourhood is in scope (p90 0.732, p99 0.804).
+#
+# 0.70 survives as the floor for a scope too small for a percentile
+# (``similarity.MIN_PERCENTILE_SCOPE``), which is what a library with no external
+# vectors is. It was measured on exactly that. Title+abstract bge cosines on the
+# measured 12-paper library span 0.43–0.84 (std 0.093). Mean-pooled chunk
+# centroids span 0.79–0.97 (std 0.042), so top-k alone emitted 60 edges, 39 of
+# them cross-pillar, all weighted 0.84–0.97. Minimalist Grammars' five neighbours
+# score 0.50–0.62 on title+abstract; on-topic pairs in that measurement sit at
+# 0.76–0.84 (DeepSeek-V4 ↔ DeepSeek-VL 0.84, the AML trio 0.76–0.81, Attention ↔
+# BPE 0.77). 0.70 is in that gap. The floor is for this bge title+abstract space
+# only.
 RELATED_MIN_COSINE = 0.70
 
 # One 319-author paper would otherwise flood the graph. First authors win.
@@ -233,6 +245,7 @@ class GraphPlan:
     edges: List[GraphEdge]
     embedding_model: Optional[str]
     concept_merge: str
+    similarity: Optional[SimilarityHealth] = None
 
 
 @dataclass
@@ -253,6 +266,7 @@ class GraphBuildReport:
     warnings: List[str]
     citations_failed: int = 0
     citations_failure_reason: str = ""
+    similarity: Optional[SimilarityHealth] = None
 
     def render(self) -> str:
         """Plain-text summary. Markup is left off so ids are not styled."""
@@ -276,6 +290,8 @@ class GraphBuildReport:
             lines.append(f"citations failed: {self.citations_failed} ({reason})")
         else:
             lines.append("citations failed: 0")
+        if self.similarity is not None:
+            lines.append(self.similarity.render())
         lines.extend(f"warning: {warning}" for warning in self.warnings)
         return "\n".join(lines)
 
@@ -491,67 +507,97 @@ def _concept_plan(  # noqa: C901
 
 
 def _title_abstract_by_model(snapshot: GraphSnapshot) -> Dict[str, List[dict]]:
-    """Library title+abstract rows grouped by model. Other sources are skipped."""
+    """Title+abstract rows grouped by model: library papers and external works.
+
+    Each row is ``{paper_id, vector, library}``. An external work that is now a
+    library paper's work (``papers.work_id``) is skipped: the library row
+    already stands for it, and counting both would weight that paper twice in
+    the scope's percentile. Other sources are skipped.
+    """
     library = {str(paper["id"]) for paper in snapshot.papers if paper.get("id")}
+    library_works = {
+        str(paper["work_id"]) for paper in snapshot.papers if paper.get("work_id")
+    }
     by_model: Dict[str, List[dict]] = defaultdict(list)
     for row in snapshot.paper_vectors:
         if str(row.get("source") or "") != SOURCE_TITLE_ABSTRACT:
             continue
-        if str(row.get("ref_kind") or "") != "paper":
-            continue
-        paper_id = str(row.get("ref_id") or "")
+        kind = str(row.get("ref_kind") or "")
+        ref_id = str(row.get("ref_id") or "")
         model_id = row.get("model_id")
         vector = _as_vector(row.get("vector"))
-        if paper_id not in library or not model_id or not vector:
+        if not ref_id or not model_id or not vector:
+            continue
+        if kind == REF_KIND_PAPER:
+            if ref_id not in library:
+                continue
+        elif kind == REF_KIND_EXTERNAL:
+            if ref_id in library_works:
+                continue
+        else:
             continue
         by_model[str(model_id)].append(
-            {"paper_id": paper_id, "vector": vector}
+            {"paper_id": ref_id, "vector": vector, "library": kind == REF_KIND_PAPER}
         )
     return by_model
 
 
 def _related_edges(
     snapshot: GraphSnapshot,
-) -> Tuple[Optional[str], List[GraphEdge]]:
-    """Top-k title+abstract neighbours at or above ``RELATED_MIN_COSINE``.
+) -> Tuple[Optional[str], List[GraphEdge], Optional[SimilarityHealth]]:
+    """Top-``RELATED_TOP_K`` library neighbours at or above the scope's floor.
 
-    One vector per library paper. Chunk means are not read. When several
-    models are stored, the one with the most rows wins (ties break by model
-    id) so two spaces are never mixed.
+    The scope is every title+abstract vector of one model: library papers plus
+    the external works ``embeddings papers`` stored. The floor is read from the
+    whole scope (``similarity.scope_floor``), the neighbours are library papers
+    only, and the health line measures hubness over the whole scope. One vector
+    per paper; chunk means are not read. When several models are stored, the
+    one with the most library rows wins (ties break by model id) so two spaces
+    are never mixed.
     """
     by_model = _title_abstract_by_model(snapshot)
-    if not by_model:
-        return None, []
+    library_rows = {
+        name: sum(1 for row in rows if row["library"])
+        for name, rows in by_model.items()
+    }
+    candidates = [name for name, count in library_rows.items() if count]
+    if not candidates:
+        return None, [], None
 
-    model_id = sorted(by_model, key=lambda name: (-len(by_model[name]), name))[0]
-    vectors: Dict[str, Sequence[float]] = {}
+    model_id = sorted(candidates, key=lambda name: (-library_rows[name], name))[0]
+    seen: Dict[Tuple[bool, str], Sequence[float]] = {}
     for row in by_model[model_id]:
-        vectors.setdefault(row["paper_id"], row["vector"])
+        seen.setdefault((row["library"], row["paper_id"]), row["vector"])
+    # Library rows first, then externals, each by id: a stable order, so the
+    # sampled percentile and the tie-breaks do not depend on read order.
+    keys = sorted(seen, key=lambda key: (not key[0], key[1]))
+    width = len(seen[keys[0]])
+    keys = [key for key in keys if len(seen[key]) == width]
+    names = [key[1] for key in keys]
+    unit = unit_matrix([seen[key] for key in keys])
+    library_index = [index for index, key in enumerate(keys) if key[0]]
+
+    floor = scope_floor(unit, RELATED_MIN_COSINE)
+    health = SimilarityHealth(floor=floor, hubness=k_occurrence_skewness(unit))
+    neighbours = top_k_neighbours(
+        unit, library_index, RELATED_TOP_K, floor.value, names
+    )
     provenance = f"derived:embedding:{model_id}"
     edges: List[GraphEdge] = []
-    for paper_id in sorted(vectors):
-        scored = []
-        for other_id in sorted(vectors):
-            if other_id == paper_id:
-                continue
-            score = cosine(vectors[paper_id], vectors[other_id])
-            if score < RELATED_MIN_COSINE:
-                continue
-            scored.append((score, other_id))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        for score, other_id in scored[:RELATED_TOP_K]:
+    for index in library_index:
+        for score, other in neighbours[index]:
             edges.append(
                 _edge(
                     "paper",
-                    paper_id,
+                    names[index],
                     "paper",
-                    other_id,
+                    names[other],
                     "related_to",
                     provenance,
                     round(score, 6),
                 )
             )
-    return model_id, edges
+    return model_id, edges, health
 
 
 def _citation_edges(snapshot: GraphSnapshot) -> List[GraphEdge]:
@@ -619,7 +665,7 @@ def build_plan(
     concepts, links, concept_edges, concept_merge = _concept_plan(
         snapshot, embed_names
     )
-    model_id, related = _related_edges(snapshot)
+    model_id, related, similarity = _related_edges(snapshot)
     edges = _dedupe_edges(
         [
             *_structural_edges(snapshot),
@@ -640,6 +686,7 @@ def build_plan(
         edges=edges,
         embedding_model=model_id,
         concept_merge=concept_merge,
+        similarity=similarity,
     )
 
 
@@ -824,6 +871,7 @@ def run_graph_build(
         edges_by_kind=dict(by_kind),
         embedding_model=plan.embedding_model,
         concept_merge=plan.concept_merge,
+        similarity=plan.similarity,
         citations_to_fetch=citations_to_fetch,
         citations_fetched=0 if dry_run else len(fetched),
         citations_stored=0 if dry_run else stored,

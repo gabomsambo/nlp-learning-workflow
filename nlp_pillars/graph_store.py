@@ -166,10 +166,22 @@ def _read_citations() -> List[dict]:
         )
 
 
+def _read_papers() -> List[dict]:
+    """Library papers with ``work_id``, which tells the similarity scope which
+    external vectors are already a library paper. Before migration 031 the
+    column does not exist and the plain columns are read instead."""
+    try:
+        return _read_table("papers", "id,pillar_id,title,authors,work_id", "id")
+    except GraphStoreError as exc:
+        if "work_id" not in str(exc):
+            raise
+        return _read_table("papers", "id,pillar_id,title,authors", "id")
+
+
 def load_snapshot() -> Tuple[GraphSnapshot, List[str]]:
     """Library rows the free builders read. Does not create a graph row."""
     warnings: List[str] = []
-    papers = _read_table("papers", "id,pillar_id,title,authors", "id")
+    papers = _read_papers()
     pillars = _read_table("pillars", "id,name", "id")
     notes = _read_table("notes", "id,paper_id,key_terms", "id")
     lessons = _read_table("lessons", "id,paper_id,pillar_id,tl_dr", "id")

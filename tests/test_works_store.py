@@ -20,6 +20,7 @@ from nlp_pillars.works_store import (
     WorksUnavailable,
     _quote,
     execute_works_sync,
+    load_external_works,
     load_index,
     load_library,
     store_citations,
@@ -114,6 +115,47 @@ def test_the_library_is_papers_with_their_work(http):
     ]
     library = load_library()
     assert [(p.id, p.work_id) for p in library] == [("arxiv:1706.03762", ATTENTION_WORK), ("file:abc", None)]
+
+
+def test_external_works_are_those_no_library_paper_points_at_and_without_a_vector(http):
+    mine, other, have, stub = (f"00000000-0000-4000-8000-00000000000{n}" for n in range(1, 5))
+    http.routes["papers"] = [
+        {"id": "arxiv:1706.03762", "work_id": mine},
+        {"id": "file:abc", "work_id": None},
+    ]
+    everything = [
+        {"id": mine, "title": "Attention", "abstract": "Library."},
+        {"id": other, "title": "Probing", "abstract": "Control tasks."},
+        {"id": have, "title": "Done", "abstract": "Has a vector."},
+        {"id": stub, "title": None, "abstract": None},
+    ]
+
+    def works(params):
+        wanted = params.get("id")
+        if not wanted:
+            return [{"id": row["id"]} for row in everything]
+        assert wanted.startswith("in.(")
+        return [row for row in everything if row["id"] in wanted]
+
+    http.routes["works"] = works
+
+    pending, total = load_external_works({have})
+
+    assert total == 3  # every work but the library paper's
+    assert sorted(row["id"] for row in pending) == sorted([other, stub])
+    probing = next(row for row in pending if row["id"] == other)
+    assert probing == {"id": other, "title": "Probing", "abstract": "Control tasks."}
+    # the first read asks for ids only: abstracts are not downloaded for works
+    # that already have a vector
+    assert http.gets[1][1]["select"] == "id"
+    assert http.gets[2][1]["select"] == "id,title,abstract"
+
+
+def test_external_works_before_the_migration_name_it(http):
+    http.routes["papers"] = reply(400, {"code": "42703", "message": "column papers.work_id does not exist"})
+    with pytest.raises(WorksUnavailable) as caught:
+        load_external_works(set())
+    assert MIGRATION in str(caught.value)
 
 
 @pytest.mark.parametrize(

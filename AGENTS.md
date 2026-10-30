@@ -399,7 +399,9 @@ uploads volume, about 208 MB the first time), not into the image.
 `python -m nlp_pillars.cli embeddings backfill` fills chunks that lack a row
 for the active model (`--dry-run` prints counts only).
 `python -m nlp_pillars.cli embeddings papers` stores one title+abstract
-vector per library paper in `paper_vectors`
+vector per library paper and per external work (`works` no library paper
+points at, `ref_kind='external_paper'`, skipped before migration 031) in
+`paper_vectors`
 (`docs/migrations/021_paper_vectors.sql`, hand-applied; on the captain's
 volume as of 2026-10-24) using the pinned
 local bge model only — it does not follow `EMBEDDING_PROVIDER` and does not
@@ -418,8 +420,10 @@ and `graph_edges` (`docs/migrations/020_knowledge_graph.sql`, hand-applied) are
 rebuilt by `python -m nlp_pillars.cli graph build` from pillars, papers, authors
 (capped at 10), lessons, quiz cards, episodes, `notes.key_terms` and
 title+abstract rows in `paper_vectors`. `related_to` keeps at most
-`RELATED_TOP_K` (5) neighbours whose cosine is at least `RELATED_MIN_COSINE`
-(0.70). That floor is the gap in the measured library: title+abstract bge
+`RELATED_TOP_K` (5) library neighbours whose cosine is at least the scope's
+p97 pairwise cosine (`nlp_pillars/similarity.py`; the scope is every vector of
+the model, external works included). Under 30 vectors a percentile is noise and
+`RELATED_MIN_COSINE` (0.70) is the floor. That floor is the gap in the measured library: title+abstract bge
 pairs span 0.43–0.84 (std 0.093), unrelated cross-pillar neighbours of
 *Minimalist Grammars* sit at 0.50–0.62, and on-topic pairs sit at 0.76–0.84.
 Mean-pooled chunk vectors (0.79–0.97, std 0.042) are not the input.

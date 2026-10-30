@@ -1485,46 +1485,78 @@ def embeddings_papers(
         help="Print counts only. Do not load a model or write vectors.",
     ),
 ):
-    """Embed title + abstract for every library paper that lacks a row.
+    """Embed title + abstract for every library paper and external work that lacks a row.
 
     Always the pinned local BAAI/bge-base-en-v1.5 model. This does not follow
     ``EMBEDDING_PROVIDER`` and does not call OpenAI: the related-paper floor
     was measured on these vectors. Idempotent: a paper that already has this
     model and source is left alone, and a second run does not load the model.
+    External works are the ``works`` rows no library paper points at; they set
+    the percentile floor for ``related_to``. Before migration 031 there are none
+    and that pass is skipped with a line saying so.
     Apply docs/migrations/021_paper_vectors.sql first. ``--dry-run`` only
     prints counts.
     """
     from .embeddings import LOCAL_MODEL_ID, get_embedding_provider
     from .paper_vectors import (
+        REF_KIND_EXTERNAL,
+        REF_KIND_PAPER,
         SOURCE_TITLE_ABSTRACT,
         embed_paper_vector_rows,
         run_paper_vector_backfill,
     )
+    from .works_store import WorksUnavailable, load_external_works
 
     _log_env_path()
     _setup_logging()
-    try:
-        papers = db.list_all_papers()
-        already = set(db.list_paper_vector_ref_ids(
-            LOCAL_MODEL_ID, SOURCE_TITLE_ABSTRACT,
-        ))
 
+    def _pass(ref_kind, papers, already):
         def embed_missing(batch):
             provider = get_embedding_provider(
                 provider="local",
                 model=LOCAL_MODEL_ID,
             )
             return embed_paper_vector_rows(
-                batch, provider, db.insert_paper_vectors,
+                batch, provider, db.insert_paper_vectors, ref_kind=ref_kind,
             )
 
-        report = run_paper_vector_backfill(
+        return run_paper_vector_backfill(
             model_id=LOCAL_MODEL_ID,
             dry_run=dry_run,
             papers=papers,
             already=already,
             embed=None if dry_run else embed_missing,
+            ref_kind=ref_kind,
         )
+
+    reports = []
+    skipped = ""
+    try:
+        reports.append(_pass(
+            REF_KIND_PAPER,
+            db.list_all_papers(),
+            set(db.list_paper_vector_ref_ids(LOCAL_MODEL_ID, SOURCE_TITLE_ABSTRACT)),
+        ))
+        if not reports[0].failed:
+            have = set(db.list_paper_vector_ref_ids(
+                LOCAL_MODEL_ID, SOURCE_TITLE_ABSTRACT, REF_KIND_EXTERNAL,
+            ))
+            try:
+                works, total = load_external_works(have)
+            except WorksUnavailable as e:
+                skipped = f"external: skipped, {e}"
+            else:
+                # The loader leaves out works in `have` so a rerun does not
+                # download their abstracts; the report restores their count.
+                external = _pass(
+                    REF_KIND_EXTERNAL,
+                    [{"id": work["id"], "title": work["title"], "abstract": work["abstract"]}
+                     for work in works],
+                    set(),
+                )
+                external.library = total
+                external.already = total - len(works)
+                reports.append(external)
     except typer.Exit:
         raise
     except Exception as e:
@@ -1532,8 +1564,10 @@ def embeddings_papers(
         logging.error("embeddings papers failed: %s", e, exc_info=True)
         raise typer.Exit(1)
 
-    console.print(report.render(), markup=False)
-    if report.failed:
+    console.print("\n\n".join(report.render() for report in reports), markup=False)
+    if skipped:
+        console.print(skipped, markup=False)
+    if any(report.failed for report in reports):
         raise typer.Exit(1)
     raise typer.Exit(0)
 
