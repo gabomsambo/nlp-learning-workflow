@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Collection, Iterator, List, Mapping, Optional, Sequence
 
 import httpx
 
@@ -65,6 +65,24 @@ PAPER_FIELDS = (
     "abstract,influentialCitationCount,openAccessPdf"
 )
 LINK_FIELDS = "paperId,externalIds,title,authors,year,citationCount,abstract"
+#: What the works layer stores about one work (migration 031). ``tldr`` is a
+#: batch-only field: S2 answers 400 "unsupported fields" for ``citedPaper.tldr``.
+WORK_FIELDS = (
+    "paperId,corpusId,externalIds,title,year,publicationDate,venue,authors,"
+    "abstract,citationCount,influentialCitationCount,referenceCount,openAccessPdf"
+)
+WORK_BATCH_FIELDS = f"{WORK_FIELDS},tldr,references.paperId"
+#: The edge fields LINK_FIELDS never asked for, so ``isInfluential`` was the
+#: only one that ever arrived.
+EDGE_FIELDS = "contexts,intents,isInfluential"
+#: Pages of edges stay at 100: with abstracts a page is already ~200 KB, and
+#: S2 answers 5xx to heavy large pages more often than it rate limits.
+EDGE_PAGE_LIMIT = 100
+#: The newest citers kept per work. S2 caps offset+limit at 10,000 anyway.
+MAX_CITERS = 1000
+AUTHORS_KEPT = 10
+CONTEXTS_KEPT = 3
+CONTEXT_CHARS = 300
 #: S2's page cap for references/citations and its batch cap for /paper/batch.
 PAGE_LIMIT = 100
 BATCH_LIMIT = 500
@@ -190,6 +208,130 @@ class LinkPage:
 
     items: List[tuple] = field(default_factory=list)
     next_offset: Optional[int] = None
+
+
+@dataclass
+class WorkRecord:
+    """One work as Semantic Scholar describes it, in the shape ``works`` stores.
+
+    ``reference_ids`` is only filled by the batch call (``references.paperId``)
+    and is None elsewhere: an empty list there means "no references listed".
+    """
+
+    s2_paper_id: str
+    corpus_id: Optional[int] = None
+    external_ids: Mapping[str, Any] = field(default_factory=dict)
+    title: Optional[str] = None
+    year: Optional[int] = None
+    publication_date: Optional[str] = None
+    venue: Optional[str] = None
+    authors: List[str] = field(default_factory=list)
+    author_count: int = 0
+    abstract: Optional[str] = None
+    tldr: Optional[str] = None
+    citation_count: Optional[int] = None
+    influential_citation_count: Optional[int] = None
+    reference_count: Optional[int] = None
+    open_pdf_url: Optional[str] = None
+    reference_ids: Optional[List[str]] = None
+
+
+@dataclass
+class CitationEdge:
+    """One citation with the evidence S2 holds for it.
+
+    ``other`` is the cited work for a reference and the citing work for a citer.
+    """
+
+    other: WorkRecord
+    is_influential: bool = False
+    intents: List[str] = field(default_factory=list)
+    contexts: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EdgePage:
+    """One page of typed edges. ``skipped`` counts entries S2 could not name."""
+
+    edges: List[CitationEdge] = field(default_factory=list)
+    next_offset: Optional[int] = None
+    skipped: int = 0
+
+
+@dataclass
+class CiterResult:
+    """Newest-first citers up to a stop.
+
+    ``stopped_at_known`` means a citer already stored was reached, so everything
+    older is stored too. ``truncated`` means ``max_items`` ended the walk first.
+    """
+
+    edges: List[CitationEdge] = field(default_factory=list)
+    stopped_at_known: bool = False
+    truncated: bool = False
+    skipped: int = 0
+
+
+def _as_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def work_record_from_s2(data: Mapping[str, Any]) -> Optional[WorkRecord]:
+    """Convert one S2 paper object. None when S2 gave it no ``paperId``."""
+    paper_id = data.get("paperId")
+    if not paper_id:
+        return None
+    names = [
+        author["name"]
+        for author in data.get("authors") or []
+        if author and author.get("name")
+    ]
+    tldr = data.get("tldr")
+    open_access = data.get("openAccessPdf")
+    references = data.get("references")
+    return WorkRecord(
+        s2_paper_id=str(paper_id),
+        corpus_id=_as_int(data.get("corpusId")),
+        external_ids=dict(data.get("externalIds") or {}),
+        title=data.get("title") or None,
+        year=_as_int(data.get("year")),
+        publication_date=data.get("publicationDate") or None,
+        venue=data.get("venue") or None,
+        authors=names[:AUTHORS_KEPT],
+        author_count=len(names),
+        abstract=data.get("abstract") or None,
+        tldr=(tldr.get("text") or None) if isinstance(tldr, dict) else None,
+        citation_count=_as_int(data.get("citationCount")),
+        influential_citation_count=_as_int(data.get("influentialCitationCount")),
+        reference_count=_as_int(data.get("referenceCount")),
+        open_pdf_url=(open_access.get("url") or None) if isinstance(open_access, dict) else None,
+        reference_ids=(
+            [str(ref["paperId"]) for ref in references if ref and ref.get("paperId")]
+            if isinstance(references, list)
+            else None
+        ),
+    )
+
+
+def _edge_from_s2(row: Mapping[str, Any], wrapper: str) -> Optional[CitationEdge]:
+    other = work_record_from_s2(row.get(wrapper) or {})
+    if other is None:
+        return None
+    return CitationEdge(
+        other=other,
+        is_influential=bool(row.get("isInfluential")),
+        intents=[str(i) for i in row.get("intents") or []],
+        contexts=[
+            str(text)[:CONTEXT_CHARS]
+            for text in (row.get("contexts") or [])[:CONTEXTS_KEPT]
+            if text
+        ],
+    )
 
 
 class SemanticScholarTool:
@@ -413,6 +555,117 @@ class SemanticScholarTool:
                 raise SemanticScholarError("Semantic Scholar batch answer did not match the request")
             out.extend(self._convert_to_paper_ref(d) if d else None for d in data)
         return out
+
+    def get_work_records(self, lookup_ids: Sequence[str]) -> List[Optional[WorkRecord]]:
+        """Full work metadata for many ids, one POST per 500.
+
+        ``lookup_ids`` are already in S2's id syntax (``work_ids.s2_lookup_id``)
+        and are sent as given. The result is aligned with the input; an id S2
+        does not know is None. Reference ids ride along (``references.paperId``).
+        """
+        ids = list(lookup_ids)
+        out: List[Optional[WorkRecord]] = []
+        for start in range(0, len(ids), BATCH_LIMIT):
+            chunk = ids[start:start + BATCH_LIMIT]
+            data = self._json(
+                self._request(
+                    "POST",
+                    f"{self.base_url}/paper/batch",
+                    params={"fields": WORK_BATCH_FIELDS},
+                    json_body={"ids": chunk},
+                )
+            )
+            if not isinstance(data, list) or len(data) != len(chunk):
+                raise SemanticScholarError("Semantic Scholar batch answer did not match the request")
+            out.extend(work_record_from_s2(item) if item else None for item in data)
+        return out
+
+    def get_reference_edges_page(
+        self, lookup_id: str, offset: int = 0, limit: int = EDGE_PAGE_LIMIT
+    ) -> EdgePage:
+        """One page of what this work cites, with intents, contexts and influence."""
+        return self._edge_page(lookup_id, "references", "citedPaper", offset, limit)
+
+    def get_citer_edges_page(
+        self, lookup_id: str, offset: int = 0, limit: int = EDGE_PAGE_LIMIT
+    ) -> EdgePage:
+        """One page of what cites this work, newest first."""
+        return self._edge_page(lookup_id, "citations", "citingPaper", offset, limit)
+
+    def get_reference_edges(self, lookup_id: str) -> EdgePage:
+        """Every reference, all pages, in one ``EdgePage``.
+
+        A paper S2 does not know gives an empty page, not an error. The list is
+        complete: unlike citers there is no cap, because a reference list is
+        the paper's own and was 22-85 entries on the measured library.
+        """
+        result = EdgePage()
+        offset: Optional[int] = 0
+        while offset is not None:
+            page = self.get_reference_edges_page(lookup_id, offset=offset)
+            result.edges.extend(page.edges)
+            result.skipped += page.skipped
+            offset = page.next_offset
+        return result
+
+    def get_citer_edges(
+        self,
+        lookup_id: str,
+        *,
+        known_ids: Collection[str] = (),
+        max_items: int = MAX_CITERS,
+    ) -> CiterResult:
+        """Newest citers first, until a citer already stored or ``max_items``.
+
+        ``known_ids`` are S2 ``paperId``s already stored as citers. The walk
+        ends after the page that first contains one, so a weekly refresh costs
+        one page when nothing new arrived. S2 does not document the order;
+        a citer list that is not newest-first still returns correct edges, it
+        only stops later or earlier than it could.
+        """
+        known = set(known_ids)
+        result = CiterResult()
+        offset: Optional[int] = 0
+        while offset is not None and len(result.edges) < max_items:
+            want = min(EDGE_PAGE_LIMIT, max_items - len(result.edges))
+            page = self.get_citer_edges_page(lookup_id, offset=offset, limit=want)
+            result.skipped += page.skipped
+            hit = any(edge.other.s2_paper_id in known for edge in page.edges)
+            result.edges.extend(
+                edge for edge in page.edges if edge.other.s2_paper_id not in known
+            )
+            if hit:
+                result.stopped_at_known = True
+                return result
+            offset = page.next_offset
+        result.truncated = offset is not None
+        return result
+
+    def _edge_page(
+        self, lookup_id: str, kind: str, wrapper: str, offset: int, limit: int
+    ) -> EdgePage:
+        node_fields = ",".join(f"{wrapper}.{name}" for name in WORK_FIELDS.split(","))
+        response = self._request(
+            "GET",
+            f"{self.base_url}/paper/{lookup_id}/{kind}",
+            params={
+                "fields": f"{EDGE_FIELDS},{node_fields}",
+                "limit": max(1, min(limit, EDGE_PAGE_LIMIT)),
+                "offset": max(0, offset),
+            },
+        )
+        if response.status_code == 404:
+            logger.warning(f"Paper not found in Semantic Scholar: {lookup_id}")
+            return EdgePage()
+        data = self._json(response)
+        page = EdgePage(next_offset=data.get("next"))
+        for row in data.get("data") or []:
+            edge = _edge_from_s2(row, wrapper)
+            if edge is None:
+                page.skipped += 1
+            else:
+                page.edges.append(edge)
+        return page
 
     def get_references_page(
         self, paper_id: str, offset: int = 0, limit: int = PAGE_LIMIT

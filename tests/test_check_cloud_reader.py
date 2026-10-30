@@ -179,6 +179,10 @@ PAGE_VIOLATIONS = {
     "xhr": ("public/js/extra.js", "export const x = () => new XMLHttpRequest();\n"),
     "beacon": ("public/js/extra.js", "export const b = () => navigator.sendBeacon('/x');\n"),
     "protocol_relative_fetch": ("public/js/extra.js", "export const f = () => fetch('//example.com/x');\n"),
+    "import_scripts_absolute": ("public/sw-extra.js", "importScripts('https://cdn.example.com/a.js');\n"),
+    "import_scripts_protocol_relative": ("public/sw-extra.js", "importScripts('//cdn.example.com/a.js');\n"),
+    "import_scripts_mixed": ("public/sw-extra.js", "importScripts('/sw-core.js', 'https://cdn.example.com/a.js');\n"),
+    "import_scripts_computed": ("public/sw-extra.js", "importScripts(self.location.search);\n"),
     "external_script": ("public/extra.html", '<script src="https://cdn.example.com/a.js"></script>\n'),
     "external_css": ("public/extra.css", "@import url('https://fonts.example.com/f.css');\n"),
 }
@@ -191,6 +195,12 @@ def test_page_violation_fails(tree, name):
     result = run_guard(tree)
     assert result.returncode == 1, result.stdout
     assert rel in result.stdout
+
+
+def test_import_scripts_of_root_relative_files_passes(tree):
+    append(tree, "public/sw-extra.js", "importScripts('/sw-core.js', '/shell.js');\n")
+    result = run_guard(tree)
+    assert result.returncode == 0, result.stdout
 
 
 def test_page_same_origin_fetch_and_svg_namespace_pass(tree):

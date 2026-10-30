@@ -1,7 +1,7 @@
--- Migration 031: tables read from the page images at ingestion.
+-- Migration 032: tables read from the page images at ingestion.
 --
--- (025 is already taken by 025_review_log_origin.sql; the report that
--- specified this work called it 025 before that file existed.)
+-- (The report that specified this work called it 025, then 031 collided on main;
+-- 032 is the next free number.)
 --
 -- pymupdf4llm turns most tables into loose text rows and drops some. The
 -- `tables` ingestion stage (nlp_pillars/table_repair.py) reads each table page
@@ -21,7 +21,7 @@
 -- carries the same objects for a brand-new volume.
 --
 --   docker exec -i nlp_postgres psql -U nlp -d nlp -v ON_ERROR_STOP=1 -f - \
---     < docs/migrations/031_paper_tables.sql
+--     < docs/migrations/032_paper_tables.sql
 --
 -- Until it is applied the stage still repairs the text; only the record is
 -- lost (logged at WARNING), and `text repair-tables` names this file.

@@ -141,6 +141,31 @@ def _read_optional(
         raise
 
 
+def _read_citations() -> List[dict]:
+    """Library-side citation rows: ``work_citations`` through the ``paper_citations`` view.
+
+    Migration 031 turned ``paper_citations`` into a view over ``work_citations``
+    whose other end is the library id when that work is in the library, so a
+    citation between two library papers has the library id on both ends. Before
+    031 the same name is the old table, which lacks ``other_citation_count``.
+    """
+    try:
+        return _read_table(
+            "paper_citations",
+            "id,paper_id,cited_paper_id,citation_direction,source,"
+            "is_influential,other_citation_count",
+            "id",
+        )
+    except GraphStoreError as exc:
+        if "other_citation_count" not in str(exc):
+            raise
+        return _read_table(
+            "paper_citations",
+            "id,paper_id,cited_paper_id,citation_direction,source,is_influential",
+            "id",
+        )
+
+
 def load_snapshot() -> Tuple[GraphSnapshot, List[str]]:
     """Library rows the free builders read. Does not create a graph row."""
     warnings: List[str] = []
@@ -152,11 +177,7 @@ def load_snapshot() -> Tuple[GraphSnapshot, List[str]]:
     episodes = _read_table(
         "podcast_scripts", "id,paper_id,pillar_id,title", "id"
     )
-    citations = _read_table(
-        "paper_citations",
-        "id,paper_id,cited_paper_id,citation_direction,source",
-        "id",
-    )
+    citations = _read_citations()
     stored, vector_warning = _read_optional(
         "paper_vectors",
         "ref_kind,ref_id,model_id,source,vec",
@@ -190,6 +211,8 @@ def load_snapshot() -> Tuple[GraphSnapshot, List[str]]:
                 "cited_paper_id": row.get("cited_paper_id"),
                 "direction": row.get("citation_direction"),
                 "source": row.get("source"),
+                "is_influential": bool(row.get("is_influential")),
+                "other_citation_count": row.get("other_citation_count"),
             }
             for row in citations
         ],

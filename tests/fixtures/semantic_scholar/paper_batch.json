@@ -1,0 +1,206 @@
+[
+ {
+  "paperId": "204e3073870fae3d05bcbc2f6a8e263d9b72e776",
+  "externalIds": {
+   "MAG": "2626778328",
+   "DBLP": "journals/corr/VaswaniSPUJGKP17",
+   "ArXiv": "1706.03762",
+   "CorpusId": 13756489
+  },
+  "corpusId": 13756489,
+  "title": "Attention is All you Need",
+  "venue": "Neural Information Processing Systems",
+  "year": 2017,
+  "referenceCount": 41,
+  "citationCount": 200329,
+  "influentialCitationCount": 21386,
+  "openAccessPdf": {
+   "url": "",
+   "status": null,
+   "license": null
+  },
+  "tldr": {
+   "model": "tldr@v2.0.0",
+   "text": "A new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely is proposed, which generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data."
+  },
+  "publicationDate": "2017-06-12",
+  "authors": [
+   {
+    "authorId": "40348417",
+    "name": "Ashish Vaswani"
+   },
+   {
+    "authorId": "1846258",
+    "name": "Noam Shazeer"
+   },
+   {
+    "authorId": "3877127",
+    "name": "N. Parmar"
+   },
+   {
+    "authorId": "39328010",
+    "name": "J. Uszkoreit"
+   },
+   {
+    "authorId": "145024664",
+    "name": "Llion Jones"
+   },
+   {
+    "authorId": "19177000",
+    "name": "Aidan N. Gomez"
+   },
+   {
+    "authorId": "40527594",
+    "name": "Lukasz Kaiser"
+   },
+   {
+    "authorId": "3443442",
+    "name": "I. Polosukhin"
+   }
+  ],
+  "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks in an encoder-decoder configuration. The best performing models also connect the encoder and decoder through an attention mechanism. W",
+  "references": [
+   {
+    "paperId": "032274e57f7d8b456bd255fe76b909b2c1d7458e"
+   },
+   {
+    "paperId": "43428880d75b3a14257c3ee9bda054e61eb869c0"
+   },
+   {
+    "paperId": "4550a4c714920ef57d19878e31c9ebae37b049b2"
+   },
+   {
+    "paperId": "204a4a70428f3938d2c538a4d74c7ae0416306d8"
+   },
+   {
+    "paperId": "79baf48bd560060549998d7b61751286de062e2a"
+   },
+   {
+    "paperId": "13d9323a8716131911bfda048a40e2cde1a76a46"
+   }
+  ]
+ },
+ {
+  "paperId": "1e83c20def5c84efa6d4a0d80aa3159f55cb9c3f",
+  "externalIds": {
+   "DBLP": "journals/corr/abs-1902-10186",
+   "ArXiv": "1902.10186",
+   "MAG": "2934842096",
+   "ACL": "N19-1357",
+   "DOI": "10.18653/v1/N19-1357",
+   "CorpusId": 67855860
+  },
+  "corpusId": 67855860,
+  "title": "Attention is not Explanation",
+  "venue": "North American Chapter of the Association for Computational Linguistics",
+  "year": 2019,
+  "referenceCount": 33,
+  "citationCount": 2252,
+  "influentialCitationCount": 129,
+  "openAccessPdf": {
+   "url": "https://doi.org/10.18653/v1/n19-1357",
+   "status": "HYBRID",
+   "license": "CCBY"
+  },
+  "tldr": {
+   "model": "tldr@v2.0.0",
+   "text": "This work performs extensive experiments across a variety of NLP tasks to assess the degree to which attention weights provide meaningful \u201cexplanations\u201d for predictions, and finds that they largely do not."
+  },
+  "publicationDate": "2019-02-26",
+  "authors": [
+   {
+    "authorId": "49837811",
+    "name": "Sarthak Jain"
+   },
+   {
+    "authorId": "1912476",
+    "name": "Byron C. Wallace"
+   }
+  ],
+  "abstract": "Attention mechanisms have seen wide adoption in neural NLP models. In addition to improving predictive performance, these are often touted as affording transparency: models equipped with attention provide a distribution over attended-to inp",
+  "references": [
+   {
+    "paperId": "aaf24fae03c08355c93d0e3407ad5b7f9e0927c9"
+   },
+   {
+    "paperId": "8b37185ad6e25c8e1a6ec622a73d3281e80f4378"
+   },
+   {
+    "paperId": "f447c73de2f5cee843ad14d70e1d373294611934"
+   },
+   {
+    "paperId": "74e9053d6f44f4507bd40bbea999ee65f0cbefb2"
+   },
+   {
+    "paperId": "5b721c8767f895f03e1316c5e7ce6d93f19e2937"
+   },
+   {
+    "paperId": "6b5cb359a6a6c2a3d79ade3a825eb3e9a65f3a89"
+   }
+  ]
+ },
+ {
+  "paperId": "1518039b5001f1836565215eb047526b3ac7f462",
+  "externalIds": {
+   "DBLP": "conf/acl/SennrichHB16a",
+   "ACL": "P16-1162",
+   "MAG": "1816313093",
+   "ArXiv": "1508.07909",
+   "DOI": "10.18653/v1/P16-1162",
+   "CorpusId": 1114678
+  },
+  "corpusId": 1114678,
+  "title": "Neural Machine Translation of Rare Words with Subword Units",
+  "venue": "Annual Meeting of the Association for Computational Linguistics",
+  "year": 2015,
+  "referenceCount": 40,
+  "citationCount": 9215,
+  "influentialCitationCount": 1104,
+  "openAccessPdf": {
+   "url": "https://www.aclweb.org/anthology/P16-1162.pdf",
+   "status": "HYBRID",
+   "license": "CCBY"
+  },
+  "tldr": {
+   "model": "tldr@v2.0.0",
+   "text": "This paper introduces a simpler and more effective approach, making the NMT model capable of open-vocabulary translation by encoding rare and unknown words as sequences of subword units, and empirically shows that subword models improve over a back-off dictionary baseline for the WMT 15 translation tasks English-German and English-Russian by 1.3 BLEU."
+  },
+  "publicationDate": "2015-08-31",
+  "authors": [
+   {
+    "authorId": "2082372",
+    "name": "Rico Sennrich"
+   },
+   {
+    "authorId": "2259100",
+    "name": "B. Haddow"
+   },
+   {
+    "authorId": "2539211",
+    "name": "Alexandra Birch"
+   }
+  ],
+  "abstract": "Neural machine translation (NMT) models typically operate with a fixed vocabulary, but translation is an open-vocabulary problem. Previous work addresses the translation of out-of-vocabulary words by backing off to a dictionary. In this pap",
+  "references": [
+   {
+    "paperId": "ff1577528a34a11c2a81d2451d346c412c674c02"
+   },
+   {
+    "paperId": "d8c5e6adf7023def3be0bee91799e18607cf588f"
+   },
+   {
+    "paperId": "25eb839f39507fe6983ad3e692b2f8d93a5cb0cc"
+   },
+   {
+    "paperId": "726244c312dc1145e9e9ee32ce641ab8dd9c6e74"
+   },
+   {
+    "paperId": "285c165c81fc9275955147a892b9a039ec8b1052"
+   },
+   {
+    "paperId": "2da338d8972e473df62a566290c9de95a52209e5"
+   }
+  ]
+ },
+ null
+]

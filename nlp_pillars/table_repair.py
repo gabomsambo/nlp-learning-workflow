@@ -48,7 +48,7 @@ from .llm_routes import TABLE_REPAIR_ROUTE
 
 logger = logging.getLogger(__name__)
 
-MIGRATION = "docs/migrations/031_paper_tables.sql"
+MIGRATION = "docs/migrations/032_paper_tables.sql"
 
 #: Paper-level and per-table agreement needed before anything is spliced.
 AGREEMENT_THRESHOLD = 0.95
@@ -543,7 +543,7 @@ def store_records(paper_id: str, repair: Optional[TableRepair]) -> Optional[str]
     """Store the provenance rows. Non-fatal: returns the problem, or None.
 
     The repaired text is already stored by the time this runs; a database that
-    lacks migration 031 loses the page/caption/agreement record, not the paper.
+    lacks migration 032 loses the page/caption/agreement record, not the paper.
     """
     if repair is None or not repair.tables:
         return None

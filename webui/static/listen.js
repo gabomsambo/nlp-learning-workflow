@@ -108,6 +108,9 @@
   var issueClaims = Factcheck.issueClaims;
   var factcheckSummary = Factcheck.factcheckSummary;
   var isFactcheckStale = Factcheck.isFactcheckStale;
+  var canDismiss = Factcheck.canDismiss;
+  var checkDismissalNote = Factcheck.checkDismissalNote;
+  var DISMISSAL_NOTE_MAX = Factcheck.DISMISSAL_NOTE_MAX;
 
   function requestedLine(value, lineCount) {
     if (value == null || !/^\d+$/.test(String(value))) return null;
@@ -479,6 +482,129 @@
         }).filter(Boolean).join(' → ');
         parent.appendChild(models);
       }
+      appendDismissControl(parent, claim);
+    }
+
+    /*
+     * Dismiss a flag with a note, or restore it. The note is required and is
+     * kept (with every restore) in podcast_claim_reviews: a dismissal is a
+     * person saying the verifier was wrong, which is a calibration label. The
+     * flag itself is not changed, only marked.
+     */
+    function appendDismissControl(parent, claim) {
+      if (!canDismiss(claim)) return;
+      var box = document.createElement('div');
+      box.className = 'factcheck-dismiss';
+      var failure = document.createElement('p');
+      failure.className = 'factcheck-dismiss-error';
+      failure.setAttribute('role', 'alert');
+      failure.hidden = true;
+
+      function save(dismissed, note, button) {
+        var scriptId = currentScriptId;
+        button.disabled = true;
+        failure.hidden = true;
+        fetch('/api/podcast/' + encodeURIComponent(scriptId) + '/factcheck/claims/' +
+              encodeURIComponent(claim.id) + '/dismissal', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dismissed: dismissed, note: note }),
+        }).then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            if (!res.ok) {
+              throw new Error(typeof data.detail === 'string' ? data.detail : 'HTTP ' + res.status);
+            }
+            return data;
+          });
+        }).then(function (updated) {
+          if (scriptId !== currentScriptId) return;
+          claim.dismissed_at = updated.dismissed_at;
+          claim.dismissed_note = updated.dismissed_note;
+          refreshFactcheckClaims();
+        }).catch(function (err) {
+          failure.textContent = 'Could not save: ' + err.message;
+          failure.hidden = false;
+          button.disabled = false;
+        });
+      }
+
+      if (claim.dismissed_at) {
+        var kept = document.createElement('p');
+        kept.className = 'factcheck-dismissed';
+        kept.textContent = 'Dismissed: “' + (claim.dismissed_note || '') + '”';
+        box.appendChild(kept);
+        var restore = document.createElement('button');
+        restore.type = 'button';
+        restore.className = 'btn btn-ghost btn-sm';
+        restore.textContent = 'Restore flag';
+        restore.addEventListener('click', function () { save(false, '', restore); });
+        box.appendChild(restore);
+      } else {
+        var form = document.createElement('form');
+        form.className = 'factcheck-dismiss-form';
+        form.hidden = true;
+        var label = document.createElement('label');
+        label.textContent = 'Why is this flag fine?';
+        var field = document.createElement('textarea');
+        field.rows = 2;
+        field.maxLength = DISMISSAL_NOTE_MAX;
+        field.required = true;
+        label.appendChild(field);
+        form.appendChild(label);
+        var confirm = document.createElement('button');
+        confirm.type = 'submit';
+        confirm.className = 'btn btn-sm';
+        confirm.textContent = 'Dismiss flag';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn btn-ghost btn-sm';
+        cancel.textContent = 'Cancel';
+        form.appendChild(confirm);
+        form.appendChild(cancel);
+        var open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'btn btn-ghost btn-sm';
+        open.textContent = 'Dismiss…';
+        open.setAttribute('aria-expanded', 'false');
+        function toggle(show) {
+          form.hidden = !show;
+          open.hidden = show;
+          open.setAttribute('aria-expanded', show ? 'true' : 'false');
+          failure.hidden = true;
+          if (show) field.focus(); else open.focus();
+        }
+        open.addEventListener('click', function () { toggle(true); });
+        cancel.addEventListener('click', function () { toggle(false); });
+        form.addEventListener('submit', function (event) {
+          event.preventDefault();
+          var checked = checkDismissalNote(field.value);
+          if (!checked.ok) {
+            failure.textContent = checked.error;
+            failure.hidden = false;
+            return;
+          }
+          save(true, checked.note, confirm);
+        });
+        box.appendChild(open);
+        box.appendChild(form);
+      }
+      box.appendChild(failure);
+      parent.appendChild(box);
+    }
+
+    // Repaint everything that shows claims after one of them changed. The
+    // popover is closed because the node it hangs off is rebuilt.
+    function refreshFactcheckClaims() {
+      if (!currentFactcheck) return;
+      var claims = Array.isArray(currentFactcheck.claims) ? currentFactcheck.claims : [];
+      closeFactcheckPopover(false);
+      if (factcheckSummaryText) factcheckSummaryText.textContent = factcheckSummary(claims);
+      paintAddressableScript(currentScriptText, claims);
+      renderFactcheckIssues(claims);
+      factcheckHighCount = claims.filter(function (claim) {
+        return claim && claim.severity === 'high' && !claim.dismissed_at;
+      }).length;
+      updateAudioWarning();
     }
 
     function openFactcheckPopover(trigger, claims, lineRow) {
@@ -666,7 +792,7 @@
           var presentation = claimPresentation(primary);
           var mark = document.createElement('button');
           mark.type = 'button';
-          mark.className = 'factcheck-mark is-' + presentation.tone;
+          mark.className = 'factcheck-mark is-' + presentation.tone + (segment.claims.every(function (c) { return c.dismissed_at; }) ? ' is-dismissed' : '');
           mark.setAttribute('aria-expanded', 'false');
           mark.setAttribute('aria-label', presentation.label + ': ' + segment.text);
           appendCueText(mark, segment.text);
@@ -915,7 +1041,7 @@
           if (!mark) return;
           var claims = group.segment.claims;
           var presentation = claimPresentation(strongestClaim(claims) || claims[0]);
-          mark.className = 'factcheck-mark is-' + presentation.tone;
+          mark.className = 'factcheck-mark is-' + presentation.tone + (claims.every(function (c) { return c.dismissed_at; }) ? ' is-dismissed' : '');
           mark.setAttribute('aria-expanded', 'false');
           mark.setAttribute('aria-label', presentation.label + ': ' + mark.textContent);
           mark.addEventListener('click', function () { openFactcheckPopover(mark, claims, row); });
@@ -1157,7 +1283,7 @@
       issues.forEach(function (claim) {
         var presentation = claimPresentation(claim);
         var card = document.createElement('article');
-        card.className = 'factcheck-issue is-' + presentation.tone;
+        card.className = 'factcheck-issue is-' + presentation.tone + (claim.dismissed_at ? ' is-dismissed' : '');
         var title = document.createElement('strong');
         title.textContent = presentation.icon + ' ' + presentation.label;
         card.appendChild(title);
@@ -1192,6 +1318,7 @@
           jumpToScriptLine(Number(claim.line_index), true);
         });
         card.appendChild(jump);
+        appendDismissControl(card, claim);
         factcheckIssuesList.appendChild(card);
       });
       factcheckIssues.hidden = false;

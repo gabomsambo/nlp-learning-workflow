@@ -38,13 +38,13 @@ are replaced, re-embedded and re-projected exactly as a re-ingest does.
 `skipped` with the reason. A failure is a `failed` stage and the paper
 carries on with its original text.
 
-## Migration 031 (hand-applied)
+## Migration 032 (hand-applied)
 
-`docs/migrations/031_paper_tables.sql` creates `paper_tables` (one row per
+`docs/migrations/032_paper_tables.sql` creates `paper_tables` (one row per
 table read: page, caption, columns, rows, model, agreement, status) and
 `replace_paper_tables()`. Until it is applied the repaired text is still
 stored; the provenance rows are not (logged at WARNING), and
-`text repair-tables` names the file. (025 was already taken.)
+`text repair-tables` names the file. (The next free number after 031.)
 
 ## Commands
 

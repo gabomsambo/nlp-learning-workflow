@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "created": "2026-10-30",
+  "dataset_sha256": "c391f4b7d250ddb4b9ddfdc3858b917aba5e40d2729036ac1cfb7e030bfd4957",
+  "dataset_labels": 186,
+  "extras": "penalize",
+  "config": {
+    "source": "live",
+    "models": {
+      "extract": "claude-haiku-5-5",
+      "screen": "claude-haiku-5-5",
+      "rejudge": "claude-sonnet-5-5"
+    },
+    "prompt_version": "v2",
+    "runs": 2,
+    "cost_usd": 1.438935,
+    "cost_by_script": {
+      "e8c8a25b-1d8d-4a60-9e8a-29195d8b658b": 0.371448,
+      "b4269725-8ef4-4509-943d-4d576dedd3ae": 0.237751,
+      "d486e5dd-736d-4e42-a953-eaa65456d9cc": 0.271145,
+      "57637815-dddf-420e-abe7-b10d0f2eb86a": 0.250904,
+      "506be1d7-0019-4987-9596-75b44ff81b1b": 0.299477
+    },
+    "failed_checks": []
+  },
+  "cost_usd": 1.438935,
+  "gate": {
+    "metrics": [
+      "high.precision",
+      "high.recall"
+    ],
+    "tolerance": 0.1
+  },
+  "metrics": {
+    "high": {
+      "precision": 0.6666666666666666,
+      "recall": 0.25,
+      "f1": 0.36363636363636365,
+      "labels": 16,
+      "predictions": 6,
+      "true_positive_labels": 4,
+      "true_positive_predictions": 4
+    },
+    "medium": {
+      "precision": 0.4444444444444444,
+      "recall": 0.25,
+      "f1": 0.32,
+      "labels": 16,
+      "predictions": 9,
+      "true_positive_labels": 4,
+      "true_positive_predictions": 4
+    },
+    "low": {
+      "precision": 0.5357142857142857,
+      "recall": 0.3125,
+      "f1": 0.39473684210526316,
+      "labels": 48,
+      "predictions": 28,
+      "true_positive_labels": 15,
+      "true_positive_predictions": 15
+    },
+    "any": {
+      "precision": 0.7209302325581395,
+      "recall": 0.4,
+      "f1": 0.5145228215767635,
+      "labels": 80,
+      "predictions": 43,
+      "true_positive_labels": 32,
+      "true_positive_predictions": 31
+    }
+  }
+}
