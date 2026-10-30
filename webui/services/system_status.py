@@ -1129,7 +1129,7 @@ def classify_semantic_scholar(
     """Activity row for the Semantic Scholar key.
 
     A rejected key is DOWN on the page and does not flip the shell chip:
-    requests retry once without the key, so citations still run.
+    the client treats it as absent and runs keyless, so citations still run.
     """
     if not had_key:
         return make_check(
@@ -1147,7 +1147,7 @@ def classify_semantic_scholar(
             "down",
             (
                 "The configured SEMANTIC_SCHOLAR_API_KEY is rejected "
-                "(HTTP 403). Requests retry once without the key."
+                "(HTTP 403). Requests run without it, keyless."
             ),
             (
                 "Renew the key or remove SEMANTIC_SCHOLAR_API_KEY from .env. "
@@ -1216,7 +1216,7 @@ async def _check_semantic_scholar(
         if response.status_code == 403:
             logger.error(
                 "SEMANTIC_SCHOLAR_API_KEY was rejected with HTTP 403. "
-                "Citation requests retry once without the key. "
+                "Citation requests run keyless. "
                 "The key in .env was not changed; renew or remove it."
             )
     _s2_cache[digest] = (clock, check)

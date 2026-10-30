@@ -12,6 +12,7 @@
  */
 import { callout, emptyState, h } from './dom.js';
 import { codeDrawer } from './follow.js';
+import { saveControl, savedChip } from './offline-view.js';
 import {
   PLAYBACK_RATES, audioSrc, episodeHref, episodeInitial, episodeMeta, factcheckState, formatDate, listenRows,
   paperHref, rateOrDefault, readAlongNote, resumeSeconds, sha256Hex,
@@ -41,11 +42,16 @@ function remember(key, value) {
 }
 
 
-export async function listenView(store) {
+export async function listenView(store, offline) {
   const library = await store.library();
   const pillars = new Map(library.pillars.map((p) => [p.id, p]));
   const rows = listenRows(library);
   const papers = new Map(library.papers.map((p) => [p.id, p]));
+  // Which episodes play with no connection, for the chip. Without the offline layer, none is marked.
+  let saved = new Map();
+  if (offline) {
+    try { saved = new Map((await offline.episodes()).map((row) => [row.id, row])); } catch (error) { /* no chips */ }
+  }
 
   return h('div', { class: 'listen-page' },
     h('header', { class: 'page-header' },
@@ -66,7 +72,8 @@ export async function listenView(store) {
             paper ? h('span', { class: 'episode-meta reader-episode-paper', text: paper.title }) : null,
             h('span', { class: 'reader-episode-tags' },
               playable ? null : h('span', { class: 'chip chip-neutral', text: 'No audio' }),
-              playable && episode.has_timeline ? h('span', { class: 'chip chip-accent', text: 'Read along' }) : null)));
+              playable && episode.has_timeline ? h('span', { class: 'chip chip-accent', text: 'Read along' }) : null,
+              savedChip(saved, episode.id))));
       })));
 }
 
@@ -86,7 +93,7 @@ function claimExplanation(parent, claim) {
   }
 }
 
-export async function episodeView(store, id) {
+export async function episodeView(store, id, offline) {
   const library = await store.library();
   const entry = library.episodes.find((e) => e.id === id);
   if (!entry) {
@@ -537,6 +544,8 @@ export async function episodeView(store, id) {
   const source = episode.source_material;
   const sourceWarnings = source && Array.isArray(source.warnings) ? source.warnings : [];
 
+  const saveButton = offline && src ? saveControl(offline, episode.id) : null;
+
   const root = h('div', { class: 'listen-page episode-page', 'data-episode-id': episode.id },
     h('nav', { class: 'crumb', 'aria-label': 'Breadcrumb' },
       h('a', { href: '#/listen', text: 'Listen' }),
@@ -548,7 +557,8 @@ export async function episodeView(store, id) {
       h('div', { class: 'player-body' },
         h('h1', { class: 'player-title', text: episode.title }),
         h('p', { class: 'episode-meta', text: episodeMeta({ duration_seconds: durationHint, created_at: episode.created_at }, pillar?.name) }),
-        paper ? h('p', { class: 'episode-meta' }, 'From ', h('a', { href: paperHref(paper.id), text: paper.title })) : null)),
+        paper ? h('p', { class: 'episode-meta' }, 'From ', h('a', { href: paperHref(paper.id), text: paper.title })) : null,
+        offline && src ? saveButton : null)),
     sourceWarnings.length
       ? callout('warn', 'Written from limited material', h('ul', null, sourceWarnings.map((w) => h('li', { text: w }))))
       : null,
@@ -575,6 +585,7 @@ export async function episodeView(store, id) {
   refreshNowButton();
 
   root.dispose = () => {
+    if (saveButton) saveButton.dispose();
     if (state.raf) cancelAnimationFrame(state.raf);
     state.raf = 0;
     closePopover(false);
