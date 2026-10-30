@@ -50,13 +50,13 @@ paper text (+ repaired tables)                                     PODCAST_WRITE
 
 ### Stored
 
-`docs/migrations/035_podcast_evidence_writer.sql` (hand-applied, **not applied** by this PR)
+`docs/migrations/036_podcast_evidence_writer.sql` (hand-applied, **not applied** by this PR)
 adds `podcast_scripts.writer_mode`, `ledger` and `line_citations`. The ledger holds every
 entry with its quote and how it matched (`exact`, `markup`, `fuzzy`), what failed
 verification and why, the models and costs, and the writer-time measurements below. Until it
 is applied an evidence-mode script still saves: `add_podcast_script()` drops the three keys,
 logs the migration path, and only the ledger record is lost. A free script never sends them,
-so the free writer saves exactly as before on a database without 035.
+so the free writer saves exactly as before on a database without 036.
 
 ### Failure behaviour
 
@@ -177,5 +177,5 @@ tables were flagged. Do **not** flip the default.
 ## Flipping the default
 
 Not done in this PR, and the gate above did not pass. When the gate passes, set `podcast_writer_mode` to `evidence` in
-`nlp_pillars/config.py` (and apply migration 035 first so the ledger is recorded), in a
+`nlp_pillars/config.py` (and apply migration 036 first so the ledger is recorded), in a
 follow-up that carries the new measurements.

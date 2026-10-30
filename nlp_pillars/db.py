@@ -389,7 +389,7 @@ def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
         'audio_metadata': script.audio_metadata.model_dump(mode='json'),
         'created_at': script.created_at.isoformat() if script.created_at else None
     }
-    # Evidence-writer record. Requires docs/migrations/035_podcast_evidence_writer.sql;
+    # Evidence-writer record. Requires docs/migrations/036_podcast_evidence_writer.sql;
     # add_podcast_script() retries without these keys and says so. Sent only for
     # an evidence-mode script, so the free writer saves exactly as it always did
     # on a database that has not had 035 applied.
@@ -1990,9 +1990,9 @@ def add_podcast_script(script: PodcastScript) -> str:
             ('options', 'docs/migrations/012_podcast_options.sql'),
             ('ground_pack_calls', 'docs/migrations/013_podcast_ground_pack_calls.sql'),
             ('audio_metadata', 'docs/migrations/014_podcast_audio.sql'),
-            ('writer_mode', 'docs/migrations/035_podcast_evidence_writer.sql'),
-            ('ledger', 'docs/migrations/035_podcast_evidence_writer.sql'),
-            ('line_citations', 'docs/migrations/035_podcast_evidence_writer.sql'),
+            ('writer_mode', 'docs/migrations/036_podcast_evidence_writer.sql'),
+            ('ledger', 'docs/migrations/036_podcast_evidence_writer.sql'),
+            ('line_citations', 'docs/migrations/036_podcast_evidence_writer.sql'),
         )
         # PostgREST names one missing column per error, in no order this loop
         # can predict, so go round until nothing more can be dropped.

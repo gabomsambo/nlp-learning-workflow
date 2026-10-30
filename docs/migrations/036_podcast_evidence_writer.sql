@@ -1,4 +1,4 @@
--- Migration 035: the evidence-ledger podcast writer's record.
+-- Migration 036: the evidence-ledger podcast writer's record.
 --
 -- PODCAST_WRITER_MODE=evidence (nlp_pillars/evidence/) writes a script from a
 -- ledger of quote-verified facts and ends every [HOST] line with the ledger ids
@@ -17,7 +17,7 @@
 -- carries the same columns for a brand-new volume.
 --
 --   docker exec -i nlp_postgres psql -U nlp -d nlp -v ON_ERROR_STOP=1 -f - \
---     < docs/migrations/035_podcast_evidence_writer.sql
+--     < docs/migrations/036_podcast_evidence_writer.sql
 --
 -- Until it is applied the free writer is unaffected, and an evidence-mode script
 -- still saves: add_podcast_script() retries without these keys, logs the

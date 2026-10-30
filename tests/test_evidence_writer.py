@@ -638,7 +638,7 @@ class TestPersistence:
         back = _dict_to_podcast_script({"id": "x", "paper_id": "p", "pillar_id": "q", "title": "t", "script": "s"})
         assert back.writer_mode == "free" and back.ledger == {} and back.line_citations == {}
 
-    def test_a_database_without_035_still_saves_the_script(self):
+    def test_a_database_without_036_still_saves_the_script(self):
         from nlp_pillars import db
 
         attempts = []
@@ -675,8 +675,8 @@ class TestPersistence:
                 db.list_paper_tables("p1")
 
 
-class TestMigration035:
-    SQL = (ROOT / "docs" / "migrations" / "035_podcast_evidence_writer.sql").read_text()
+class TestMigration036:
+    SQL = (ROOT / "docs" / "migrations" / "036_podcast_evidence_writer.sql").read_text()
     SCHEMA = (ROOT / "schema.sql").read_text()
 
     def test_it_is_idempotent_and_reloads_postgrest(self):
