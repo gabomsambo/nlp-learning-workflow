@@ -15,6 +15,10 @@ in `nlp_pillars/evidence/gate.py` and docs/PODCAST_EVIDENCE_WRITER.md.
     generate  PAID: one script per paper x sample x arm, through the real
               PodcastAgent. `--arm` and `--limit` narrow it.
     check     PAID: the production fact-check on every script that has none.
+    ledgers   PAID (about half a cent each): rebuild every paper's ledger, two
+              samples each, and print the quote-verification drop rate. No script
+              is written. Use it to re-measure that criterion after a verifier
+              change without paying for scripts and fact-checks again.
     flags     free: write OUT/flags_blind.md (serious flags, shuffled, arm
               hidden) for hand labelling, and OUT/flags_key.json.
     report    free: metrics and the gate, from OUT and a labels file
@@ -276,6 +280,39 @@ def cmd_generate(args, out: Out) -> int:
     return 1 if failures else 0
 
 
+def cmd_ledgers(args, out: Out) -> int:
+    from nlp_pillars.agents.podcast_agent import MAX_FULL_TEXT_CHARS
+    from nlp_pillars.evidence import ledger as evidence_ledger
+
+    inputs = out.load_inputs()
+    proposed = dropped = 0
+    reasons: dict[str, int] = {}
+    for paper_id, _url in DEFAULT_PAPERS:
+        data = inputs.get(paper_id)
+        if data is None:
+            raise GateError(f"run `prepare` first: no inputs for {paper_id}")
+        from nlp_pillars import db
+
+        paper = db.get_paper_by_id(paper_id)
+        body = data["text"][:MAX_FULL_TEXT_CHARS]
+        for sample in range(1, args.samples + 1):
+            out.require_budget(args.budget, 0.02)
+            ledger = evidence_ledger.build_ledger(
+                title=paper.title, authors=list(paper.authors or []), year=paper.year,
+                abstract=paper.abstract, body=body, tables=data["tables"],
+            )
+            out.charge(f"ledger {paper_id} {sample}", ledger.cost_usd)
+            proposed += ledger.proposed
+            dropped += len(ledger.dropped)
+            for item in ledger.dropped:
+                key = item["reason"].split(":")[0]
+                reasons[key] = reasons.get(key, 0) + 1
+            print(f"  {paper_id} #{sample}: {len(ledger.dropped)} of {ledger.proposed} dropped", flush=True)
+    print(f"dropped {dropped} of {proposed} ({dropped / proposed:.1%}); reasons {reasons}")
+    print(f"spent ${out.spent():.4f}")
+    return 0
+
+
 def _trim_claim(row: dict[str, Any]) -> dict[str, Any]:
     keep = (
         "line_index", "span_start", "span_end", "span_text", "claim", "scope", "category",
@@ -417,7 +454,7 @@ def cmd_report(args, out: Out) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["plan", "prepare", "generate", "check", "flags", "report"])
+    parser.add_argument("command", choices=["plan", "prepare", "generate", "check", "ledgers", "flags", "report"])
     parser.add_argument("--out", required=True, help="working directory, outside the repository")
     parser.add_argument("--env-file", default=DEFAULT_ENV_FILE)
     parser.add_argument("--budget", type=float, default=DEFAULT_BUDGET_USD)
@@ -434,11 +471,11 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     out = Out(args.out)
     try:
-        if args.command in ("prepare", "generate", "check"):
+        if args.command in ("prepare", "generate", "check", "ledgers"):
             load_key(args.env_file)
         return {
             "plan": cmd_plan, "prepare": cmd_prepare, "generate": cmd_generate,
-            "check": cmd_check, "flags": cmd_flags, "report": cmd_report,
+            "check": cmd_check, "ledgers": cmd_ledgers, "flags": cmd_flags, "report": cmd_report,
         }[args.command](args, out)
     except GateError as exc:
         print(f"error: {exc}", file=sys.stderr)

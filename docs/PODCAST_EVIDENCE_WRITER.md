@@ -100,8 +100,12 @@ supports it). Precision is real over all labelled serious flags, strict and with
 **Recall is not measured on the new scripts.** Exhaustive labelling of every claim is what
 `evals/factcheck/calibration.json` did for five scripts, and the labels there belong to those
 exact script texts. The same calibrated checker judges both arms, so its measured recall
-(`evals/factcheck/baseline.json`) is the yardstick for both, and misses are invisible in both.
-`factcheck_eval.py --dry-run` is the free check that the yardstick itself is intact.
+(`evals/factcheck/baseline.json`: high-severity precision 0.67 and recall 0.25 on 16 labels,
+medium recall 0.25) is the yardstick for both, and misses are invisible in both. With recall
+that low, every "per 1,000 words" figure here is a floor on the true error rate, and a
+difference between the arms is only as trustworthy as the assumption that the checker misses
+both arms' errors equally. `factcheck_eval.py --dry-run` is the free check that the yardstick
+itself is intact.
 
 ```
 python scripts/podcast_writer_gate.py plan     --out DIR
@@ -116,8 +120,62 @@ The Anthropic key is read from `--env-file` at run time (that variable only). Th
 Ground Pack runs on Claude Haiku 5.5 here so the two arms differ only in the writer; with
 DeepSeek funded the production Ground Pack would be cheaper, not different in kind.
 
+## First measurement (2026-10-30): the gate did NOT pass
+
+8 library papers x 2 samples x 2 arms = 32 scripts, written by the real `PodcastAgent` over the
+same table-repaired text (the repair was done in memory by `prepare`; the library's stored text
+was not touched). Free arm Ground Pack on Claude Haiku 5.5. 73 serious flags labelled blind to
+the arm by one reader (Claude), so the labels share the checker's family and are one person's
+reading, not an independent audit. Spend $6.32 of the $8 cap, every call logged.
+
+| | free | evidence |
+|---|---|---|
+| spoken words | 47,934 | 44,033 (91.9%; worst paper 74%, the credit-card paper whose tables were flagged, not spliced) |
+| claims checked | 1,685 | 1,740 |
+| high / medium / low flags | 9 / 25 / 117 | 15 / 24 / 62 |
+| all flags per 1,000 words | 3.15 | 2.29 |
+| **serious (high+medium) per 1,000 words, engine** | **0.71** | **0.89** |
+| serious flags read as real / minor / wrong | 9 / 23 / 2 | 10 / 23 / 6 |
+| **confirmed serious per 1,000 words** | **0.19** | **0.23** (paired difference +0.05, 95% CI -0.16 to +0.29 over 8 papers) |
+| generation cost | $2.22 | $1.47 |
+| fact-check cost | $1.12 | $1.32 |
+
+| Criterion | Result |
+|---|---|
+| 8 papers x 2 samples | pass |
+| confirmed serious flags no higher than free | **fail** (0.23 vs 0.19; the interval spans zero) |
+| spoken words >= 85% of free | pass pooled (91.9%); 1 of 8 papers at 74% |
+| narrative ledger entries used >= 60% | pass (97.8% mean, 93.5% min) |
+| 0 untagged lines | **fail**: 14 of 1,781 spoken lines in 3 of 16 scripts (7 were `... [TRANSITION]` lines that took a cue instead of a tag) |
+| quote drop rate <= 10% | **fail**: 99 of 782 proposed (12.7%); 98 of 830 (11.8%) on a re-run of the ledger step alone after the number-reading fix below |
+
+What it says, plainly:
+
+* The engine's low-severity flags fell by about 42% per 1,000 words, which is the report's
+  mechanism working: invented framing and outside knowledge mostly disappear. **The serious
+  flags did not fall.** The report's 3-paper, 1-sample result (-72% flags, 8 -> 4 high+medium)
+  did not reproduce at this size, and neither did the 63-79% cheaper fact-check: the evidence
+  scripts carry more claims per word (39.5 vs 35.2 per 1,000) so more reach the Sonnet
+  re-judge.
+* What the evidence arm's serious errors look like: a ledger statement that misreads its
+  quote and the writer repeating it (credit-card paper: a 6.0% / 85.4% *relative* gain
+  spoken as PR-AUC values, three real flags), a quoted definition the writer contradicts
+  (placement), and small attribution slips. 4 of its 10 real errors are in the one paper where
+  table repair flagged every table and no `T#` rows existed.
+* Free-arm real errors were the report's classes: overgeneralised "most prior work" and
+  "fourfold in both cases" (derived numbers), a method misdescribed.
+* Not measured: recall on the new scripts (see above), a listener test, and more than one
+  labeller.
+
+What to change before measuring again (not done here, each needs a paid re-run):
+`evidence-v2` rule that every `[HOST]` line takes a tag even when it ends in a cue (the 7
+transition lines); the ledger builder dropping fewer entries (49 quotes still not found, most
+of the rest are statements that add a number the quote lacks); a ledger-statement check on the
+*relative vs absolute* wording of percentages; and running table repair first on papers whose
+tables were flagged. Do **not** flip the default.
+
 ## Flipping the default
 
-Not done in this PR. When the gate passes, set `podcast_writer_mode` to `evidence` in
+Not done in this PR, and the gate above did not pass. When the gate passes, set `podcast_writer_mode` to `evidence` in
 `nlp_pillars/config.py` (and apply migration 035 first so the ledger is recorded), in a
 follow-up that carries the new measurements.

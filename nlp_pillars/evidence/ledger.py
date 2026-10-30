@@ -265,9 +265,24 @@ def _needs_support(value: float) -> bool:
     return not (float(value).is_integer() and abs(value) <= 12)
 
 
+_GROUPED = re.compile(r"(?<=\d)[ \u2009\u202f\u00a0](?=\d{3}\b)")
+_SPLIT_DECIMAL = re.compile(r"(?<=\d)\s*\.\s*(?=\d)")
+
+
+def numeric_view(text: str) -> str:
+    """The quote as its numbers are meant to be read.
+
+    The extractor writes ``0 _._ 6`` for 0.6 and ``30 000`` for 30,000; a
+    statement that says 0.6 or 30,000 is right, and must not be dropped for it.
+    """
+    text = re.sub(r"[*_`]", "", text)
+    text = _SPLIT_DECIMAL.sub(".", text)
+    return _GROUPED.sub("", text)
+
+
 def unsupported_numbers(statement: str, quote: str) -> List[str]:
     """Numbers the statement states that its own quote does not contain."""
-    have = {s.value for s in number_spans(quote)}
+    have = {s.value for s in number_spans(numeric_view(quote))}
     missing = []
     for span in number_spans(statement):
         if _needs_support(span.value) and not supported(span.value, have):
@@ -385,10 +400,10 @@ def verify_draft(
         statement = " ".join(item.statement.split())
         check = verify_quote(item.quote, view, squashed)
         if not statement:
-            dropped.append({"quote": item.quote[:120], "reason": "empty statement"})
+            dropped.append({"quote": item.quote[:250], "reason": "empty statement"})
             continue
         if not check.ok:
-            dropped.append({"quote": item.quote[:120], "reason": check.reason})
+            dropped.append({"quote": item.quote[:250], "reason": check.reason})
             continue
         missing = unsupported_numbers(statement, check.quote)
         if missing:
@@ -399,7 +414,7 @@ def verify_draft(
             continue
         key = squash(check.quote) + "|" + squash(statement)
         if key in seen:
-            dropped.append({"quote": item.quote[:120], "reason": "duplicate entry"})
+            dropped.append({"quote": item.quote[:250], "reason": "duplicate entry"})
             continue
         seen.add(key)
         kind = item.kind.strip().lower()

@@ -175,6 +175,10 @@ class TestUnsupportedNumbers:
     def test_rounding_of_a_quoted_number_is_fine(self):
         assert L.unsupported_numbers("About 92 percent.", "reaches 91.6% accuracy") == []
 
+    def test_the_extractors_split_decimals_and_grouped_thousands_are_read_as_numbers(self):
+        assert L.unsupported_numbers("The beam size is 4 and alpha is 0.6.", "beam size of 4 and length penalty _α_ = 0 _._ 6 [38]") == []
+        assert L.unsupported_numbers("Vocabularies hold 30,000 to 50,000 words.", "typically limited to 30 000\u201350 000 words") == []
+
     def test_small_whole_numbers_are_structural(self):
         assert L.unsupported_numbers("It compares two baselines.", "against a baseline and ours") == []
 
