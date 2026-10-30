@@ -61,6 +61,53 @@
     }).join(', ');
   }
 
+  /*
+   * Fit badges come from the verdicts `map build` stored for the pillar's
+   * queue (GET /api/pillars/{id}/queue/fit). Order below is the badge order;
+   * sorting by fit never removes a row, and a candidate with no verdict is
+   * shown as "Not scored", last.
+   */
+  var FIT = {
+    close_strong: { label: 'Strong fit', tone: 'chip-ok' },
+    close_related: { label: 'Related', tone: 'chip-accent' },
+    on_topic_new_direction: { label: 'New direction', tone: 'chip-warn' },
+    far_unanchored: { label: 'Far from your papers', tone: 'chip-warn' },
+    off_topic: { label: 'Off topic', tone: 'chip-danger' },
+    duplicate: { label: 'Duplicate', tone: '' },
+    already_yours: { label: 'In your library', tone: 'chip-ok' },
+    unscored: { label: 'Not scored', tone: '' },
+  };
+  var FIT_ORDER = Object.keys(FIT);
+
+  function fitInfo(fit) {
+    var known = fit && FIT[fit.verdict];
+    return known || FIT.unscored;
+  }
+
+  function fitRank(fit) {
+    var at = fit ? FIT_ORDER.indexOf(fit.verdict) : -1;
+    return at < 0 ? FIT_ORDER.length : at;
+  }
+
+  /** A sorted copy of `list`; `fits` maps paper id to {verdict, rank_fraction}. */
+  function sortCandidates(list, mode, fits) {
+    var items = list.slice();
+    if (mode !== 'fit') return items;
+    var lookup = fits || {};
+    var indexed = items.map(function (c, i) { return { c: c, i: i }; });
+    indexed.sort(function (a, b) {
+      var fa = lookup[a.c && a.c.paper && a.c.paper.id];
+      var fb = lookup[b.c && b.c.paper && b.c.paper.id];
+      var d = fitRank(fa) - fitRank(fb);
+      if (d) return d;
+      var ra = fa && fa.rank_fraction != null ? Number(fa.rank_fraction) : Infinity;
+      var rb = fb && fb.rank_fraction != null ? Number(fb.rank_fraction) : Infinity;
+      if (ra !== rb) return ra < rb ? -1 : 1;
+      return a.i - b.i;
+    });
+    return indexed.map(function (x) { return x.c; });
+  }
+
   function init(opts) {
     var root = document.getElementById('add-papers');
     var initial = (opts && opts.initialMode) || (root && root.dataset.mode) || 'find';
@@ -71,6 +118,8 @@
     var totalFailed = 0;
     var pendingSelection = null;
     var libraryIds = null;
+    var fits = null;
+    var fitSort = 'default';
 
     var pillarSelect = document.getElementById('pillar-select');
     var discoverForm = document.getElementById('discover-form');
@@ -79,6 +128,7 @@
     var resultsArea = document.getElementById('results-area');
     var resultsCount = document.getElementById('results-count');
     var candidatesBody = document.getElementById('candidates-body');
+    var sortSelect = document.getElementById('candidate-sort');
     var selectAllCheckbox = document.getElementById('select-all');
     var processBtn = document.getElementById('process-btn');
     var selectedCount = document.getElementById('selected-count');
@@ -172,9 +222,9 @@
     }
 
     function renderCandidates() {
-      var available = candidates.filter(function (c) {
+      var available = sortCandidates(candidates.filter(function (c) {
         return c && c.paper && !attemptedIds.has(c.paper.id);
-      });
+      }), fitSort, fits);
       if (resultsCount) resultsCount.textContent = '(' + available.length + ' available)';
       if (!candidatesBody) return;
 
@@ -238,6 +288,14 @@
           meta.appendChild(metaSpan('No PDF'));
         }
 
+        if (fits) {
+          var info = fitInfo(fits[paper.id]);
+          var badge = document.createElement('span');
+          badge.className = 'chip ' + info.tone;
+          badge.textContent = info.label;
+          meta.appendChild(badge);
+        }
+
         if (inLibrary(paper.id, libraryIds)) {
           var pageHref = paperPageHref(paper.id);
           if (pageHref) {
@@ -298,6 +356,22 @@
       paintLine(statusEl, 'is-ok');
       renderCandidates();
       resultsArea.hidden = false;
+      loadFits();
+    }
+
+    function loadFits() {
+      fits = null;
+      if (!pillarSelect || !pillarSelect.value) return;
+      var asked = pillarSelect.value;
+      fetch('/api/pillars/' + encodeURIComponent(asked) + '/queue/fit').then(function (res) {
+        return res.ok ? res.json() : null;
+      }).then(function (data) {
+        if (!data || pillarSelect.value !== asked) return;
+        // No map built yet: leave badges off rather than call all of it unscored.
+        fits = data.status === 'ready' ? (data.fits || {}) : null;
+        if (sortSelect) sortSelect.disabled = !fits;
+        if (candidates.length) renderCandidates();
+      }).catch(function () { /* fit is optional: the list still shows */ });
     }
 
     function onRunUpdate(run) {
@@ -539,6 +613,12 @@
       });
     });
     if (pillarSelect) pillarSelect.addEventListener('change', rememberPillar);
+    if (sortSelect) {
+      sortSelect.addEventListener('change', function () {
+        fitSort = sortSelect.value === 'fit' ? 'fit' : 'default';
+        if (candidates.length) renderCandidates();
+      });
+    }
 
     setMode(modeFromSearch(global.location.search, initial), false);
 
@@ -562,6 +642,8 @@
     inLibrary: inLibrary,
     modeFromSearch: modeFromSearch,
     safePdfHref: safePdfHref,
+    fitInfo: fitInfo,
+    sortCandidates: sortCandidates,
   };
   global.AddPapers = api;
 
@@ -571,6 +653,8 @@
       inLibrary: inLibrary,
       modeFromSearch: modeFromSearch,
       safePdfHref: safePdfHref,
+      fitInfo: fitInfo,
+      sortCandidates: sortCandidates,
     };
   }
 })(typeof window !== 'undefined' ? window : globalThis);
