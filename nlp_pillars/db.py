@@ -1038,6 +1038,65 @@ def replace_paper_text(paper_id: str, full_text: str, extractor: str) -> int:
     return count
 
 
+class PaperTablesError(Exception):
+    """``paper_tables`` could not be read or written."""
+
+
+def replace_paper_tables(paper_id: str, rows: List[Dict[str, Any]]) -> int:
+    """Replace the stored table records for ``paper_id`` in one transaction.
+
+    Raises:
+        PaperTablesError: the write failed. Names migration 031 when missing.
+    """
+    from .table_repair import MIGRATION
+
+    try:
+        response = get_client().rpc('replace_paper_tables', {
+            'p_paper_id': paper_id,
+            'p_tables': rows,
+        })
+    except Exception as e:
+        raise PaperTablesError(
+            f"tables for {paper_id} were not stored: {e}. Apply {MIGRATION} by hand."
+        ) from e
+    if response['error']:
+        raise PaperTablesError(
+            f"tables for {paper_id} were not stored: {response['error']}. "
+            f"Apply {MIGRATION} by hand."
+        )
+    return len(rows)
+
+
+def list_repaired_table_paper_ids() -> List[str]:
+    """Paper ids that have at least one ``paper_tables`` row.
+
+    Raises:
+        PaperTablesError: the table is missing or the read failed.
+    """
+    from .table_repair import MIGRATION
+
+    try:
+        return sorted({r['paper_id'] for r in _each_row('paper_tables', 'paper_id', 'paper_id')})
+    except Exception as e:
+        raise PaperTablesError(
+            f"Could not read paper_tables: {e}. Apply {MIGRATION} by hand."
+        ) from e
+
+
+def get_stored_paper_extractor(paper_id: str) -> Optional[str]:
+    """The ``paper_texts.extractor`` of ``paper_id``, or None without a row."""
+    response = (
+        get_client().table('paper_texts').select('extractor')
+        .eq('paper_id', paper_id).limit(1).execute()
+    )
+    if response['error']:
+        raise PaperTextLookupError(
+            f"Could not read stored extractor for {paper_id}: {response['error']}"
+        )
+    rows = response['data'] or []
+    return rows[0].get('extractor') if rows else None
+
+
 def _embedding_store_error(error: Any, action: str) -> EmbeddingError:
     """Name migration 018 when the table or the lookup function is missing."""
     text = str(error)
