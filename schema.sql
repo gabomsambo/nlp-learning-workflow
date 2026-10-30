@@ -225,6 +225,14 @@ CREATE TABLE podcast_scripts (
     -- Generated episode audio metadata; see schemas.py::AudioMetadata.
     -- Added by docs/migrations/014_podcast_audio.sql.
     audio_metadata JSONB,
+    -- The evidence-ledger writer's record (nlp_pillars/evidence/): which writer
+    -- made the script, the verified ledger it was written from, and the ledger
+    -- ids each line of the stored (tag-stripped) script cites.
+    -- Added by docs/migrations/035_podcast_evidence_writer.sql.
+    writer_mode TEXT NOT NULL DEFAULT 'free'
+        CONSTRAINT podcast_scripts_writer_mode_check CHECK (writer_mode IN ('free', 'evidence')),
+    ledger JSONB,
+    line_citations JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 

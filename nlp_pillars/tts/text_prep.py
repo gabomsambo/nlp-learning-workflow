@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import List, Sequence, Tuple
 
+from ..evidence.tags import strip_citation_tags
+
 # IndexTTS uses max_text_tokens_per_segment=120 on /gen_single (see indextts_client).
 DEFAULT_MAX_TOKENS_PER_SEGMENT = 120
 
@@ -38,7 +40,7 @@ _PUNCTUATION_ONLY_RE = re.compile(
 
 def prepare_text_for_indextts(text: str) -> str:
     """Return text safe for IndexTTS segment splitting."""
-    prepared = text.translate(_CURLY_QUOTE_MAP)
+    prepared = strip_citation_tags(text).translate(_CURLY_QUOTE_MAP)
     for dash in _EM_EN_DASHES:
         prepared = prepared.replace(dash, ", ")
     # Collapse any double spaces introduced by dash replacement.

@@ -62,6 +62,14 @@ class Settings(BaseSettings):
         None, env="LLM_FACTCHECK_REJUDGE_MODEL"
     )
     llm_table_repair_model: Optional[str] = Field(None, env="LLM_TABLE_REPAIR_MODEL")
+    # Evidence-writer ledger builder (nlp_pillars/evidence/ledger.py).
+    llm_podcast_ledger_model: Optional[str] = Field(None, env="LLM_PODCAST_LEDGER_MODEL")
+    # How the podcast script is written: "free" (Ground Pack + paper, the
+    # original writer) or "evidence" (a code-verified evidence ledger, every
+    # line cites it). Stays "free" until the evidence writer passes its gate;
+    # see docs/PODCAST_EVIDENCE_WRITER.md. Read through get_writer_mode(), which
+    # refuses a value that is neither.
+    podcast_writer_mode: str = Field("free", env="PODCAST_WRITER_MODE")
     # Page-image table repair at ingestion (nlp_pillars/table_repair.py).
     table_repair_enabled: bool = Field(True, env="TABLE_REPAIR_ENABLED")
     llm_playground_model: Optional[str] = Field(None, env="LLM_PLAYGROUND_MODEL")

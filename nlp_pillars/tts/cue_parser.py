@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional, Union
 
+from ..evidence.tags import strip_citation_tags
+
 # Standalone cue lines and the anchored [HOST]: prefix (case-insensitive).
 _HOST_PREFIX = re.compile(r"^\[HOST\]:\s*", re.IGNORECASE)
 _STANDALONE_CUE = re.compile(
@@ -63,7 +65,9 @@ def spoken_line_text(raw_line: str) -> Optional[str]:
     prose is narrated whole. The read-along aligner uses it so the words it
     times are the words that were synthesised.
     """
-    line = raw_line.strip()
+    # The stored script is already stripped of evidence-mode citation tags; this
+    # keeps an unstripped one (an older row, a hand edit) from being read aloud.
+    line = strip_citation_tags(raw_line).strip()
     if not line or _STANDALONE_CUE.match(line):
         return None
     host_match = _HOST_PREFIX.match(line)
@@ -88,7 +92,7 @@ def parse_podcast_script(script: str) -> ParsedScript:
     buffer_start = 0
 
     for line_no, raw_line in enumerate(script.splitlines()):
-        line = raw_line.strip()
+        line = strip_citation_tags(raw_line).strip()
         if not line:
             if buffer:
                 _flush_speech(buffer, buffer_start, result)

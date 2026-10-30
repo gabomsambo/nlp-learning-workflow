@@ -242,6 +242,22 @@ TABLE_REPAIR_ROUTE = ModelRoute(
 
 # -- podcast ---------------------------------------------------------------
 
+#: The evidence ledger (nlp_pillars/evidence/ledger.py): one structured call
+#: over the whole paper that copies verbatim quotes and the one-sentence fact
+#: each supports. Haiku 5.5 with thinking off: the report measured 52-76
+#: entries for about $0.004 a paper, and the quotes are checked in code, so a
+#: careless copy is dropped rather than trusted. Quote first in the schema, so
+#: the model copies before it paraphrases.
+PODCAST_LEDGER_ROUTE = ModelRoute(
+    stage="podcast_ledger",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_podcast_ledger_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
 #: Calls 1-4, the Ground Pack. **DeepSeek is the default**: the account was
 #: topped up on 2026-10-25 and verified working, and DeepSeek Flash is
 #: cheaper than Haiku at peak hours. Claude Haiku 5.5 is the fallback — a
@@ -369,6 +385,7 @@ def route_for(stage: str) -> ModelRoute:
             TABLE_REPAIR_ROUTE,
             PODCAST_EXTRACTION_ROUTE,
             PODCAST_SYNTHESIS_ROUTE,
+            PODCAST_LEDGER_ROUTE,
             FACTCHECK_EXTRACT,
             FACTCHECK_SCREEN,
             FACTCHECK_REJUDGE,

@@ -536,6 +536,18 @@ class PodcastScript(BaseIOSchema):
         default_factory=AudioMetadata,
         description="Generated episode audio; see AudioMetadata",
     )
+    writer_mode: str = Field(
+        default="free",
+        description="free (Ground Pack writer) or evidence (ledger writer); see nlp_pillars/evidence",
+    )
+    ledger: dict = Field(
+        default_factory=dict,
+        description="Evidence mode: the verified ledger the script was written from; empty in free mode",
+    )
+    line_citations: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Evidence mode: 0-based line index of the stored script -> ledger ids it cites ([] = no paper fact)",
+    )
     created_at: Optional[datetime] = Field(default_factory=datetime.now, description="When the script was created")
 
 
