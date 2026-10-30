@@ -1222,6 +1222,67 @@ $$;
 
 GRANT EXECUTE ON FUNCTION insert_podcast_fact_check(JSONB, JSONB) TO web_anon;
 
+-- Dismiss-with-note and its append-only log. Same objects as
+-- docs/migrations/031_claim_dismissals.sql.
+CREATE TABLE podcast_claim_reviews (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    claim_id   UUID NOT NULL REFERENCES podcast_claims(id) ON DELETE CASCADE,
+    action     TEXT NOT NULL CHECK (action IN ('dismissed', 'restored')),
+    note       TEXT NOT NULL DEFAULT '' CHECK (char_length(note) <= 1000),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
+    CONSTRAINT podcast_claim_reviews_dismiss_has_note
+        CHECK (action <> 'dismissed' OR btrim(note) <> '')
+);
+
+CREATE INDEX podcast_claim_reviews_claim_id
+    ON podcast_claim_reviews (claim_id, created_at);
+
+COMMENT ON TABLE podcast_claim_reviews IS
+    'Append-only log of dismissals and restores of fact-check claims. Rows are never updated.';
+
+CREATE OR REPLACE FUNCTION set_podcast_claim_dismissal(
+    p_claim_id UUID,
+    p_dismissed BOOLEAN,
+    p_note TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    clean TEXT := btrim(COALESCE(p_note, ''));
+    updated podcast_claims%ROWTYPE;
+BEGIN
+    IF p_dismissed AND clean = '' THEN
+        RAISE EXCEPTION 'a dismissal needs a note';
+    END IF;
+    IF char_length(clean) > 1000 THEN
+        RAISE EXCEPTION 'a dismissal note is at most 1000 characters';
+    END IF;
+
+    UPDATE podcast_claims
+       SET dismissed_at   = CASE WHEN p_dismissed THEN timezone('utc', now()) END,
+           dismissed_note = CASE WHEN p_dismissed THEN clean END
+     WHERE id = p_claim_id
+    RETURNING * INTO updated;
+
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+
+    INSERT INTO podcast_claim_reviews (claim_id, action, note)
+    VALUES (
+        p_claim_id,
+        CASE WHEN p_dismissed THEN 'dismissed' ELSE 'restored' END,
+        clean
+    );
+    RETURN to_jsonb(updated);
+END;
+$$;
+
+-- Explicit, not relying on ALTER DEFAULT PRIVILEGES (per-grantor; see 009).
+-- The log is read and appended to by the app, never edited.
+GRANT SELECT, INSERT ON podcast_claim_reviews TO web_anon;
+GRANT EXECUTE ON FUNCTION set_podcast_claim_dismissal(UUID, BOOLEAN, TEXT) TO web_anon;
+
 -- ==========================================
 -- TRIGGERS
 -- ==========================================

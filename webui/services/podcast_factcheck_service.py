@@ -137,7 +137,7 @@ def _json_time(value: Any) -> Any:
     return value
 
 
-def _claim_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+def claim_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": row.get("id"),
         "line_index": row.get("line_index"),
@@ -184,7 +184,7 @@ def public_factcheck(row: Dict[str, Any]) -> Dict[str, Any]:
         cost_usd = float(cost or 0)
     except (TypeError, ValueError):
         cost_usd = 0.0
-    claims = [_claim_payload(claim) for claim in (row.get("claims") or [])]
+    claims = [claim_payload(claim) for claim in (row.get("claims") or [])]
     return {
         "fact_check_id": row.get("id"),
         "script_id": row.get("script_id"),

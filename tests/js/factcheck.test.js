@@ -147,3 +147,40 @@ test('the paper page draws with text nodes only', () => {
   assert.equal(source.includes('/factcheck\''), true);
   assert.equal(/fetch\([^)]*factcheck[^)]*\{\s*method/.test(source), false);
 });
+
+// --- dismiss with a note ---------------------------------------------------
+
+test('only a flag can be dismissed', () => {
+  const F = require('../../webui/static/factcheck.js');
+  assert.equal(F.canDismiss({ id: 'a', verdict: 'contradicted', severity: 'high' }), true);
+  assert.equal(F.canDismiss({ id: 'a', verdict: 'partially_supported', severity: 'low', error_type: 'overstatement' }), true);
+  assert.equal(F.canDismiss({ id: 'a', verdict: 'supported', severity: 'none' }), false);
+  assert.equal(F.canDismiss({ id: 'a', verdict: 'not_checkable', severity: 'none' }), false);
+  assert.equal(F.canDismiss({ verdict: 'contradicted', severity: 'high' }), false, 'no id, nothing to PUT');
+  assert.equal(F.canDismiss(null), false);
+});
+
+test('a dismissal needs a note, trimmed, within the limit', () => {
+  const F = require('../../webui/static/factcheck.js');
+  assert.equal(F.checkDismissalNote('').ok, false);
+  assert.equal(F.checkDismissalNote('   \n ').ok, false);
+  assert.equal(F.checkDismissalNote(undefined).ok, false);
+  const good = F.checkDismissalNote('  paper says so  ');
+  assert.deepEqual([good.ok, good.note], [true, 'paper says so']);
+  const long = F.checkDismissalNote('x'.repeat(F.DISMISSAL_NOTE_MAX + 1));
+  assert.equal(long.ok, false);
+  assert.match(long.error, /1000/);
+});
+
+test('the summary still counts a dismissed flag and says how many were dismissed', () => {
+  const F = require('../../webui/static/factcheck.js');
+  const claims = [
+    { id: '1', verdict: 'contradicted', severity: 'high', dismissed_at: '2026-10-30T10:00:00Z' },
+    { id: '2', verdict: 'contradicted', severity: 'high' },
+    { id: '3', verdict: 'supported', severity: 'none' },
+  ];
+  assert.equal(F.dismissedCount(claims), 1);
+  assert.match(F.factcheckSummary(claims), /2 contradict the paper/);
+  assert.match(F.factcheckSummary(claims), /1 dismissed$/);
+  assert.doesNotMatch(F.factcheckSummary([claims[1], claims[2]]), /dismissed/);
+});
