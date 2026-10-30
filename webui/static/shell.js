@@ -35,6 +35,7 @@
     { id: 'today', label: 'Today', href: '/', sequence: ['g', 't'], keys: 'G then T' },
     { id: 'review', label: 'Review', href: '/quiz/', sequence: ['g', 'r'], keys: 'G then R' },
     { id: 'library', label: 'Library', href: '/papers/', sequence: ['g', 'l'], keys: 'G then L' },
+    { id: 'map', label: 'Paper map', href: '/papers/map', sequence: ['g', 'm'], keys: 'G then M' },
     { id: 'lessons', label: 'Lessons', href: '/lessons/', sequence: ['g', 'e'], keys: 'G then E' },
     { id: 'listen', label: 'Listen', href: '/podcast/', sequence: ['g', 'i'], keys: 'G then I' },
     { id: 'add', label: 'Add papers', href: '/discovery/', sequence: ['g', 'a'], keys: 'G then A' },

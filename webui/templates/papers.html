@@ -5,6 +5,7 @@
 <div class="library-page">
 {% call page_header('Library', 'Papers') %}
   {{ button('Add papers', href='/discovery/' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
+  {{ button('Open map', 'secondary', href='/papers/map' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
   {{ button('View lessons', 'secondary', href='/lessons/' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
   {{ button('Run pipeline', 'ghost', href='/pipeline/' ~ ('?pillar=' ~ view.selected_pillar if view.selected_pillar else '')) }}
 {% endcall %}

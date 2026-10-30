@@ -174,6 +174,32 @@ class PostgrestClient:
             counts[key] = value
         return counts
 
+    async def paper_counts_for_pillars(self, pillar_ids: List[str]) -> Dict[str, int]:
+        """Library papers per pillar, one head request each.
+
+        Raises:
+            CountUnavailableError: if any count could not be read. A pillar that
+                could not be counted is not a pillar with no papers.
+        """
+
+        async def count(pillar_id: str) -> int:
+            _, resp = await self._get(
+                "papers", params={"select": "id", "pillar_id": f"eq.{pillar_id}", "limit": 1}
+            )
+            return self._require_count_from_content_range(resp)
+
+        results = await asyncio.gather(
+            *(count(pid) for pid in pillar_ids), return_exceptions=True
+        )
+        counts: Dict[str, int] = {}
+        for pillar_id, value in zip(pillar_ids, results):
+            if isinstance(value, BaseException):
+                raise CountUnavailableError(
+                    f"Could not count papers for pillar {pillar_id!r}: {value}"
+                ) from value
+            counts[pillar_id] = value
+        return counts
+
     async def get_quick_stats(self) -> QuickStats:
         """Return counts for papers, lessons, and quiz_cards.
 
