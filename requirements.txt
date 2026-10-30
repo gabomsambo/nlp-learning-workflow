@@ -137,6 +137,9 @@ pre-commit==4.6.1
 matplotlib==3.11.1
 plotly==6.9.0
 networkx==3.6.1  # For knowledge graphs
+graspologic-native==1.3.1  # MIT. Leiden for the paper map (nlp_pillars/map_build.py).
+                           # Pinned: 1.3.x changed clustering results.
+scipy==1.18.0  # networkx's PageRank and sparse spring layout need it; was transitive.
 pyvis==0.3.2  # For interactive graphs
 
 # Optional: Advanced Features

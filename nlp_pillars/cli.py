@@ -1708,6 +1708,64 @@ def graph_build(
     raise typer.Exit(0)
 
 
+map_app = typer.Typer(
+    help="Paper map: communities, lineage, suggestions per pillar",
+    add_completion=False,
+)
+app.add_typer(map_app, name="map")
+
+
+@map_app.command("build")
+def map_build(
+    pillar: Optional[str] = typer.Option(
+        None,
+        "--pillar",
+        "-p",
+        help="Build one pillar's map. Default: every pillar with library papers.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Compute and print only. Do not load the embedding model "
+            "and do not write."
+        ),
+    ),
+):
+    """Compute each pillar's paper map and write it to map_snapshots.
+
+    Reads works, typed citations and title+abstract vectors (run ``works
+    sync`` and ``embeddings papers`` first), computes communities, the line of
+    development, importance, the layout, suggestions, queue verdicts and
+    insights, and writes one snapshot per pillar. No paid model call and no
+    Semantic Scholar request: the pillar goal and unvectored queue titles are
+    embedded with the local bge model. Idempotent: the same evidence gives the
+    same snapshot hash. Apply docs/migrations/034_map_snapshots.sql first;
+    ``--dry-run`` works without it.
+    """
+    from .map_store import MapStoreError, execute_map_build
+
+    _log_env_path()
+    _setup_logging()
+    if pillar:
+        _validate_pillar(pillar)
+    try:
+        report = execute_map_build(pillar=pillar, dry_run=dry_run)
+    except typer.Exit:
+        raise
+    except MapStoreError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("map build failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("map build failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(1 if report.failed else 0)
+
+
 works_app = typer.Typer(
     help="Work identity: one id per paper, and its typed citations",
     add_completion=False,
