@@ -213,9 +213,11 @@ def apply_plan(plan: GraphPlan) -> Any:
 
 def _citation_tool():
     try:
-        from .tools.semantic_scholar_tool import SemanticScholarTool
+        from .tools.semantic_scholar_tool import BULK, SemanticScholarTool
 
-        return SemanticScholarTool()
+        # A graph rebuild fetches every library paper; it queues behind
+        # interactive Semantic Scholar calls.
+        return SemanticScholarTool(priority=BULK)
     except Exception as exc:
         logger.warning("Citation fetch disabled: %s", exc)
         return None
