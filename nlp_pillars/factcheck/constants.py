@@ -3,7 +3,7 @@
 PROMPT_VERSION = "v3"
 MIGRATION = "docs/migrations/022_podcast_fact_checks.sql"
 RUNS_MIGRATION = "docs/migrations/023_podcast_factcheck_runs.sql"
-DISMISSAL_MIGRATION = "docs/migrations/031_claim_dismissals.sql"
+DISMISSAL_MIGRATION = "docs/migrations/033_claim_dismissals.sql"
 
 KIND = "podcast_factcheck"
 TRIGGER_UI = "ui_podcast_factcheck"

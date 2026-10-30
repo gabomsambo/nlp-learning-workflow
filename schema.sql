@@ -1223,7 +1223,7 @@ $$;
 GRANT EXECUTE ON FUNCTION insert_podcast_fact_check(JSONB, JSONB) TO web_anon;
 
 -- Dismiss-with-note and its append-only log. Same objects as
--- docs/migrations/031_claim_dismissals.sql.
+-- docs/migrations/033_claim_dismissals.sql.
 CREATE TABLE podcast_claim_reviews (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     claim_id   UUID NOT NULL REFERENCES podcast_claims(id) ON DELETE CASCADE,

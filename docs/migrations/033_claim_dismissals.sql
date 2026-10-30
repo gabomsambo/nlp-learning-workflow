@@ -1,4 +1,4 @@
--- Migration 031: dismiss a fact-check flag with a note, and keep the history.
+-- Migration 033: dismiss a fact-check flag with a note, and keep the history.
 --
 -- podcast_claims already has dismissed_at / dismissed_note (022). This adds
 -- the function that sets them and an append-only log, so "who dismissed what,
@@ -14,7 +14,7 @@
 -- MUST BE RUN BY HAND against any database that already exists, after 022:
 --
 --   docker exec -i nlp_postgres psql -U nlp -d nlp -v ON_ERROR_STOP=1 -f - \
---     < docs/migrations/031_claim_dismissals.sql
+--     < docs/migrations/033_claim_dismissals.sql
 --
 -- Until it is applied, dismissing answers 503 naming this file. schema.sql
 -- carries the same objects for a brand-new volume. Safe to re-run.

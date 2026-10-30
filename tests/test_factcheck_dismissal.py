@@ -37,7 +37,7 @@ def test_missing_function_names_migration_031():
         },
     }
     with patch("nlp_pillars.db.get_client", return_value=client):
-        with pytest.raises(db.ClaimDismissalError, match="031_claim_dismissals.sql"):
+        with pytest.raises(db.ClaimDismissalError, match="033_claim_dismissals.sql"):
             db.set_claim_dismissal(CLAIM, True, "x")
 
 
@@ -52,7 +52,7 @@ def test_migration_and_schema_agree_on_the_objects():
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    migration = (root / "docs/migrations/031_claim_dismissals.sql").read_text()
+    migration = (root / "docs/migrations/033_claim_dismissals.sql").read_text()
     schema = (root / "schema.sql").read_text()
     for needle in (
         "CREATE TABLE podcast_claim_reviews",

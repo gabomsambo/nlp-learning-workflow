@@ -2265,7 +2265,7 @@ def set_claim_dismissal(
     Raises:
         ClaimDismissalError: the note was empty or too long, or the write
             failed. A missing function names
-            ``docs/migrations/031_claim_dismissals.sql``.
+            ``docs/migrations/033_claim_dismissals.sql``.
     """
     claim_id = _claim_id_or_error(claim_id)
     try:
