@@ -374,8 +374,12 @@
         ])
       );
     }
-    if (availability.unavailable) callout('warn', 'Citation data unavailable', availability.message);
-    if (!haveCounts) callout('warn', 'Citation counts unavailable', availability.countsMessage + ' Papers are placed by community instead.');
+    if (availability.unavailable && !haveCounts) {
+      callout('warn', 'Citation data unavailable', 'This pillar has no citation links and no citation counts, so the map has no citation lines and the vertical axis shows communities instead. It is not a map of papers that cite nothing. Positions come from abstract similarity alone.');
+    } else {
+      if (availability.unavailable) callout('warn', 'Citation data unavailable', availability.message);
+      if (!haveCounts) callout('warn', 'Citation counts unavailable', availability.countsMessage + ' Papers are placed by community instead.');
+    }
     if (model.warnings.length) {
       els.notices.appendChild(
         h('details', { class: 'map-warnings' }, [
