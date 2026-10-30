@@ -357,12 +357,12 @@ def test_a_missing_migration_is_503_and_names_it(api_client, monkeypatch):
     from nlp_pillars.db import ClaimDismissalError
 
     def boom(*args):
-        raise ClaimDismissalError("Dismissal is not set up. Apply docs/migrations/031_claim_dismissals.sql by hand.")
+        raise ClaimDismissalError("Dismissal is not set up. Apply docs/migrations/033_claim_dismissals.sql by hand.")
 
     _wire(monkeypatch, store=boom)
     response = api_client.put(DISMISS_URL, json={"dismissed": True, "note": "x"})
     assert response.status_code == 503
-    assert "031_claim_dismissals.sql" in response.json()["detail"]
+    assert "033_claim_dismissals.sql" in response.json()["detail"]
 
 
 def test_a_note_over_the_limit_is_422(api_client, monkeypatch):
