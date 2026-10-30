@@ -77,6 +77,18 @@ class Settings(BaseSettings):
     llm_playground_diff_model: Optional[str] = Field(
         None, env="LLM_PLAYGROUND_DIFF_MODEL"
     )
+    # Paper-map knowledge layer (nlp_pillars/map_enrich.py,
+    # nlp_pillars/concept_anchoring.py). MAP_ENRICHMENT_ENABLED is the switch
+    # for ALL of its paid calls: community names, bridge sentences and the
+    # model's pick among vocabulary candidates. Off, the map and the anchoring
+    # still run on templates and exact matches, and nothing is billed.
+    map_enrichment_enabled: bool = Field(True, env="MAP_ENRICHMENT_ENABLED")
+    llm_map_names_model: Optional[str] = Field(None, env="LLM_MAP_NAMES_MODEL")
+    llm_map_bridge_model: Optional[str] = Field(None, env="LLM_MAP_BRIDGE_MODEL")
+    llm_concept_anchor_model: Optional[str] = Field(None, env="LLM_CONCEPT_ANCHOR_MODEL")
+    # Extra vocabulary files beside the bundled NLP-KG one, comma separated
+    # (nlp_pillars/vocabulary.py), e.g. a local Papers with Code conversion.
+    vocabulary_files: Optional[str] = Field(None, env="VOCABULARY_FILES")
 
     # Legacy routing names, still honoured and consulted second. They used to
     # carry the defaults themselves; the registry does now.

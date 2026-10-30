@@ -43,7 +43,8 @@
   {% set path = request.url.path %}
   {% set on_today = path == '/' %}
   {% set on_review = path.startswith('/quiz') %}
-  {% set on_library = path.startswith('/papers') %}
+  {% set on_map = path.startswith('/papers/map') %}
+  {% set on_library = path.startswith('/papers') and not on_map %}
   {% set on_lessons = path.startswith('/lessons') %}
   {% set on_listen = path.startswith('/podcast') %}
   {% set on_add = path.startswith('/discovery') %}
@@ -64,6 +65,7 @@
         {{ nav_link('/analytics/', 'Analytics', on_analytics, 'analytics', true) }}
         {{ nav_link('/quiz/', 'Review', on_review, 'review') }}
         {{ nav_link('/papers/', 'Library', on_library, 'library') }}
+        {{ nav_link('/papers/map', 'Map', on_map, 'map', true) }}
         {{ nav_link('/lessons/', 'Lessons', on_lessons, 'lessons', true) }}
         {{ nav_link('/podcast/', 'Listen', on_listen, 'listen') }}
         {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
@@ -112,7 +114,7 @@
 
   <nav class="tabbar" aria-label="Primary">
     <a href="/" {% if on_today %}aria-current="page"{% endif %}>{{ icon('today') }}<span>Today</span></a>
-    <a href="/papers/" {% if on_library or on_lessons %}aria-current="page"{% endif %}>{{ icon('library') }}<span>Library</span></a>
+    <a href="/papers/" {% if on_library or on_map or on_lessons %}aria-current="page"{% endif %}>{{ icon('library') }}<span>Library</span></a>
     <a href="/quiz/" {% if on_review %}aria-current="page"{% endif %}>{{ icon('review') }}<span>Review</span></a>
     <a href="/podcast/" {% if on_listen %}aria-current="page"{% endif %}>{{ icon('listen') }}<span>Listen</span></a>
     <a href="/discovery/" {% if on_add %}aria-current="page"{% endif %}>{{ icon('add') }}<span>Add</span></a>
@@ -129,6 +131,7 @@
         {{ nav_link('/analytics/', 'Analytics', on_analytics, 'analytics') }}
         {{ nav_link('/quiz/', 'Review', on_review, 'review') }}
         {{ nav_link('/papers/', 'Library', on_library, 'library') }}
+        {{ nav_link('/papers/map', 'Map', on_map, 'map') }}
         {{ nav_link('/lessons/', 'Lessons', on_lessons, 'lessons') }}
         {{ nav_link('/podcast/', 'Listen', on_listen, 'listen') }}
         {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}

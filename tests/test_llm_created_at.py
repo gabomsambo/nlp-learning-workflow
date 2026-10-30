@@ -66,7 +66,7 @@ def _lesson_draft():
         tl_dr="Attention is all you need.",
         takeaways=["No recurrence."],
         practice_ideas=["Mask the diagonal."],
-        connections=["BERT."],
+        connections=[{"work": "Devlin et al. 2018", "relation": "uses", "why": "BERT."}],
     )
 
 

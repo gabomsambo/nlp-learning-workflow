@@ -21,7 +21,7 @@ import pytest
 from test_map_build import PILLAR, fixture_inputs
 from typer.testing import CliRunner
 
-from nlp_pillars import db, map_build, map_store
+from nlp_pillars import db, enrichment, map_build, map_store
 from nlp_pillars.db import PostgRESTClient
 from nlp_pillars.map_store import MIGRATION, MapStoreError
 from nlp_pillars.orchestrator import RunCancelledError
@@ -33,6 +33,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_SQL = (ROOT / MIGRATION).read_text()
 SCHEMA = (ROOT / "schema.sql").read_text()
 MODEL = "BAAI/bge-base-en-v1.5@test"
+
+
+@pytest.fixture(autouse=True)
+def no_paid_enrichment(monkeypatch):
+    """The knowledge layer is on by default and would call the model.
+
+    These tests are about the store, so the switch is forced off; the paid
+    pass has its own tests (test_map_enrich.py) with a stubbed model.
+    """
+    monkeypatch.setattr(enrichment, "enabled", lambda: False)
 
 
 def reply(status, body):
@@ -389,7 +399,7 @@ def test_cancellation_is_checked_as_each_stage_starts(http):
 # ------------------------------------------------------------ run kind
 
 
-def test_dispatch_seeds_the_seven_map_stages():
+def test_dispatch_seeds_the_eight_map_stages():
     scheduler = MagicMock()
     with patch.object(
         run_service.db, "create_pipeline_run", return_value=MagicMock(id="run-map")
@@ -410,6 +420,7 @@ def test_dispatch_seeds_the_seven_map_stages():
         "map_lineage",
         "map_layout",
         "map_suggest",
+        "map_enrich",
         "map_persist",
     ]
     assert map_store.TRIGGER_UI_MAP in run_service.WEBUI_TRIGGER_SOURCES

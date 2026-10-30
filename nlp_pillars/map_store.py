@@ -7,18 +7,25 @@ pillar's goal and any queued title that has no stored vector with the local
 bge model (free, CPU), and writes one ``map_snapshots`` row per pillar through
 ``put_map_snapshot`` (docs/migrations/034_map_snapshots.sql).
 
-No paid model is called and Semantic Scholar is not contacted: the build is
-pure computation over what M1 and M2 stored. ``--dry-run`` reads, computes and
-prints; it does not load the embedding model and does not write.
+Semantic Scholar is not contacted: the build is pure computation over what M1
+and M2 stored. The one step that can spend is ``map_enrich`` (names, typed
+connections, bridge sentences: ``map_enrich.py``), behind
+``MAP_ENRICHMENT_ENABLED`` and the daily spend cap; it reads lessons, the
+learner's decisions, abstracts and the previous snapshot, and a failure in it
+leaves the free snapshot as built. ``--dry-run`` reads, computes and prints
+what enrichment would cost; it does not load the embedding model, call a model
+or write.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from . import db
+from . import connections as connections_mod
+from . import db, map_enrich
+from .connections import ConnectionStoreError, Reference
 from .embeddings import EmbeddingError
 from .map_build import (
     STATUS_COMPLETED,
@@ -34,6 +41,7 @@ from .map_build import (
     Work,
     build_map,
     select_scope,
+    sha256_of,
 )
 from .paper_vectors import MIGRATION as PAPER_VECTORS_MIGRATION
 from .paper_vectors import (
@@ -53,7 +61,10 @@ KIND_MAP_BUILD = "map_build"
 #: The scheduler's weekly rebuild (M7) uses the existing 'scheduler' source.
 TRIGGER_UI_MAP = "ui_map"
 
+STATUS_FAILED = "failed"
+
 STAGE_LOAD = "map_load"
+STAGE_ENRICH = "map_enrich"
 STAGE_PERSIST = "map_persist"
 
 _PAGE = 1000
@@ -360,13 +371,152 @@ def load_previous_layout(
     )
 
 
+def load_previous_payload(scope: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """The last snapshot's payload, for the name and bridge caches (or why it could not be read)."""
+    try:
+        rows = _read(
+            "map_snapshots",
+            "scope,payload",
+            "scope",
+            lambda query: query.eq("scope", scope),
+        )
+    except MapStoreError as exc:
+        return None, f"No previous snapshot to reuse names and bridges from ({exc})"
+    return (rows[0].get("payload") if rows else None), None
+
+
+def load_lessons(paper_ids: Sequence[str]) -> Tuple[List[dict], Optional[str]]:
+    """The latest lesson of each given paper, with its typed connections when stored.
+
+    A database without migration 035 has no ``connection_links`` column: the
+    read is retried for the prose alone, and the warning says the typed form
+    is unavailable.
+    """
+    warning = None
+    for columns in ("paper_id,connections,connection_links,created_at", "paper_id,connections,created_at"):
+        try:
+            rows = _read_in("lessons", columns, "paper_id", "paper_id", list(paper_ids))
+            break
+        except MapStoreError as exc:
+            if columns.endswith("created_at") and "connection_links" in columns:
+                warning = (
+                    "Lessons have no typed connections yet "
+                    f"(apply {connections_mod.MIGRATION} by hand); reading their prose instead."
+                )
+                continue
+            return [], f"Could not read lessons, so no lesson connections: {exc}"
+    latest: Dict[str, dict] = {}
+    for row in sorted(rows, key=lambda r: str(r.get("created_at") or "")):
+        latest[str(row["paper_id"])] = row
+    return list(latest.values()), warning
+
+
+def load_abstracts(paper_by_node: Mapping[str, Sequence[str]]) -> Dict[str, str]:
+    """Node id -> abstract: the library paper's own, else its work's."""
+    paper_ids = sorted({pid for ids in paper_by_node.values() for pid in ids})
+    by_paper = {
+        str(row["id"]): row.get("abstract") or ""
+        for row in _read_in("papers", "id,abstract", "id", "id", paper_ids)
+    }
+    out: Dict[str, str] = {}
+    missing: List[str] = []
+    for node, ids in paper_by_node.items():
+        text = next((by_paper[i] for i in ids if len(by_paper.get(i, "").strip()) >= map_enrich.MIN_ABSTRACT_CHARS), "")
+        if text:
+            out[node] = text
+        elif not node.startswith("paper:"):
+            missing.append(node)
+    if missing:
+        for row in _read_in("works", "id,abstract", "id", "id", missing):
+            if row.get("abstract"):
+                out[str(row["id"])] = row["abstract"]
+    return out
+
+
+def resolve_library_connections(pillar: Optional[str] = None) -> Tuple[connections_mod.ResolveReport, List[str]]:
+    """Resolve every lesson's connections against its paper's reference list. Read-only, free."""
+    evidence = load_evidence()
+    papers = [p for p in evidence.library if pillar is None or p.pillar_id == pillar]
+    node_of_paper = {p.paper_id: p.node_id for p in papers}
+    lessons, warning = load_lessons(sorted(node_of_paper))
+    index = CitationIndex(evidence.citations)
+    references_of: Dict[str, List[Reference]] = {}
+    for node in set(node_of_paper.values()):
+        references_of[node] = [
+            Reference(w.id, w.title, w.authors, w.year)
+            for work_id in sorted(index.refs_of.get(node, ()))
+            if (w := evidence.works.get(work_id)) is not None
+        ]
+    return (
+        connections_mod.resolve_lessons(lessons, node_of_paper, references_of),
+        [warning] if warning else [],
+    )
+
+
+def assemble_enrichment(
+    evidence: "Evidence", result: MapResult, pillar_id: str
+) -> Tuple[map_enrich.EnrichInputs, List[str]]:
+    """Read what the knowledge layer needs beyond the map: lessons, decisions, abstracts, the last payload."""
+    warnings: List[str] = []
+    payload = result.payload
+    library_nodes = [node for node in payload["nodes"] if node.get("paper_ids")]
+    paper_by_node = {node["id"]: list(node["paper_ids"]) for node in library_nodes}
+    node_of_paper = {pid: node for node, ids in paper_by_node.items() for pid in ids}
+
+    lessons, warning = load_lessons(sorted(node_of_paper))
+    if warning:
+        warnings.append(warning)
+    index = CitationIndex(evidence.citations)
+    references_of: Dict[str, List[Reference]] = {}
+    for node in paper_by_node:
+        refs = []
+        for work_id in sorted(index.refs_of.get(node, ())):
+            work = evidence.works.get(work_id)
+            if work is not None:
+                refs.append(Reference(work_id, work.title, work.authors, work.year))
+        references_of[node] = refs
+    resolved = connections_mod.resolve_lessons(lessons, node_of_paper, references_of)
+
+    try:
+        decisions = connections_mod.load_decisions()
+    except ConnectionStoreError as exc:
+        decisions = []
+        warnings.append(f"The learner's confirmed and rejected connections were not read: {exc}")
+
+    try:
+        abstracts = load_abstracts(paper_by_node)
+    except MapStoreError as exc:
+        abstracts = {}
+        warnings.append(f"Abstracts were not read, so no bridge sentences: {exc}")
+    previous, warning = load_previous_payload(pillar_id)
+    if warning:
+        warnings.append(warning)
+    return (
+        map_enrich.EnrichInputs(
+            abstracts=abstracts,
+            typed_edges=resolved.edges,
+            unresolved=resolved.unresolved,
+            decisions=decisions,
+            previous=previous,
+        ),
+        warnings,
+    )
+
+
 # --------------------------------------------------------------------- write
 
 
 def put_snapshot(
-    result: MapResult, model_id: Optional[str], run_id: Optional[str] = None
+    result: MapResult,
+    model_id: Optional[str],
+    run_id: Optional[str] = None,
+    extra_stats: Optional[Dict[str, Any]] = None,
 ) -> dict:
-    """Upsert one ``map_snapshots`` row. Returns ``{scope, built_at, changed}``."""
+    """Upsert one ``map_snapshots`` row. Returns ``{scope, built_at, changed}``.
+
+    ``extra_stats`` joins the row's ``stats`` (not the payload, so it never
+    changes ``payload_hash``): the enrichment pass's cost lives there.
+    """
     positions = {
         node["id"]: [node["x"], node["y"]]
         for node in result.payload["nodes"]
@@ -379,7 +529,7 @@ def put_snapshot(
             "p_params_hash": result.params_hash,
             "p_payload_hash": result.payload_hash,
             "p_model_id": model_id,
-            "p_stats": result.stats,
+            "p_stats": {**result.stats, **(extra_stats or {})},
             "p_positions": positions,
             "p_layout_key": result.payload["layout"]["key"],
             "p_payload": result.payload,
@@ -406,6 +556,7 @@ class PillarBuild:
     written: bool = False
     changed: Optional[bool] = None
     error: Optional[str] = None
+    enrichment: Optional[map_enrich.EnrichmentReport] = None
 
     def summary(self) -> Dict[str, Any]:
         """Return the run-result payload for this pillar."""
@@ -419,6 +570,8 @@ class PillarBuild:
             out["warnings"] = self.result.warnings
         if self.changed is not None:
             out["changed"] = self.changed
+        if self.enrichment is not None:
+            out["enrichment"] = self.enrichment.as_stats()
         return out
 
 
@@ -480,6 +633,8 @@ class MapBuildReport:
                         f"{verdict} {count}" for verdict, count in counts.items()
                     )
                 )
+            if build.enrichment is not None:
+                lines.append(f"  enrichment: {build.enrichment.detail()}")
             lines.extend(f"  warning: {warning}" for warning in result.warnings)
         lines.extend(f"warning: {warning}" for warning in self.warnings)
         return "\n".join(lines)
@@ -612,8 +767,14 @@ def build_pillar(
     check_cancel: Optional[Callable[[], None]] = None,
     embedder: Optional[Tuple[Embed, str]] = None,
     run_id: Optional[str] = None,
+    enrich_call: Optional[Callable[..., Any]] = None,
 ) -> PillarBuild:
-    """Assemble, compute and (unless ``dry_run``) write one pillar's snapshot."""
+    """Assemble, compute, enrich and (unless ``dry_run``) write one pillar's snapshot.
+
+    Enrichment (names, typed connections, bridge sentences) is the one step
+    that can spend, and it can never fail the build: any error in it leaves the
+    free snapshot as built and is reported on the stage.
+    """
 
     def stage(name: str, status: str, detail: Optional[str] = None) -> None:
         if status == STATUS_RUNNING and check_cancel is not None:
@@ -638,10 +799,30 @@ def build_pillar(
     )
     result = build_map(inputs, progress=stage, notes=warnings)
     build.result = result
+    stage(STAGE_ENRICH, STATUS_RUNNING, "Naming communities and explaining connections")
+    try:
+        enrich_inputs, enrich_warnings = assemble_enrichment(evidence, result, pillar_id)
+        build.enrichment = map_enrich.enrich(
+            result, enrich_inputs, call=enrich_call, dry_run=dry_run
+        )
+        result.warnings.extend(enrich_warnings)
+        if enrich_warnings and not dry_run:
+            result.payload["warnings"] = list(result.payload.get("warnings", [])) + enrich_warnings
+            result.payload_hash = sha256_of(result.payload)
+        stage(STAGE_ENRICH, STATUS_COMPLETED, build.enrichment.detail())
+    except Exception as exc:  # noqa: BLE001 - enrichment must not take the map down
+        logger.warning("map enrichment failed for %s: %s", pillar_id, exc, exc_info=True)
+        result.warnings.append(f"Enrichment failed, so the map has template names and explanations: {exc}")
+        stage(STAGE_ENRICH, STATUS_FAILED, f"Enrichment failed: {exc}"[:300])
     if dry_run:
         return build
     stage(STAGE_PERSIST, STATUS_RUNNING, "Saving the map")
-    saved = put_snapshot(result, inputs.model_id, run_id)
+    saved = put_snapshot(
+        result,
+        inputs.model_id,
+        run_id,
+        extra_stats={"enrichment": build.enrichment.as_stats()} if build.enrichment else None,
+    )
     build.written = True
     build.changed = saved.get("changed") if isinstance(saved, dict) else None
     stage(
@@ -662,6 +843,7 @@ def execute_map_build(
     check_cancel: Optional[Callable[[], None]] = None,
     embedder: Optional[Tuple[Embed, str]] = None,
     run_id: Optional[str] = None,
+    enrich_call: Optional[Callable[..., Any]] = None,
 ) -> MapBuildReport:
     """Build one pillar's map, or every pillar that has library papers.
 
@@ -690,6 +872,7 @@ def execute_map_build(
                     check_cancel=check_cancel,
                     embedder=embedder,
                     run_id=run_id,
+                    enrich_call=enrich_call,
                 )
             )
         except MapStoreError as exc:

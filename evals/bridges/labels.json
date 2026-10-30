@@ -1,0 +1,234 @@
+{
+ "C01": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Tenney et al. 2019 focuses on BERT, the model introduced in Devlin et al. 2018, and examines where linguistic information is captured within it, while Devlin et al. 2018 describes BERT as a pre-trained model that can be fine-tuned for a range of tasks."
+ },
+ "C02": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Tenney et al. 2019 cites Mikolov et al. 2013 as an example of static word embeddings that pre-trained sentence encoders such as BERT seem poised to displace as the basis for NLP systems."
+ },
+ "C03": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Tenney et al. 2019 cites Marvin and Linzen 2018 among behavior-based work that designs controlled test sets and analyzes errors to reverse-engineer the abstractions a model may represent."
+ },
+ "C04": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Tenney et al. 2019 cites Conneau et al. 2018 as an example of behavior-based work that designs controlled test sets and analyzes errors to reverse-engineer the abstractions a model may or may not represent."
+ },
+ "C05": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Jain and Wallace 2019 cites Bahdanau et al. 2014 when describing attention mechanisms that induce conditional distributions over input units to compose a weighted context vector for downstream modules."
+ },
+ "C06": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Jain and Wallace 2019 cites Li et al. 2016 when summarizing the commonly held view in NLP that attention provides an important way to explain the workings of neural models."
+ },
+ "C07": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Jain and Wallace 2019 cites Choi et al. 2016 among works that claim attention provides interpretability, though the sources do not show a further relationship between the two papers' methods."
+ },
+ "C08": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Jain and Wallace 2019 cites Xie et al. 2017 among works that claim attention provides interpretability, and Xie et al. 2017 uses a sparse attention mechanism whose learned associations can be interpreted easily."
+ },
+ "C09": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Clark et al. 2019 and Dai and Le 2015 are connected because Clark et al. 2019 cites Dai and Le 2015 when noting that large pre-trained language models achieve very high accuracy when fine-tuned on supervised tasks, though it is not fully understood why."
+ },
+ "C10": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Clark et al. 2019 cites Peters et al. 2018 in the context of large pre-trained language models achieving very high accuracy when fine-tuned on supervised tasks, though it is not fully understood why."
+ },
+ "C11": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Clark et al. 2019 cites Adi et al. 2016 only as part of a group of works that examine internal vector representations of language models through methods such as probing classifiers, so the connection is a shared research theme rather than a shown method or result."
+ },
+ "C12": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Clark et al. 2019 analyzes the attention mechanisms of BERT, and Bahdanau et al. 2014 proposes a model that softly searches for relevant parts of a source sentence, with Clark et al. 2019 citing Bahdanau et al. 2014 only to describe attention as a highly successful neural network component."
+ },
+ "C13": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Clark et al. 2019 analyzes the attention of BERT, the model introduced in Devlin et al. 2018, and describes it as a large pre-trained network that has demonstrated excellent performance on many tasks."
+ },
+ "C14": {
+  "verdict": "rejected-correct",
+  "status": "rejected",
+  "note": "rejected, correctly: leaks the source marker 'S3' into the sentence and says BERT 'builds on' the Transformer, which no source says",
+  "reason": "number(s) not in the sources: 3",
+  "draft": "Clark et al. 2019 describe BERT, a large pre-trained network that they analyze, and S3 from Clark et al. 2019 cites Vaswani et al. 2017 as a Transformer that BERT builds on, so the two papers are connected through the Transformer architecture."
+ },
+ "C15": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Hewitt and Liang 2019 cites Devlin et al. 2018 when noting that large-scale unsupervised representations such as BERT and ELMo improve downstream performance on a wide range of natural language tasks, while what these models learn about language remains an open scientific question."
+ },
+ "C16": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Hewitt and Liang 2019 probe ELMo representations, which Peters et al. 2018 introduce as deep contextualized word representations, and Hewitt and Liang 2019 cite Peters et al. 2018 when noting that large-scale unsupervised representations such as ELMo improve downstream performance."
+ },
+ "C17": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Hewitt and Liang 2019 and Hupkes et al. 2017 are both about probing neural networks, but the sources only show that Hupkes et al. 2017 is cited in a sentence about careful task design for probing papers, so no stronger connection is established."
+ },
+ "C18": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers study probing classifiers on ELMo-style pretrained representations to assess what linguistic information they encode, and Hewitt and Liang 2019 cites Zhang and Bowman 2018 when discussing putting probe accuracies in context."
+ },
+ "C19": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Hewitt and Liang 2019 cites Ettinger et al. 2018 only in a list of multi-layer perceptron (MLP) probes, which are described as at least as popular as linear probes."
+ },
+ "C20": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Hewitt and Liang 2019 cites Alain and Bengio 2016 among early probing papers that used linear functions as probes, a choice the citing sentence says is still used, while MLP probes are described as at least as popular."
+ },
+ "C21": {
+  "verdict": "faithful",
+  "status": "generated",
+  "note": "true but noisy: remarks that the citing sentence writes 2017 for a paper labelled 2018 (preprint vs venue year)",
+  "text": "Pimentel et al. 2020 cites Belinkov et al. 2018 when noting that many speculate neural network representations encode a continuous analogue of discrete linguistic properties such as part-of-speech tags, though the cited work is attributed as Belinkov et al. 2017 in that sentence."
+ },
+ "C22": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Pimentel et al. 2020 cites Conneau et al. 2018 among works that construct probes, meaning supervised models trained to extract linguistic properties directly from representations."
+ },
+ "C23": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Pimentel et al. 2020 cites Peters et al. 2018 in a list of works that construct probes, which are supervised models trained to extract linguistic properties directly."
+ },
+ "C24": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Pimentel et al. 2020 cites Hewitt and Liang 2019 when describing syntactic probes as models for extracting properties such as part of speech from representations."
+ },
+ "C25": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Voita and Titov 2020 cites Belinkov and Glass 2018 in its discussion of probing tasks, which are used to estimate to what extent representations capture a linguistic property, though the cited passage does not state that the two papers share a method beyond this citation."
+ },
+ "C26": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Voita and Titov 2020 cites Devlin et al. 2018 (BERT) as one example of a representation whose linguistic properties are estimated with probing tasks, though the source gives no stated intent for that citation."
+ },
+ "C27": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Voita and Titov 2020 and Hewitt and Liang 2019 both address whether probe accuracy reflects the representations themselves, with Hewitt and Liang proposing control tasks that associate word types with random outputs."
+ },
+ "C28": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Voita and Titov 2020 applies the minimum description length principle, which Grunwald 2004 introduces as a tutorial on Rissanen's MDL principle, and cites Grunwald 2004 for a bound on expected codelength relative to conditional entropy."
+ },
+ "C29": {
+  "verdict": "rejected-correct",
+  "status": "rejected",
+  "note": "rejected, correctly: leaks '[S3]' into the sentence; the content was otherwise fine",
+  "reason": "number(s) not in the sources: 3",
+  "draft": "Voita and Titov 2020 and Louizos et al. 2017 are connected only in that Voita and Titov 2020 cites Louizos et al. 2017 when describing the network compression method used in its experiments [S3]; neither paper's abstract shows a further link."
+ },
+ "C30": {
+  "verdict": "rejected-form",
+  "status": "rejected",
+  "note": "rejected for length (over 320 characters); the content was faithful",
+  "reason": "not one short sentence",
+  "draft": "Devlin et al. 2018 presents BERT, a model that pre-trains deep bidirectional representations from unlabeled text, while Mikolov et al. 2013 presents distributed vector representations of words and phrases learned with the Skip-gram model, so both papers concern learned representations of language, t"
+ },
+ "C31": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers work on neural models for natural language processing, with Bahdanau et al. 2014 on neural machine translation and Li et al. 2016 on interpreting neural networks for NLP tasks, but the sources do not show a more specific connection between them."
+ },
+ "C32": {
+  "verdict": "rejected-form",
+  "status": "rejected",
+  "note": "rejected for length; the content was faithful",
+  "reason": "not one short sentence",
+  "draft": "Dai and Le 2015 and Peters et al. 2018 are both connected through pretraining on unlabeled text: Dai and Le 2015 uses a language model or sequence autoencoder as a pretraining step whose parameters start supervised training, and Peters et al. 2018 pre-trains a deep bidirectional language model on a "
+ },
+ "C33": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers study pre-trained deep bidirectional language representations that improve results on downstream NLP tasks such as question answering and language inference."
+ },
+ "C34": {
+  "verdict": "rejected-form",
+  "status": "rejected",
+  "note": "rejected for length; the content was faithful",
+  "reason": "not one short sentence",
+  "draft": "Both papers evaluate what neural encoders learn by training classifiers on their representations, with Belinkov et al. 2018 probing NMT encoder layers on part-of-speech and semantic tagging and Conneau et al. 2018 probing sentence embeddings with 10 linguistic tasks, so they share the broad topic of"
+ },
+ "C35": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers concern neural network models for natural language processing, with Belinkov and Glass 2018 surveying analysis methods for such models and Devlin et al. 2018 introducing the BERT language representation model."
+ },
+ "U36": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Xu et al. 2015 and Mullenbach et al. 2018 both use an attention mechanism, though the sources describe it for different tasks: image caption generation in the first and medical code prediction from clinical text in the second."
+ },
+ "U37": {
+  "verdict": "rejected-correct",
+  "status": "rejected",
+  "note": "rejected, correctly: the model found no connection and wrote a sentence saying so, with no quotes",
+  "reason": "0 quotes, need 1-3",
+  "draft": "The sources do not show a concrete connection between Mikolov et al. 2013 and Choi et al. 2016 beyond both being neural predictive or representation-learning work, so no bridge sentence is given."
+ },
+ "C38": {
+  "verdict": "rejected-form",
+  "status": "rejected",
+  "note": "rejected for length; the content was faithful",
+  "reason": "not one short sentence",
+  "draft": "Both papers concern language models: Peters et al. 2018 describes deep contextualized word representations learned from a deep bidirectional language model, while Marvin and Linzen 2018 evaluates the grammaticality of language model predictions and reports that an LSTM language model performed poorl"
+ },
+ "C39": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers develop attention-based models that aim to be interpretable, with Choi et al. 2016 applying its model to electronic health records and Xie et al. 2017 applying its model to knowledge base completion, so they share an interpretability-through-attention theme but not a shown direct link."
+ },
+ "C40": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers concern encoding sentences with neural networks, since Adi et al. 2016 studies fixed-length sentence embeddings from recurrent networks such as LSTMs and Bahdanau et al. 2014 describes an encoder that compresses a source sentence into a fixed-length vector."
+ },
+ "C41": {
+  "verdict": "faithful",
+  "status": "generated",
+  "text": "Both papers use diagnostic or auxiliary prediction task classifiers to probe what information LSTM or recurrent network representations encode, though the sources do not show them addressing the same task."
+ },
+ "C42": {
+  "verdict": "faithful",
+  "status": "generated",
+  "note": "true but noisy: remarks that both are 2018 papers; says plainly that no concrete connection is shown",
+  "text": "Peters et al. 2018 and Naik et al. 2018 are both 2018 papers in the sources, but the sources do not show a concrete connection between them beyond both being about evaluating or understanding neural NLP models."
+ },
+ "C43": {
+  "verdict": "overreach",
+  "status": "generated",
+  "note": "overreach: equates ELMo with Peters et al.'s representations, which no source says",
+  "text": "Hewitt and Liang 2019 probes ELMo representations, and Peters et al. 2018 introduces deep contextualized word representations built from a deep bidirectional language model, so the two papers connect through the ELMo representations that Hewitt and Liang 2019 examines."
+ }
+}

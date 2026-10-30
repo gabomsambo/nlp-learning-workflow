@@ -75,6 +75,13 @@
           <span>Select all</span>
         </label>
         <span id="selected-count">0 selected</span>
+        <label class="check">
+          <span>Sort</span>
+          <select id="candidate-sort" disabled>
+            <option value="default">Discovery order</option>
+            <option value="fit">Best fit first</option>
+          </select>
+        </label>
         <button type="button" id="process-btn" class="btn btn-primary" disabled>Process selected</button>
       </div>
       <div id="candidates-body" class="candidate-list"></div>

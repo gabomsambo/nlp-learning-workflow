@@ -220,6 +220,7 @@
     map_lineage: 'Tracing the line of development',
     map_layout: 'Placing the works on the map',
     map_suggest: 'Ranking suggestions and the queue',
+    map_enrich: 'Naming communities and explaining connections',
     map_persist: 'Saving the map',
   };
 
