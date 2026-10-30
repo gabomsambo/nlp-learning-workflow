@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # one knob controls the whole run's API spend.
     papers_per_day: int = Field(1, env="PAPERS_PER_DAY", ge=1)
 
+    # Weekly paper-map refresh (nlp_pillars/map_refresh.py). It is registered by
+    # the same scheduler process, so it only ever runs when SCHEDULE_ENABLED is
+    # true; this flag lets a scheduler that is on skip it. Day is an APScheduler
+    # day_of_week ("sun", "mon", "mon-fri"); time is HH:MM in SCHEDULE_TIMEZONE.
+    weekly_map_refresh_enabled: bool = Field(True, env="WEEKLY_MAP_REFRESH_ENABLED")
+    weekly_map_refresh_day: str = Field("sun", env="WEEKLY_MAP_REFRESH_DAY")
+    weekly_map_refresh_time: str = Field("03:00", env="WEEKLY_MAP_REFRESH_TIME")
+
     # Obsidian vault. Off unless VAULT_EXPORT_ENABLED is true: the scheduler
     # then rewrites VAULT_DIR after the daily run. The CLI writes that
     # directory on demand either way. Blank VAULT_DIR means ~/NLP-Vault.

@@ -230,7 +230,9 @@ def execute_run(
             # (VectorSearchTool.__init__ -> ensure_collections). An unreachable vector
             # store must not stop a paper being added to the library — that step
             # reports its own failure further down, on the VECTORS stage.
-            _finish_upload(run_id, pillar_id, cancel_event, kwargs, on_stage)
+            added = _finish_upload(run_id, pillar_id, cancel_event, kwargs, on_stage)
+            if added:
+                _enqueue_map_build(kwargs.get("scheduler"), cancel_events, pillar_id)
             return
 
         if kind == KIND_PODCAST_SCRIPT:
@@ -272,17 +274,18 @@ def execute_run(
         elif kind == KIND_PODCAST_AUDIO:
             _finish_podcast_audio(run_id, pillar_id, cancel_event, kwargs, on_stage)
         elif kind == KIND_RUN_DAILY:
-            _finish_pipeline(
-                run_id,
-                orchestrator.run_daily(
-                    pillar_id, papers_limit=kwargs.get("papers_limit", 1)
-                ),
+            result = orchestrator.run_daily(
+                pillar_id, papers_limit=kwargs.get("papers_limit", 1)
             )
+            _finish_pipeline(run_id, result)
+            if result.papers_processed:
+                _enqueue_map_build(kwargs.get("scheduler"), cancel_events, pillar_id)
         else:
             papers = _to_paper_refs(kwargs.get("papers") or [])
-            _finish_pipeline(
-                run_id, orchestrator.process_selected_papers(pillar_id, papers=papers)
-            )
+            result = orchestrator.process_selected_papers(pillar_id, papers=papers)
+            _finish_pipeline(run_id, result)
+            if result.papers_processed:
+                _enqueue_map_build(kwargs.get("scheduler"), cancel_events, pillar_id)
 
     except RunCancelledError as e:
         logger.info(f"Run {run_id} cancelled: {e}")
@@ -311,6 +314,35 @@ def execute_run(
             KIND_MAP_BUILD,
         ):
             cloud_publish_service.notify(f"run:{kind}")
+
+
+def _enqueue_map_build(scheduler, cancel_events, pillar_id: str) -> Optional[str]:
+    """Queue a map build for a pillar that just gained a paper.
+
+    Best effort, like the fact-check after a script: the paper is saved and
+    the run that added it has already been recorded, so nothing here may
+    change that. A build already pending or running for the pillar is left to
+    finish (the unique index says so); the next hook or the weekly refresh
+    picks up what it missed. Returns the run id, or None.
+    """
+    if scheduler is None:
+        return None
+    try:
+        return dispatch_run(
+            scheduler,
+            cancel_events,
+            pillar_id,
+            map_store.TRIGGER_UI_MAP,
+            KIND_MAP_BUILD,
+        )
+    except RunAlreadyActiveError:
+        logger.info("A map build is already active for %s; not queuing another", pillar_id)
+    except Exception:
+        logger.exception(
+            "Map build was not queued for %s. The paper was saved and the run "
+            "that added it is unchanged.", pillar_id,
+        )
+    return None
 
 
 def _finish_pipeline(run_id: str, result) -> None:
@@ -630,8 +662,11 @@ def _finish_upload(
     cancel_event: threading.Event,
     kwargs: Dict[str, Any],
     on_stage,
-) -> None:
+) -> bool:
     """Close out a manual upload run, from either source.
+
+    Returns True: by the time it returns the paper is in the library, which is
+    what the caller's map-build hook needs to know.
 
     An upload reports TWO facts and they are not the same one, which is the mistake
     this path has made twice already (see UploadService._run_full_pipeline). The paper
@@ -712,6 +747,7 @@ def _finish_upload(
         run_id, result.paper.id, result.source,
         len(outcome.actions_triggered), len(outcome.errors),
     )
+    return True
 
 
 def _join_problems(problems: List[str]) -> Optional[str]:

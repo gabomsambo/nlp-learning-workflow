@@ -1331,16 +1331,28 @@ class Orchestrator:
         )
 
     def _fetch_and_store_citations(self, paper_id: str) -> int:
-        """Fetch citations from Semantic Scholar and store them.
+        """Store the paper's identity and typed citations from Semantic Scholar.
 
         Select (``process_selected_papers``) and the daily run both call this
-        after a paper is in the library. The rate limit lives on the tool.
-        A failure is logged and does not fail the paper.
+        after a paper is in the library. It runs ``works sync`` narrowed to the
+        one paper (``map_refresh.sync_new_paper``); a database without the
+        works tables (migration 031) gets the old capped fetch instead. The
+        rate limit lives on the tool. A failure is logged and does not fail
+        the paper.
         """
         if not self.semantic_scholar_tool:
             return 0
 
         try:
+            from .map_refresh import sync_new_paper
+
+            outcome = sync_new_paper(paper_id, tool=self.semantic_scholar_tool)
+            if outcome.ok:
+                logger.info(f"Stored {outcome.edges} typed citations for paper {paper_id}")
+                return outcome.edges
+            if not outcome.legacy:
+                return 0
+
             from .citations import fetch_and_store_citations
 
             stored = fetch_and_store_citations(
