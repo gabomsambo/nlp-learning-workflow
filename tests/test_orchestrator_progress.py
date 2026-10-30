@@ -156,7 +156,7 @@ def _build(on_stage=None, cancel=None, enable_quiz=True, parsed=None, note=None,
 @patch("nlp_pillars.orchestrator.SynthesisAgent")
 @patch("nlp_pillars.orchestrator.SummarizerAgent")
 @patch("nlp_pillars.orchestrator.DiscoveryAgent")
-def test_all_eleven_stages_fire_in_order(
+def test_all_stages_fire_in_order(
     mock_discovery, mock_summ, mock_synth, mock_quiz, mock_db, mock_vectors,
     paper, parsed, note, lesson, cards,
 ):
@@ -184,7 +184,12 @@ def test_all_eleven_stages_fire_in_order(
     started_unique = list(dict.fromkeys(recorder.started()))
     assert started_unique == expected
 
+    # The mocked paper has no PDF, so the tables stage reports skipped, with a
+    # reason, rather than staying pending or failing the paper.
     for stage in expected:
+        if stage == StageName.TABLES.value:
+            assert stage in [n for n, s, _ in recorder.events if s == StageStatus.SKIPPED.value]
+            continue
         assert stage in recorder.completed(), f"{stage} never completed"
     assert recorder.failed() == []
     vectors_detail = next(
@@ -591,7 +596,7 @@ def test_quiz_disabled_is_skipped_not_silently_absent(
     orch._process_paper(PILLAR, paper)
 
     skipped = [n for n, s, _ in recorder.events if s == StageStatus.SKIPPED.value]
-    assert skipped == [StageName.QUIZ.value]
+    assert skipped == [StageName.TABLES.value, StageName.QUIZ.value]
 
 
 @patch("nlp_pillars.orchestrator.vectors")

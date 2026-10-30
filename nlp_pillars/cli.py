@@ -1394,6 +1394,96 @@ def text_backfill(
     raise typer.Exit(0)
 
 
+@text_app.command("repair-tables")
+def text_repair_tables(
+    paper: Optional[str] = typer.Option(
+        None, "--paper", help="Repair this one paper id."
+    ),
+    all_papers: bool = typer.Option(
+        False, "--all", help="Backfill every library paper that has no table record yet."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "--paper: read the table pages and print what would be spliced, "
+            "write nothing (a few cents at most). --all: print counts, no model calls."
+        ),
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="--all: also redo papers that already have table records."
+    ),
+    limit: int = typer.Option(0, "--limit", help="--all: stop after this many papers."),
+    max_cost: float = typer.Option(
+        2.0, "--max-cost", help="--all: stop once this many dollars are spent."
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", help="Override the transcription model, e.g. claude-sonnet-5-5."
+    ),
+):
+    """Repair tables in stored paper text from the PDF page images.
+
+    Pages with a table caption are read by Haiku 5.5, every number is checked
+    against the page's PDF text layer, and tables at or above 95% agreement are
+    spliced into ``paper_texts`` (which re-chunks, re-embeds and re-projects the
+    paper). Needs docs/migrations/032_paper_tables.sql and ANTHROPIC_API_KEY.
+    Running ``text backfill`` afterwards re-extracts the raw text and undoes
+    the splice; run this again.
+    """
+    from . import table_repair
+
+    _log_env_path()
+    _setup_logging()
+    if bool(paper) == bool(all_papers):
+        console.print("[bold red]Give exactly one of --paper or --all.[/bold red]")
+        raise typer.Exit(2)
+    try:
+        if paper:
+            target = db.get_paper_by_id(paper)
+            if target is None:
+                console.print(f"[bold red]No paper {paper}.[/bold red]")
+                raise typer.Exit(1)
+            report = table_repair.repair_stored_paper(target, dry_run=dry_run, model=model)
+            console.print(report.render(dry_run), markup=False)
+            raise typer.Exit(1 if report.status == "failed" else 0)
+
+        papers = db.list_all_papers()
+        done = set() if force else set(db.list_repaired_table_paper_ids())
+        todo = [p for p in papers if p.id not in done]
+        if dry_run:
+            console.print(
+                f"dry_run: true\npapers: {len(papers)}\n"
+                f"already_repaired: {len(papers) - len(todo)}\nwould_read: {len(todo)}",
+                markup=False,
+            )
+            raise typer.Exit(0)
+        spent, failed, counts = 0.0, 0, {}
+        for index, target in enumerate(todo):
+            if limit and index >= limit:
+                break
+            if spent >= max_cost:
+                console.print(f"stopped: ${spent:.4f} reached --max-cost {max_cost}", markup=False)
+                break
+            report = table_repair.repair_stored_paper(target, dry_run=False, model=model)
+            counts[report.status] = counts.get(report.status, 0) + 1
+            failed += report.status == "failed"
+            spent += report.repair.cost_usd if report.repair else 0.0
+            console.print(
+                f"{target.id}: {report.status}"
+                + (f" · {report.repair.detail()}" if report.repair else "")
+                + (f" · {report.error}" if report.error else ""),
+                markup=False,
+            )
+        console.print(f"summary: {counts} · spent ${spent:.4f}", markup=False)
+        raise typer.Exit(1 if failed else 0)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("text repair-tables failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+
 embeddings_app = typer.Typer(
     help="Chunk and paper vectors stored in Postgres",
     add_completion=False,

@@ -130,6 +130,7 @@ class IngestAgent:
                 full_text=full_text,
                 chunks=chunks,
                 extractor=extracted.extractor,
+                pdf_path=pdf_path,
                 figures_count=0,  # Placeholder - could be enhanced later
                 tables_count=0,   # Placeholder - could be enhanced later
                 references=[]     # Placeholder - could be enhanced later

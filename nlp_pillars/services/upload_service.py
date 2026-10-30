@@ -42,6 +42,7 @@ from ..agents.synthesis_agent import SynthesisAgent
 from ..db import add_paper
 from ..embeddings import EmbeddingError
 from .. import concept_extraction
+from .. import table_repair
 from ..llm_client import stage_detail
 from ..llm_routes import CONCEPTS_ROUTE
 
@@ -716,6 +717,16 @@ class UploadService:
             StageName.INGEST, f"{len(parsed_paper.full_text):,} characters extracted"
         )
 
+        # Step 5a': repair tables from the page images. Non-fatal: never raises.
+        stages.start(StageName.TABLES, "Reading the tables from the page images")
+        tables = table_repair.stage_outcome(parsed_paper.pdf_path, parsed_paper.full_text)
+        if tables.text_changed:
+            parsed_paper.full_text = tables.repair.text
+            parsed_paper.extractor = table_repair.tagged_extractor(parsed_paper.extractor, True)
+        {"completed": stages.done, "failed": stages.failed, "skipped": stages.skipped}[
+            tables.status
+        ](StageName.TABLES, tables.detail)
+
         paper_note = None
         if not run_summarizer:
             stages.skipped(
@@ -880,6 +891,7 @@ class UploadService:
                     parsed_paper.full_text,
                     parsed_paper.extractor,
                 )
+                table_repair.store_records(paper.id, tables.repair)
             except Exception as e:
                 logger.error(f"Paper text persistence failed for {paper.id}: {e}")
                 errors.append(f"paper_text: {e}")

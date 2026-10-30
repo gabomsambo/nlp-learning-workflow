@@ -115,7 +115,7 @@ class TestCreatePipelineRun:
 
         assert run is not None
         assert run.id == RUN_ID
-        assert len(run.stages) == len(names) == 11
+        assert len(run.stages) == len(names) == 12
         assert [s.name for s in run.stages] == names
         assert all(s.status == StageStatus.PENDING.value for s in run.stages)
 

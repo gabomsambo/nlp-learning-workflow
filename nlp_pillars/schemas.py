@@ -172,6 +172,8 @@ class ParsedPaper(BaseIOSchema):
     # Which library produced full_text. The default covers rows built before
     # extract_document recorded a name. paper_texts.extractor stores this.
     extractor: str = Field(default="pdf_loader", description="Library that produced full_text")
+    # The local PDF the text came from, for stages that read the pages again.
+    pdf_path: Optional[str] = Field(default=None, description="Local PDF file")
     figures_count: int = Field(default=0, description="Number of figures")
     tables_count: int = Field(default=0, description="Number of tables")
     references: List[str] = Field(default_factory=list, description="Paper references")
@@ -845,6 +847,7 @@ class StageName(str, Enum):
     POP_QUEUE = "pop_queue"      # Step 4  run_daily
     PROCESS = "process"          # Step 5  run_daily
     INGEST = "ingest"            # Step 5a _process_paper
+    TABLES = "tables"            # Step 5a' _process_paper: page-image table repair
     SUMMARIZE = "summarize"      # Step 5b _process_paper
     SYNTHESIZE = "synthesize"    # Step 5c _process_paper
     QUIZ = "quiz"                # Step 5d _process_paper
@@ -915,6 +918,7 @@ RUN_DAILY_STAGES: List[StageName] = [
     StageName.POP_QUEUE,
     StageName.PROCESS,
     StageName.INGEST,
+    StageName.TABLES,
     StageName.SUMMARIZE,
     StageName.SYNTHESIZE,
     StageName.QUIZ,
@@ -927,6 +931,7 @@ RUN_DAILY_STAGES: List[StageName] = [
 PROCESS_SELECTED_STAGES: List[StageName] = [
     StageName.PROCESS,
     StageName.INGEST,
+    StageName.TABLES,
     StageName.SUMMARIZE,
     StageName.SYNTHESIZE,
     StageName.QUIZ,
@@ -964,6 +969,7 @@ UPLOAD_STAGES: List[StageName] = [
     StageName.UPLOAD_FETCH,
     StageName.UPLOAD_METADATA,
     StageName.INGEST,
+    StageName.TABLES,
     StageName.SUMMARIZE,
     StageName.SYNTHESIZE,
     StageName.QUIZ,

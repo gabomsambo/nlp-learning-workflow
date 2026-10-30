@@ -1,0 +1,196 @@
+{
+ "pages": {
+  "19": {
+   "captions": [
+    "Table 8 | Comparative directly SFT performance results on scaling up stage 1 data. The results",
+    "Table 9 | Analysis of model performance across training stages."
+   ],
+   "numerals": [
+    "0",
+    "1",
+    "10000",
+    "12000",
+    "14000",
+    "16000",
+    "2",
+    "2.150",
+    "2.155",
+    "2.160",
+    "2.165",
+    "2.170",
+    "20",
+    "2000",
+    "27.9",
+    "28",
+    "28.6",
+    "29.2",
+    "3",
+    "30",
+    "30.3",
+    "31.8",
+    "32",
+    "32.2",
+    "32.5",
+    "34",
+    "35.0",
+    "36",
+    "37.5",
+    "38",
+    "40",
+    "40.0",
+    "4000",
+    "42",
+    "42.5",
+    "45.0",
+    "47.5",
+    "50.0",
+    "52.3",
+    "54.0",
+    "54.2",
+    "55.0",
+    "55.1",
+    "55.5",
+    "55.6",
+    "56.0",
+    "57.4",
+    "57.5",
+    "58.0",
+    "58.1",
+    "58.5",
+    "58.6",
+    "59.0",
+    "59.4",
+    "60",
+    "60.5",
+    "6000",
+    "61.3",
+    "61.4",
+    "61.7",
+    "61.8",
+    "62.4",
+    "63.4",
+    "64.3",
+    "65.9",
+    "66.7",
+    "78.6",
+    "8",
+    "8000",
+    "81.7",
+    "82.3",
+    "82.5",
+    "84.9",
+    "87.1",
+    "87.6",
+    "9"
+   ],
+   "response": {
+    "tables": [
+     {
+      "label": "8",
+      "caption": "Table 8 | Comparative directly SFT performance results on scaling up stage 1 data. The results demonstrate that expanding the data scale at this stage does not yield benefits, or even results in worse performance.",
+      "columns": [
+       "Stage 1, Training Step",
+       "MMB",
+       "MMC",
+       "SEED",
+       "POPE",
+       "MMMU",
+       "Average"
+      ],
+      "rows": [
+       [
+        "2K",
+        "59.0",
+        "54.0",
+        "61.8",
+        "82.3",
+        "30.3",
+        "57.5"
+       ],
+       [
+        "8K",
+        "58.0",
+        "45.0",
+        "58.5",
+        "84.9",
+        "29.2",
+        "55.1"
+       ],
+       [
+        "20K",
+        "56.0",
+        "52.3",
+        "59.0",
+        "81.7",
+        "28.6",
+        "55.5"
+       ],
+       [
+        "80K",
+        "58.1",
+        "55.0",
+        "58.6",
+        "78.6",
+        "27.9",
+        "55.6"
+       ]
+      ]
+     },
+     {
+      "label": "9",
+      "caption": "Table 9 | Analysis of model performance across training stages.",
+      "columns": [
+       "Stage 1",
+       "Stage 2",
+       "Stage 3",
+       "MMB",
+       "MMC",
+       "SEED",
+       "POPE",
+       "MMMU",
+       "Average"
+      ],
+      "rows": [
+       [
+        "yes",
+        "",
+        "yes",
+        "59.4",
+        "54.2",
+        "61.4",
+        "82.5",
+        "29.2",
+        "57.4"
+       ],
+       [
+        "",
+        "yes",
+        "yes",
+        "63.4",
+        "60.5",
+        "65.9",
+        "87.1",
+        "31.8",
+        "61.7"
+       ],
+       [
+        "yes",
+        "yes",
+        "yes",
+        "64.3",
+        "61.3",
+        "66.7",
+        "87.6",
+        "32.2",
+        "62.4"
+       ]
+      ]
+     }
+    ]
+   },
+   "model": "claude-haiku-5-5",
+   "cost_usd": 0.000507
+  }
+ },
+ "excerpt_source": "2403.05525"
+}

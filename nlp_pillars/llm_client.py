@@ -169,7 +169,7 @@ def make_client():
 def _call_kwargs(
     route: ResolvedRoute,
     system: str,
-    user: str,
+    user: str | list[dict[str, Any]],
     out_model: type,
     model: str,
     max_tokens: int,
@@ -199,7 +199,7 @@ def _parse_once(
     route: ResolvedRoute,
     model: str,
     system: str,
-    user: str,
+    user: str | list[dict[str, Any]],
     out_model: type,
     max_tokens: int,
 ) -> tuple[Any, int, int, float]:
@@ -221,7 +221,7 @@ def _parse_once(
 def structured(
     stage: str | ModelRoute,
     system: str,
-    user: str,
+    user: str | list[dict[str, Any]],
     out_model: type,
     *,
     client: Any = None,
@@ -233,7 +233,8 @@ def structured(
     Args:
         stage: A stage name or a route from :mod:`nlp_pillars.llm_routes`.
         system: The system prompt.
-        user: The user message.
+        user: The user message: a string, or a list of content blocks (an
+            image block and a text block, for a page read).
         out_model: The small Pydantic model the provider fills in.
         client: An Anthropic client. Built from settings when omitted.
         model: Override the route's model. Used by the tests.

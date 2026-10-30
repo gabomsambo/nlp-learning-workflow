@@ -226,6 +226,20 @@ CONCEPTS_ROUTE = ModelRoute(
     thinking="disabled",
 )
 
+#: Page-image table transcription at ingestion (nlp_pillars/table_repair.py).
+#: Haiku 5.5 with thinking off read the DeepSeek-VL Table 9 exactly for $0.0004
+#: a page; ``LLM_TABLE_REPAIR_MODEL=claude-sonnet-5-5`` is the re-read for a
+#: paper that disagrees with its own text layer.
+TABLE_REPAIR_ROUTE = ModelRoute(
+    stage="table_repair",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_table_repair_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
 # -- podcast ---------------------------------------------------------------
 
 #: Calls 1-4, the Ground Pack. **DeepSeek is the default**: the account was
@@ -352,6 +366,7 @@ def route_for(stage: str) -> ModelRoute:
             QUIZ_ROUTE,
             DISCOVER_ROUTE,
             CONCEPTS_ROUTE,
+            TABLE_REPAIR_ROUTE,
             PODCAST_EXTRACTION_ROUTE,
             PODCAST_SYNTHESIS_ROUTE,
             FACTCHECK_EXTRACT,

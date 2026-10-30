@@ -29,6 +29,7 @@ from .tools.semantic_scholar_tool import SemanticScholarTool
 from .tools.vector_search_tool import VectorSearchTool
 from .config import get_settings, get_pillar_config
 from . import concept_extraction
+from . import table_repair
 from .llm_client import stage_detail
 from .llm_routes import CONCEPTS_ROUTE
 from .paper_ids import resolvable_pdf_url
@@ -54,6 +55,7 @@ class RunCancelledError(Exception):
 #: own, so the surrounding handler needs to be told.
 _PER_PAPER_STAGES = frozenset({
     StageName.INGEST,
+    StageName.TABLES,
     StageName.SUMMARIZE,
     StageName.SYNTHESIZE,
     StageName.QUIZ,
@@ -623,6 +625,15 @@ class Orchestrator:
         parsed_paper = self.ingest_agent.ingest(paper_ref=paper)
         self._stage(StageName.INGEST, StageStatus.COMPLETED.value, paper.id)
 
+        # Step 5a': repair tables from the page images. Non-fatal: the stage
+        # reports skipped or failed and the paper carries on with its text.
+        self._stage(StageName.TABLES, StageStatus.RUNNING.value, paper.id)
+        tables = table_repair.stage_outcome(parsed_paper.pdf_path, parsed_paper.full_text)
+        if tables.text_changed:
+            parsed_paper.full_text = tables.repair.text
+            parsed_paper.extractor = table_repair.tagged_extractor(parsed_paper.extractor, True)
+        self._stage(StageName.TABLES, tables.status, tables.detail)
+
         paper_note, lesson, quiz_cards = self._generate_learning_content(
             pillar_id, paper, parsed_paper
         )
@@ -639,6 +650,7 @@ class Orchestrator:
         n_chunks = db.replace_paper_text(
             paper.id, parsed_paper.full_text, parsed_paper.extractor,
         )
+        table_repair.store_records(paper.id, tables.repair)
         try:
             n_embedded = db.embed_paper_chunks(paper.id)
         except EmbeddingError as exc:

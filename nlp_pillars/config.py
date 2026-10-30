@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     llm_factcheck_rejudge_model: Optional[str] = Field(
         None, env="LLM_FACTCHECK_REJUDGE_MODEL"
     )
+    llm_table_repair_model: Optional[str] = Field(None, env="LLM_TABLE_REPAIR_MODEL")
+    # Page-image table repair at ingestion (nlp_pillars/table_repair.py).
+    table_repair_enabled: bool = Field(True, env="TABLE_REPAIR_ENABLED")
     llm_playground_model: Optional[str] = Field(None, env="LLM_PLAYGROUND_MODEL")
     llm_playground_align_model: Optional[str] = Field(None, env="LLM_PLAYGROUND_ALIGN_MODEL")
     llm_playground_diff_model: Optional[str] = Field(

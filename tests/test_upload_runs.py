@@ -196,10 +196,10 @@ def test_an_upload_seeds_the_upload_stage_list():
 
     stage_names = mock_db.create_pipeline_run.call_args.args[3]
     assert stage_names == [s.value for s in UPLOAD_STAGES]
-    # The six shared steps keep the names _process_paper already uses, so one label
+    # The shared steps keep the names _process_paper already uses, so one label
     # change fixes both pipelines.
     assert stage_names[2:] == [
-        "ingest", "summarize", "synthesize", "quiz", "persist", "vectors"
+        "ingest", "tables", "summarize", "synthesize", "quiz", "persist", "vectors"
     ]
 
 

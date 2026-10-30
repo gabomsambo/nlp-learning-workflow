@@ -168,6 +168,7 @@
     pop_queue: 'Taking papers off the queue',
     process: 'Processing papers',
     ingest: 'Downloading and reading the PDF',
+    tables: 'Reading the tables from page images',
     summarize: 'Summarizing',
     synthesize: 'Writing the lesson',
     quiz: 'Building quiz cards',

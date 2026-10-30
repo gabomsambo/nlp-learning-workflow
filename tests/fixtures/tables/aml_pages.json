@@ -1,0 +1,428 @@
+{
+ "pages": {
+  "8": {
+   "captions": [
+    "Table 2: Minority class F1 scores (%). HI indicates a higher illicit ratio. LI indicates a lower ratio.",
+    "Table 3: Minority class F1 scores (%) of models trained on HI datasets and evaluated on LI datasets."
+   ],
+   "numerals": [
+    "0",
+    "0.00",
+    "0.02",
+    "0.03",
+    "0.12",
+    "0.14",
+    "0.15",
+    "0.17",
+    "0.24",
+    "0.25",
+    "0.26",
+    "0.28",
+    "0.33",
+    "0.38",
+    "0.44",
+    "0.46",
+    "0.74",
+    "1",
+    "1.03",
+    "1.13",
+    "1.46",
+    "1.50",
+    "1.64",
+    "1.65",
+    "1.91",
+    "100",
+    "11",
+    "12.93",
+    "13",
+    "15",
+    "16",
+    "16.45",
+    "17",
+    "17.09",
+    "17.48",
+    "19",
+    "2",
+    "2.41",
+    "2.78",
+    "20",
+    "20.62",
+    "20.83",
+    "20.85",
+    "21",
+    "21.77",
+    "23",
+    "24.23",
+    "25",
+    "27",
+    "27.30",
+    "27.38",
+    "27.73",
+    "28.16",
+    "28.70",
+    "29",
+    "3",
+    "3.62",
+    "3.86",
+    "30",
+    "30.31",
+    "32.51",
+    "36.60",
+    "36.84",
+    "4.02",
+    "40",
+    "42.30",
+    "42.68",
+    "47.73",
+    "48",
+    "48.67",
+    "49",
+    "49.26",
+    "5",
+    "56.77",
+    "59.48",
+    "59.71",
+    "6",
+    "6.19",
+    "6.90",
+    "60",
+    "62.86",
+    "63.23",
+    "65",
+    "65.70",
+    "7",
+    "7.86",
+    "7.90",
+    "8.32",
+    "80",
+    "9"
+   ],
+   "response": {
+    "tables": [
+     {
+      "label": "2",
+      "caption": "Table 2: Minority class F1 scores (%). HI indicates a higher illicit ratio. LI indicates a lower ratio.",
+      "columns": [
+       "Model",
+       "HI-Small",
+       "LI-Small",
+       "HI-Medium",
+       "LI-Medium",
+       "HI-Large",
+       "LI-Large"
+      ],
+      "rows": [
+       [
+        "GIN [65, 25]",
+        "28.70 \u00b1 1.13",
+        "7.90 \u00b1 2.78",
+        "42.30 \u00b1 0.44",
+        "3.86 \u00b1 3.62",
+        "NA",
+        "NA"
+       ],
+       [
+        "GIN + EU [11, 15]",
+        "47.73 \u00b1 7.86",
+        "20.62 \u00b1 2.41",
+        "49.26 \u00b1 4.02",
+        "6.19 \u00b1 8.32",
+        "NA",
+        "NA"
+       ],
+       [
+        "PNA [60]",
+        "56.77 \u00b1 2.41",
+        "16.45 \u00b1 1.46",
+        "59.71 \u00b1 1.91",
+        "27.73 \u00b1 1.65",
+        "NA",
+        "NA"
+       ],
+       [
+        "GFP [48, 49] + LightGBM [29]",
+        "62.86 \u00b1 0.25",
+        "20.83 \u00b1 1.50",
+        "59.48 \u00b1 0.15",
+        "20.85 \u00b1 0.38",
+        "48.67 \u00b1 0.24",
+        "17.09 \u00b1 0.46"
+       ],
+       [
+        "GFP [48, 49] + XGBoost [16]",
+        "63.23 \u00b1 0.17",
+        "27.30 \u00b1 0.33",
+        "65.70 \u00b1 0.26",
+        "28.16 \u00b1 0.14",
+        "42.68 \u00b1 12.93",
+        "24.23 \u00b1 0.12"
+       ]
+      ]
+     },
+     {
+      "label": "3",
+      "caption": "Table 3: Minority class F1 scores (%) of models trained on HI datasets and evaluated on LI datasets.",
+      "columns": [
+       "Model",
+       "LI-Small",
+       "LI-Medium",
+       "LI-Large"
+      ],
+      "rows": [
+       [
+        "PNA [60]",
+        "0.00 \u00b1 0.00",
+        "36.60 \u00b1 0.74",
+        "NA"
+       ],
+       [
+        "PNA [60] + fine-tuning (5 epochs)",
+        "27.38 \u00b1 1.03",
+        "36.84 \u00b1 1.64",
+        "NA"
+       ],
+       [
+        "GFP [48, 49] + LightGBM [29]",
+        "0.02 \u00b1 0.03",
+        "32.51 \u00b1 0.24",
+        "21.77 \u00b1 0.15"
+       ],
+       [
+        "GFP [48, 49] + XGBoost [16]",
+        "0.00 \u00b1 0.00",
+        "30.31 \u00b1 0.28",
+        "17.48 \u00b1 6.90"
+       ]
+      ]
+     }
+    ]
+   },
+   "model": "claude-haiku-5-5",
+   "cost_usd": 0.000662
+  },
+  "19": {
+   "captions": [
+    "Table 12: Total training times (TTT) and inference performance in Transaction per Second (TPS) for",
+    "Table 13: Minority class recall rate (%) for the GNN-based models. HI indicates a higher illicit ratio.",
+    "Table 14: Minority class precision (%) for the GNN-based models. HI indicates a higher illicit ratio."
+   ],
+   "numerals": [
+    "0.5",
+    "0.66",
+    "10.51",
+    "10.67",
+    "10.69",
+    "10.83",
+    "1000",
+    "11",
+    "11640",
+    "11844",
+    "12",
+    "12.13",
+    "13",
+    "14",
+    "14.59",
+    "14994",
+    "15",
+    "15784",
+    "16.43",
+    "16557",
+    "17.37",
+    "17210",
+    "19.35",
+    "2",
+    "2.0.1",
+    "2.26",
+    "2.3.1",
+    "2.37",
+    "2.62",
+    "2.87",
+    "20",
+    "20.44",
+    "21",
+    "21.60",
+    "22703",
+    "23.26",
+    "25",
+    "26046",
+    "27.40",
+    "27745",
+    "29655",
+    "3.42",
+    "3.60",
+    "3.61",
+    "36.50",
+    "36625",
+    "38.16",
+    "39.86",
+    "39648",
+    "4",
+    "4.26",
+    "4.30",
+    "42.29",
+    "47.42",
+    "47.78",
+    "48.06",
+    "4981",
+    "5.14",
+    "5.20",
+    "5.23",
+    "5.51",
+    "5.80",
+    "5.92",
+    "5.96",
+    "5097",
+    "52.56",
+    "53.15",
+    "55.41",
+    "58.48",
+    "6.45",
+    "6.82",
+    "60",
+    "64",
+    "65",
+    "6725",
+    "6819",
+    "69.12",
+    "7.98",
+    "7101",
+    "7316",
+    "8.07",
+    "8.27",
+    "85652",
+    "85654",
+    "85753",
+    "85827",
+    "85887",
+    "85994",
+    "9",
+    "9.32"
+   ],
+   "response": {
+    "tables": [
+     {
+      "label": "12",
+      "caption": "Table 12: Total training times (TTT) and inference performance in Transaction per Second (TPS) for all GNN baselines on the AML Small and Medium datasets using an Nvidia Tesla V100 GPU.",
+      "columns": [
+       "Model",
+       "HI-Small TTT (s)",
+       "HI-Small TPS",
+       "LI-Small TTT (s)",
+       "LI-Small TPS",
+       "HI-Medium TTT (s)",
+       "HI-Medium TPS",
+       "LI-Medium TTT (s)",
+       "LI-Medium TPS"
+      ],
+      "rows": [
+       [
+        "GIN",
+        "22703",
+        "17210",
+        "29655",
+        "15784",
+        "85652",
+        "7101",
+        "85994",
+        "7316"
+       ],
+       [
+        "GIN+EU",
+        "26046",
+        "11844",
+        "36625",
+        "11640",
+        "85753",
+        "4981",
+        "85887",
+        "5097"
+       ],
+       [
+        "PNA",
+        "27745",
+        "16557",
+        "39648",
+        "14994",
+        "85654",
+        "6725",
+        "85827",
+        "6819"
+       ]
+      ]
+     },
+     {
+      "label": "13",
+      "caption": "Table 13: Minority class recall rate (%) for the GNN-based models. HI indicates a higher illicit ratio. LI indicates a lower illicit ratio.",
+      "columns": [
+       "Model",
+       "HI-Small",
+       "LI-Small",
+       "HI-Medium",
+       "LI-Medium"
+      ],
+      "rows": [
+       [
+        "GIN [65, 25]",
+        "38.16 \u00b1 5.92",
+        "14.59 \u00b1 2.37",
+        "39.86 \u00b1 3.61",
+        "8.07 \u00b1 9.32"
+       ],
+       [
+        "GIN+EU [11, 15]",
+        "55.41 \u00b1 5.96",
+        "23.26 \u00b1 2.87",
+        "48.06 \u00b1 6.45",
+        "5.51 \u00b1 6.82"
+       ],
+       [
+        "PNA [60]",
+        "53.15 \u00b1 2.26",
+        "16.43 \u00b1 2.62",
+        "47.42 \u00b1 4.30",
+        "20.44 \u00b1 0.66"
+       ]
+      ]
+     },
+     {
+      "label": "14",
+      "caption": "Table 14: Minority class precision (%) for the GNN-based models. HI indicates a higher illicit ratio. LI indicates a lower illicit ratio.",
+      "columns": [
+       "Model",
+       "HI-Small",
+       "LI-Small",
+       "HI-Medium",
+       "LI-Medium"
+      ],
+      "rows": [
+       [
+        "GIN [65, 25]",
+        "27.40 \u00b1 7.98",
+        "5.14 \u00b1 3.42",
+        "47.78 \u00b1 5.20",
+        "5.23 \u00b1 3.60"
+       ],
+       [
+        "GIN+EU [11, 15]",
+        "42.29 \u00b1 10.69",
+        "21.60 \u00b1 10.83",
+        "52.56 \u00b1 8.27",
+        "12.13 \u00b1 19.35"
+       ],
+       [
+        "PNA [60]",
+        "58.48 \u00b1 10.67",
+        "17.37 \u00b1 5.80",
+        "69.12 \u00b1 4.26",
+        "36.50 \u00b1 10.51"
+       ]
+      ]
+     }
+    ]
+   },
+   "model": "claude-haiku-5-5",
+   "cost_usd": 0.000707
+  }
+ },
+ "excerpt_source": "2306.16424"
+}
