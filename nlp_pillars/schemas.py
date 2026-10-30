@@ -224,6 +224,13 @@ class Lesson(BaseIOSchema):
     takeaways: List[str] = Field(..., description="Key takeaways (3-5)")
     practice_ideas: List[str] = Field(..., description="Practical applications")
     connections: List[str] = Field(..., description="Connections to other work")
+    # The same connections as typed items ({work, title, relation, why}). The
+    # prose list above is derived from these (``connection_text``), so every
+    # reader of ``connections`` keeps working; the map resolves these against
+    # the paper's reference list (nlp_pillars/connections.py).
+    connection_links: List[Dict[str, str]] = Field(
+        default_factory=list, description="Connections as typed items"
+    )
     examples: List[str] = Field(default_factory=list, description="Examples and illustrations")
     podcast_script: Optional[str] = Field(None, description="Generated podcast script")
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
@@ -313,6 +320,56 @@ class NoteDraft(BaseModel):
     )
 
 
+#: How one lesson connection relates the paper to the other work. The first
+#: six are what the model may choose; ``related`` is the generic word the
+#: learner can pick when confirming a suggestion (learner_connections).
+CONNECTION_RELATIONS = (
+    "builds_on",
+    "uses",
+    "critiques",
+    "compares",
+    "alternative",
+    "background",
+)
+
+RELATION_WORDS = {
+    "builds_on": "builds on",
+    "uses": "uses",
+    "critiques": "critiques",
+    "compares": "compares with",
+    "alternative": "is an alternative to",
+    "background": "has background in",
+    "related": "is related to",
+}
+
+
+class ConnectionDraft(BaseModel):
+    """One connection from a lesson's paper to other work, as the model states it."""
+
+    work: str = Field(
+        ...,
+        description="The other work as author(s) and year, e.g. 'Hewitt and Liang 2019'",
+    )
+    title: str = Field(
+        "", description="The other work's title when the paper names it, else empty"
+    )
+    relation: Literal[
+        "builds_on", "uses", "critiques", "compares", "alternative", "background"
+    ] = Field(..., description="How this paper relates to that work")
+    why: str = Field(..., description="One sentence saying why, from the paper")
+
+
+def connection_text(item: "ConnectionDraft | Dict[str, str]") -> str:
+    """The prose line for a typed connection: ``Hewitt and Liang 2019 (critiques): why``."""
+    get = item.get if isinstance(item, dict) else lambda key, default="": getattr(item, key, default)
+    work = (get("work", "") or "").strip()
+    title = (get("title", "") or "").strip()
+    named = f"{work}, {title}" if work and title else (work or title)
+    relation = RELATION_WORDS.get(get("relation", ""), get("relation", ""))
+    why = (get("why", "") or "").strip()
+    return f"{named} ({relation}): {why}" if why else f"{named} ({relation})"
+
+
 class LessonDraft(BaseModel):
     """What the model fills in for one lesson."""
 
@@ -321,7 +378,9 @@ class LessonDraft(BaseModel):
     tl_dr: str = Field(..., description="One-sentence summary")
     takeaways: List[str] = Field(..., description="Key takeaways")
     practice_ideas: List[str] = Field(..., description="Practical applications")
-    connections: List[str] = Field(..., description="Connections to other work")
+    connections: List[ConnectionDraft] = Field(
+        ..., description="Connections to other work, each with how it relates"
+    )
     examples: List[str] = Field(default_factory=list, description="Examples")
 
 
@@ -384,7 +443,8 @@ def lesson_from_draft(draft: LessonDraft, paper_id: str, pillar_id: str) -> Less
         tl_dr=draft.tl_dr,
         takeaways=list(draft.takeaways),
         practice_ideas=list(draft.practice_ideas),
-        connections=list(draft.connections),
+        connections=[connection_text(item) for item in draft.connections],
+        connection_links=[item.model_dump() for item in draft.connections],
         examples=list(draft.examples),
     )
 
@@ -912,6 +972,7 @@ class StageName(str, Enum):
     MAP_LINEAGE = "map_lineage"
     MAP_LAYOUT = "map_layout"
     MAP_SUGGEST = "map_suggest"
+    MAP_ENRICH = "map_enrich"
     MAP_PERSIST = "map_persist"
 
 
@@ -1048,7 +1109,10 @@ PLAYGROUND_ALIGN_STAGES: List[StageName] = [
 
 #: One pillar's paper map. load reads works, citations, vectors and the queue
 #: (and embeds the pillar goal with the local model; no paid call). The middle
-#: five are pure computation. persist writes the map_snapshots row.
+#: five are pure computation. enrich is the one stage that may spend: community
+#: names and bridge sentences (nlp_pillars/map_enrich.py, behind
+#: MAP_ENRICHMENT_ENABLED), with its dollars in the stage detail. persist
+#: writes the map_snapshots row.
 MAP_BUILD_STAGES: List[StageName] = [
     StageName.MAP_LOAD,
     StageName.MAP_GRAPH,
@@ -1056,6 +1120,7 @@ MAP_BUILD_STAGES: List[StageName] = [
     StageName.MAP_LINEAGE,
     StageName.MAP_LAYOUT,
     StageName.MAP_SUGGEST,
+    StageName.MAP_ENRICH,
     StageName.MAP_PERSIST,
 ]
 

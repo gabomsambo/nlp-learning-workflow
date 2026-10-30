@@ -1727,8 +1727,8 @@ def map_build(
         False,
         "--dry-run",
         help=(
-            "Compute and print only. Do not load the embedding model "
-            "and do not write."
+            "Compute and print only. Do not load the embedding model, "
+            "call a model, or write; the enrichment cost is estimated."
         ),
     ),
 ):
@@ -1737,11 +1737,16 @@ def map_build(
     Reads works, typed citations and title+abstract vectors (run ``works
     sync`` and ``embeddings papers`` first), computes communities, the line of
     development, importance, the layout, suggestions, queue verdicts and
-    insights, and writes one snapshot per pillar. No paid model call and no
-    Semantic Scholar request: the pillar goal and unvectored queue titles are
-    embedded with the local bge model. Idempotent: the same evidence gives the
-    same snapshot hash. Apply docs/migrations/034_map_snapshots.sql first;
-    ``--dry-run`` works without it.
+    insights, and writes one snapshot per pillar. No Semantic Scholar request:
+    the pillar goal and unvectored queue titles are embedded with the local bge
+    model. The one paid step is enrichment (community names, bridge sentences;
+    docs/KNOWLEDGE_LAYER.md), about $0.01 a rebuild, on unless
+    MAP_ENRICHMENT_ENABLED=false and refused once the daily spend cap is
+    reached; names and bridges already paid for are reused, so an unchanged
+    map costs nothing. Idempotent: the same evidence gives the same snapshot
+    hash. Apply docs/migrations/034_map_snapshots.sql first (035 for the
+    learner's decisions and typed lesson connections); ``--dry-run`` works
+    without either.
     """
     from .map_store import MapStoreError, execute_map_build
 
@@ -1857,6 +1862,86 @@ def concepts_backfill(
     console.print(report.render(), markup=False)
     if report.failed:
         raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
+@concepts_app.command("anchor")
+def concepts_anchor(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Exact vocabulary matches only; no model call, nothing written.",
+    ),
+    reanchor: bool = typer.Option(
+        False,
+        "--reanchor",
+        help="Decide again for concepts that already have an anchor.",
+    ),
+    max_calls: int = typer.Option(
+        500, "--max-calls", min=0, help="Model calls at most (about $0.0001 each)."
+    ),
+):
+    """Anchor concepts to the NLP-KG vocabulary, merge duplicates, link parents.
+
+    Exact label/synonym matches are free. The rest cost one small Haiku call
+    each unless MAP_ENRICHMENT_ENABLED is false. Apply
+    docs/migrations/035_knowledge_layer.sql by hand before the real run.
+    """
+    from .concept_anchoring import run_anchoring
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = run_anchoring(dry_run=dry_run, reanchor=reanchor, max_calls=max_calls)
+    except Exception as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        logging.error("concepts anchor failed: %s", exc, exc_info=True)
+        raise typer.Exit(1)
+    console.print(report.render(), markup=False)
+    raise typer.Exit(0)
+
+
+connections_app = typer.Typer(
+    help="Typed connections between papers: what lessons say, what you decided",
+    add_completion=False,
+)
+app.add_typer(connections_app, name="connections")
+
+
+@connections_app.command("resolve")
+def connections_resolve(
+    pillar: Optional[str] = typer.Option(
+        None, "--pillar", help="Only this pillar's lessons. Default: every pillar."
+    ),
+    show: int = typer.Option(10, "--show", min=0, help="Unresolved mentions to list."),
+):
+    """Show how each lesson's connections resolve against its paper's references.
+
+    Read-only and free: no model, no write. The map build does the same
+    resolution on every run; this is the way to see what it will find.
+    """
+    from .map_store import MapStoreError, resolve_library_connections
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report, warnings = resolve_library_connections(pillar)
+    except MapStoreError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+        raise typer.Exit(1)
+    counts = report.counts()
+    total = counts["resolved"] + counts["unresolved"]
+    console.print(
+        f"connections resolve: {counts['resolved']} of {total} resolved "
+        f"({counts['legacy']} read from prose, {counts['unresolved']} unresolved)",
+        markup=False,
+    )
+    for warning in warnings:
+        console.print(f"warning: {warning}", markup=False)
+    for edge in report.edges[:show]:
+        console.print(f"  {edge.src} {edge.relation} {edge.dst}  ({edge.how}, {edge.mention})", markup=False)
+    for row in report.unresolved[:show]:
+        console.print(f"  unresolved {row['mention']!r} in {row['paper_id']}: {row['reason']}", markup=False)
     raise typer.Exit(0)
 
 

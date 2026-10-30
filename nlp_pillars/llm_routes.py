@@ -25,7 +25,9 @@ Every stage is overridable by env without touching code:
 ``LLM_DISCOVER_MODEL``, ``LLM_CONCEPTS_MODEL``,
 ``LLM_PODCAST_EXTRACTION_MODEL``, ``LLM_PODCAST_SYNTHESIS_MODEL``, the
 ``LLM_FACTCHECK_*`` trio, ``LLM_PLAYGROUND_MODEL``,
-``LLM_PLAYGROUND_ALIGN_MODEL`` and ``LLM_PLAYGROUND_DIFF_MODEL``. The older
+``LLM_PLAYGROUND_ALIGN_MODEL``, ``LLM_PLAYGROUND_DIFF_MODEL`` and the paper
+map's ``LLM_MAP_NAMES_MODEL``, ``LLM_MAP_BRIDGE_MODEL`` and
+``LLM_CONCEPT_ANCHOR_MODEL``. The older
 ``PODCAST_*_MODEL`` and
 ``FACTCHECK_*_MODEL`` names still work and are consulted second, so an
 existing ``.env`` keeps working.
@@ -240,6 +242,47 @@ TABLE_REPAIR_ROUTE = ModelRoute(
     thinking="disabled",
 )
 
+# -- paper map knowledge layer ---------------------------------------------
+
+#: A community's name (two to four words) and one-sentence summary, from its
+#: members' titles. Haiku 5.5, thinking off: the report's pilot named eight
+#: communities for well under $0.001. ``LLM_MAP_NAMES_MODEL`` overrides it.
+MAP_NAMES_ROUTE = ModelRoute(
+    stage="map_names",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_map_names_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
+#: One bridge sentence for a connected pair of library papers, written only
+#: from stored evidence and quote-checked afterwards (nlp_pillars/map_enrich.py).
+#: ``LLM_MAP_BRIDGE_MODEL`` overrides it.
+MAP_BRIDGE_ROUTE = ModelRoute(
+    stage="map_bridge",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_map_bridge_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
+#: Pick one vocabulary field out of at most five retrieved candidates for a
+#: concept name, or none (nlp_pillars/concept_anchoring.py). The model answers
+#: with a candidate's position, never an id.
+CONCEPT_ANCHOR_ROUTE = ModelRoute(
+    stage="concept_anchor",
+    provider="anthropic",
+    default_model="claude-haiku-5-5",
+    fallback_model=CLAUDE_FALLBACK,
+    model_attrs=("llm_concept_anchor_model",),
+    effort="medium",
+    thinking="disabled",
+)
+
 # -- podcast ---------------------------------------------------------------
 
 #: Calls 1-4, the Ground Pack. **DeepSeek is the default**: the account was
@@ -367,6 +410,9 @@ def route_for(stage: str) -> ModelRoute:
             DISCOVER_ROUTE,
             CONCEPTS_ROUTE,
             TABLE_REPAIR_ROUTE,
+            MAP_NAMES_ROUTE,
+            MAP_BRIDGE_ROUTE,
+            CONCEPT_ANCHOR_ROUTE,
             PODCAST_EXTRACTION_ROUTE,
             PODCAST_SYNTHESIS_ROUTE,
             FACTCHECK_EXTRACT,
