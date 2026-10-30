@@ -31,9 +31,9 @@ you must not stack your own review or PR steps on top of it.
 
 ## Running the stack
 
-`docker compose up -d --build` starts **seven** services: `webui` (FastAPI on :8000),
-`db` (Postgres, host port **5434**), `postgrest` (:3000), `searxng` (:8080),
-`qdrant` (host **6333** / **6334**), `scheduler` (no ports) and `playground-runner`
+`docker compose up -d --build` starts **seven** services: `webui` (FastAPI, host :3020),
+`db` (Postgres, host port **3025**), `postgrest` (:3021), `searxng` (:3022),
+`qdrant` (host **3023** / **3024**), `scheduler` (no ports) and `playground-runner`
 (no ports; internal network only, see `docs/PLAYGROUND_RUNNER.md`). The build is slow
 and the image is large — `requirements.txt` pulls torch and layoutparser. Search
 reads the local Qdrant. See "Which Qdrant the app talks to".
@@ -53,19 +53,16 @@ Two of them look wrong in `docker compose ps` and are not:
   services whose config hash or image changed are replaced, and those two pin an image and
   take no code from this repo. PostgREST reconnects on its own when `db` is recreated.
 
-The database is published on host 5434, not the usual 5432, because a developer machine
-tends to have Postgres already. Only the *host* side moved: inside the compose network
+The database is published on host 3025, not the usual 5432, because a developer machine
+tends to have Postgres already (host ports 3020-3029 are this app's block; LinguaLog has 3010-3019; IndexTTS is 3026). Only the *host* side moved: inside the compose network
 postgrest still dials `db:5432`, and the container-side port must stay 5432. Reach it with
-`psql -h 127.0.0.1 -p 5434`. When a port conflict is suspected, do not trust `lsof -iTCP`
+`psql -h 127.0.0.1 -p 3025`. When a port conflict is suspected, do not trust `lsof -iTCP`
 — run as your own user it silently omits listeners owned by another user and will report a
 busy port free. `netstat -an | grep <port>` or a throwaway `socket.bind()` tells the truth.
 
-5434 has been the committed value since PR #14 (2026-08-16). A container still publishing
-**5432** is a container older than that PR, not a compose/doc disagreement — recreating it
-is the whole fix. Measured 2026-08-29: the two rival servers that originally motivated the
-move (another Docker project on 5432, a native host Postgres on 5433) were both down, so a
-bind test finds 5433 and 5434 free and 5432 held by `nlp_postgres` itself. 5434 stays
-regardless; the point of the choice is that it survives those servers coming back.
+The committed host port was 5434 from PR #14 (2026-08-16) until the move into this app's
+3020-3029 block. A container still publishing **5432** or **5434** is older than that
+change; recreating it is the whole fix.
 
 You do not need the image to run the app locally. `uvicorn webui.app:app` from a host
 virtualenv works against the compose services, starts instantly, and skips the multi-GB
@@ -78,7 +75,7 @@ environment comes entirely from compose. That absence is load-bearing: it is why
 
 `scheduler` runs the same image as `webui` with `command: python -m nlp_pillars.scheduler`.
 Any *new* service reusing this image must set `healthcheck: disable: true` as it does — the
-Dockerfile's `HEALTHCHECK` curls `localhost:8000/health`, which exists only under uvicorn,
+Dockerfile's `HEALTHCHECK` curls `localhost:8000/health` (container-internal port), which exists only under uvicorn,
 so a non-webui service inherits a probe that can never pass and sits permanently
 "unhealthy" while working fine.
 
@@ -1209,10 +1206,10 @@ all the runner is:
 
     OPENAI_API_KEY=test-key-not-real ANTHROPIC_API_KEY=test-key-not-real \
     DEFAULT_MODEL=gpt-4o-mini \
-    SUPABASE_URL=http://localhost:3000 SUPABASE_KEY=test-token-not-real \
-    POSTGREST_URL=http://localhost:3000 \
-    QDRANT_URL=http://localhost:6333 QDRANT_API_KEY="" \
-    SEARXNG_URL=http://localhost:8080 pytest tests/ -q
+    SUPABASE_URL=http://localhost:3021 SUPABASE_KEY=test-token-not-real \
+    POSTGREST_URL=http://localhost:3021 \
+    QDRANT_URL=http://localhost:3023 QDRANT_API_KEY="" \
+    SEARXNG_URL=http://localhost:3022 pytest tests/ -q
 
 Copy that list from `.github/workflows/tests.yml` rather than trimming it. An earlier,
 shorter version of this recipe omitted `SEARXNG_URL`, and the omission fails exactly one
@@ -1270,7 +1267,7 @@ leaving `LEGACY_TO_SLUG` alone. Retiring those ids from the tests is a separate 
 ## Podcast episode audio (IndexTTS v1)
 
 IndexTTS runs on the **host GPU**, never in Docker. The webui calls it via
-`gradio_client` at `INDEXTTS_URL` (default `http://host.docker.internal:7860`).
+`gradio_client` at `INDEXTTS_URL` (default `http://host.docker.internal:3026`).
 Liveness is **not** a port check — probe `/gradio_api/info` for `/gen_single` with
 the exact 24-parameter contract in `nlp_pillars/tts/indextts_client.py`.
 

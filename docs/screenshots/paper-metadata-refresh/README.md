@@ -17,8 +17,8 @@ The feature was exercised live against the captain's library via the Python serv
 To reproduce UI screenshots once Chrome is available:
 
 ```bash
-# from repo root, against compose PostgREST on :3000
-SUPABASE_URL=http://localhost:3000 POSTGREST_URL=http://localhost:3000 \
+# from repo root, against compose PostgREST on :3021
+SUPABASE_URL=http://localhost:3021 POSTGREST_URL=http://localhost:3021 \
   SUPABASE_KEY='<web_anon token>' \
   .venv/bin/uvicorn webui.app:app --host 127.0.0.1 --port 8001
 

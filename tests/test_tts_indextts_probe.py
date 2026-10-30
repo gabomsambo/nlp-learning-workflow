@@ -37,7 +37,7 @@ def test_wrong_service_when_dots_endpoint_present(tmp_path, monkeypatch):
         "nlp_pillars.tts.indextts_client.requests.get",
         lambda *args, **kwargs: FakeResponse(),
     )
-    client = IndexTtsClient("http://127.0.0.1:7860", tmp_path)
+    client = IndexTtsClient("http://127.0.0.1:3026", tmp_path)
     info = client.check_status()
     assert info.status.value == "wrong_service"
     assert "Dots" in info.message or "/run_synthesis" in info.message

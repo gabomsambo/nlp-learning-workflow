@@ -1,7 +1,7 @@
 """Async PostgREST client for the Web UI.
 
 Provides typed helper methods to read data from the existing database via
-PostgREST running at http://localhost:3000. This client is read-only and
+PostgREST running at http://localhost:3021. This client is read-only and
 optimized for the UI use cases (counts, recent activity, simple lists).
 """
 
@@ -73,12 +73,12 @@ class PostgrestClient:
     """Minimal async client tailored for dashboard and browsing needs.
 
     Env vars:
-      - POSTGREST_URL (default: http://localhost:3000)
+      - POSTGREST_URL (default: http://localhost:3021)
       - SUPABASE_KEY (optional, used as Bearer token)
     """
 
     def __init__(self, base_url: Optional[str] = None, token: Optional[str] = None, client: Optional[httpx.AsyncClient] = None):
-        url = base_url or os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL") or "http://localhost:3000"
+        url = base_url or os.getenv("POSTGREST_URL") or os.getenv("SUPABASE_URL") or "http://localhost:3021"
         url = url.rstrip("/")
         # Supabase cloud uses /rest/v1/ path, local PostgREST uses root
         if "supabase.co" in url and "/rest/v1" not in url:

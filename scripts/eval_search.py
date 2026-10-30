@@ -212,7 +212,7 @@ def _evaluate(
 def main() -> None:
     """Run the SciFact subset benchmark and print dense/hybrid nDCG@10."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
+    parser.add_argument("--qdrant-url", default="http://127.0.0.1:3023")
     parser.add_argument("--collection", default=COLLECTION)
     parser.add_argument("--corpus-size", type=int, default=1500)
     parser.add_argument(

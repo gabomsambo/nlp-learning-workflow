@@ -31,7 +31,7 @@ every paid step refuses to start once --budget is reached.
 The Anthropic key is read from --env-file at run time, that one variable only;
 it is never printed or copied. The database is the local compose stack:
 
-    SUPABASE_URL=http://localhost:3000 POSTGREST_URL=http://localhost:3000 \\
+    SUPABASE_URL=http://localhost:3021 POSTGREST_URL=http://localhost:3021 \\
     SUPABASE_KEY=<LOCAL_API_TOKEN from docker-compose.yml> \\
     python scripts/podcast_writer_gate.py generate --out DIR
 """

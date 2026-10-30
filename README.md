@@ -40,8 +40,8 @@ From a checkout of this repo:
 ```
 
 That checks Docker is running, starts the stack, waits until the app answers
-`/health`, and opens http://localhost:8000/. Podcast audio (IndexTTS) runs on
-the host GPU and stays off unless you opt in. It listens on port **7860**:
+`/health`, and opens http://localhost:3020/. Podcast audio (IndexTTS) runs on
+the host GPU and stays off unless you opt in. It listens on port **3026**:
 
 ```bash
 ./workstation up --tts
@@ -68,11 +68,11 @@ It brings up the services below, with the database schema applied automatically:
 
 | Service | Container | Host port | What it is |
 |---|---|---|---|
-| `db` | `nlp_postgres` | 127.0.0.1:5434 | Postgres — the application database |
-| `postgrest` | `nlp_postgrest` | 127.0.0.1:3000 | PostgREST, the REST layer the app talks to |
-| `searxng` | `nlp_searxng` | 8080 | Metasearch, used for paper discovery |
-| `qdrant` | `nlp_qdrant` | 6333/6334 | Local vector store — **offline option only**, see below |
-| `webui` | `nlp_webui` | 8000 | The FastAPI web UI |
+| `db` | `nlp_postgres` | 127.0.0.1:3025 | Postgres — the application database |
+| `postgrest` | `nlp_postgrest` | 127.0.0.1:3021 | PostgREST, the REST layer the app talks to |
+| `searxng` | `nlp_searxng` | 127.0.0.1:3022 | Metasearch, used for paper discovery |
+| `qdrant` | `nlp_qdrant` | 3023/3024 | Local vector store — **offline option only**, see below |
+| `webui` | `nlp_webui` | 3020 | The FastAPI web UI |
 | `scheduler` | `nlp_scheduler` | — | Daily run; `Exited (0)` while `SCHEDULE_ENABLED=false` |
 | `playground-runner` | `nlp_playground_runner` | — (internal network only) | Locked-down Python for paper playgrounds |
 
@@ -84,7 +84,7 @@ docker compose up -d --build
 docker compose cp create_pillars.py webui:/tmp/create_pillars.py
 docker compose exec -e PYTHONPATH=/app webui python /tmp/create_pillars.py
 
-open http://localhost:8000
+open http://localhost:3020
 ```
 
 Notes that save time:
@@ -140,16 +140,16 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Database — PostgREST in front of Postgres.
 # Under Docker these are overridden in docker-compose.yml and can be left alone.
-POSTGREST_URL=http://localhost:3000
-SUPABASE_URL=http://localhost:3000   # nlp_pillars/db.py reads this one, not POSTGREST_URL
+POSTGREST_URL=http://localhost:3021
+SUPABASE_URL=http://localhost:3021   # nlp_pillars/db.py reads this one, not POSTGREST_URL
 SUPABASE_KEY=eyJ...                  # sent as the PostgREST Bearer token; must be non-empty
 
 # Vector Store (Qdrant Cloud is what the stack actually uses)
-QDRANT_URL=https://xxx.cloud.qdrant.io:6333   # http://localhost:6333 for the local container
+QDRANT_URL=https://xxx.cloud.qdrant.io:6333   # http://localhost:3023 for the local container
 QDRANT_API_KEY=...  # required for cloud
 
 # Metasearch (Docker sets this to http://searxng:8080)
-SEARXNG_URL=http://localhost:8080
+SEARXNG_URL=http://localhost:3022
 
 # Optional — the podcast Ground Pack calls 1-4 run on DeepSeek, with Claude
 # Haiku 5.5 behind them. Set PODCAST_EXTRACTION_PROVIDER=anthropic to put
@@ -357,7 +357,7 @@ runner's own dependencies and skips without them; see
 3. **Paper discovery returns nothing from SearXNG**
    - SearXNG serves JSON only when `formats: [html, json]` is set in
      `searxng_config/settings.yml`; without it the API answers 403
-   - Check with `curl -s -o /dev/null -w '%{http_code}' "http://localhost:8080/search?q=test&format=json"`
+   - Check with `curl -s -o /dev/null -w '%{http_code}' "http://localhost:3022/search?q=test&format=json"`
 
 4. **"PDF extraction failed"**
    - Some papers have complex layouts
@@ -415,7 +415,7 @@ python -m nlp_pillars.cli run --pillar llm-theory-practice --papers 1
 ## 🌐 Web UI (FastAPI)
 
 Under Docker the web UI is already running — `docker compose up -d` serves it on
-`http://localhost:8000`, and nothing below is needed.
+`http://localhost:3020`, and nothing below is needed.
 
 To run it directly against an existing PostgREST instead, point `POSTGREST_URL`,
 `SUPABASE_URL` and `SUPABASE_KEY` at it (see Environment Setup above) and then:
@@ -424,7 +424,7 @@ pip install -r requirements.txt -r requirements.lock.txt
 uvicorn webui.app:app --reload
 ```
 
-Open `http://localhost:8000`:
+Open `http://localhost:3020`:
 - Dashboard: counts and recent activity
 - Papers: browse and filter by pillar. A paper's Playground tab turns its notebook into study cards ([docs/PLAYGROUND.md](docs/PLAYGROUND.md))
 - Lessons: view generated lessons

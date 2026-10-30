@@ -30,7 +30,7 @@ services:
       # Loopback only. The auth model (see db/init/01-roles.sh) assumes this
       # port is not reachable from the network.
       #
-      # 5434 on the host, not 5432. This machine already has TWO postgres
+      # 3025 on the host, not 5432. This machine already has TWO postgres
       # servers on the usual ports: an unrelated Docker project
       # (NaveeraTech/naveera-api) publishes postgres:16 on 5432, and a native
       # host Postgres listens on 5433. Two listeners cannot share a host port, so
@@ -44,10 +44,10 @@ services:
       #
       # Nothing inside this stack is affected: postgrest reaches the database as
       # `db:5432` over the compose network and never touches the published port.
-      # Host-side tools do, so connect with `psql -h 127.0.0.1 -p 5434`. The
+      # Host-side tools do, so connect with `psql -h 127.0.0.1 -p 3025`. The
       # container-side 5432 must stay as it is — that is the port Postgres
       # actually listens on.
-      - "127.0.0.1:5434:5432"
+      - "127.0.0.1:3025:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nlp} -d ${POSTGRES_DB:-nlp}"]
       interval: 5s
@@ -86,7 +86,7 @@ services:
       # with this secret.
       PGRST_JWT_SECRET: "${PGRST_JWT_SECRET:-nlp-local-dev-jwt-secret-change-me-please-32}"
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3021:3000"
     depends_on:
       db:
         condition: service_healthy
@@ -119,8 +119,8 @@ services:
     container_name: nlp_qdrant
     ports:
       # Loopback only, like db/postgrest/webui: Qdrant runs without an API key.
-      - "127.0.0.1:6333:6333"
-      - "127.0.0.1:6334:6334"
+      - "127.0.0.1:3023:6333"
+      - "127.0.0.1:3024:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
@@ -138,11 +138,11 @@ services:
     image: searxng/searxng:latest
     container_name: nlp_searxng
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:3022:8080"
     volumes:
       - ./searxng_config:/etc/searxng:ro
     environment:
-      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_BASE_URL=http://localhost:3022/
       - SEARXNG_SECRET=nlp-workflow-secret-key
       - SEARXNG_LIMITER=false
       - SEARXNG_PUBLIC_INSTANCE=false
@@ -159,9 +159,9 @@ services:
     container_name: nlp_webui
     ports:
       # Loopback only. The only way in from outside this machine is the
-      # Cloudflare Tunnel (docs/remote-access.md), which dials 127.0.0.1:8000.
+      # Cloudflare Tunnel (docs/remote-access.md), which dials 127.0.0.1:3020.
       # Publishing on 0.0.0.0 would let anyone on the LAN skip Cloudflare Access.
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:3020:8000"
     env_file:
       - .env
     environment:
@@ -210,7 +210,7 @@ services:
       #
       # There are TWO database clients and they resolve the URL differently:
       #   - webui/services/postgrest_client.py:54 reads
-      #     POSTGREST_URL -> SUPABASE_URL -> http://localhost:3000
+      #     POSTGREST_URL -> SUPABASE_URL -> http://localhost:3021
       #   - nlp_pillars/db.py's get_client() reads SUPABASE_URL ONLY. It has
       #     no POSTGREST_URL fallback, and it is the client behind
       #     /api/pillars/ and the rest of the pipeline.
@@ -229,8 +229,8 @@ services:
       SUPABASE_KEY: "${LOCAL_API_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2ViX2Fub24ifQ.jZ5fef9pol5Rqbrl64ZhHMvvAKmT91b_ZtsOYLyEbxM}"
       # IndexTTS runs on the host GPU — never started from the container.
       # host.docker.internal reaches the captain's machine from inside Docker.
-      INDEXTTS_URL: "${INDEXTTS_URL:-http://host.docker.internal:7860}"
-      INDEXTTS_START_COMMAND: "${INDEXTTS_START_COMMAND:-cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860}"
+      INDEXTTS_URL: "${INDEXTTS_URL:-http://host.docker.internal:3026}"
+      INDEXTTS_START_COMMAND: "${INDEXTTS_START_COMMAND:-cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 3026}"
       # Cloud reader publishing (see cloud/reader/README.md). Off unless
       # CLOUD_PUBLISH_ENABLED=true. The
       # service token can reach /ingest and nothing else. The bundle directory

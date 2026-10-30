@@ -8,7 +8,7 @@ spend money.
 
     phone / iPad ──HTTPS──> Cloudflare edge ── Access login (email PIN) ──┐
                                                                           │ tunnel
-    desktop ───────────────> http://localhost:8000 <── cloudflared ───────┘
+    desktop ───────────────> http://localhost:3020 <── cloudflared ───────┘
                               (published on 127.0.0.1 only)
 
 It works only while the computer is on, the stack is up, and `cloudflared` is
@@ -21,14 +21,14 @@ running.
    not ask every day.
 2. **Loopback-only ports** (`docker-compose.yml`). `webui`, `qdrant` and
    `searxng` publish on `127.0.0.1`, like `db` and `postgrest` already did, so
-   the LAN cannot reach them. The tunnel dials `127.0.0.1:8000`.
+   the LAN cannot reach them. The tunnel dials `127.0.0.1:3020`.
 3. **Token check in the app** (`webui/access.py`). A request that came through
    the tunnel (it carries `Cf-*` / `X-Forwarded-*` headers) must have a valid
    `Cf-Access-Jwt-Assertion`: RS256 signature from the team's keys, the right
    issuer and application AUD, not expired. Missing or invalid is 401/403 and
    no route runs. If `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` are not set,
    remote requests are refused. Requests from the desktop
-   (`http://localhost:8000`, no proxy headers) are unchanged.
+   (`http://localhost:3020`, no proxy headers) are unchanged.
 4. **Spend guard** (`webui/services/spend_guard.py`, `nlp_pillars/spend.py`).
    Paper processing, uploads, the daily pipeline run, podcast scripts, audio,
    and fact-checks (including the automatic one after a script):
@@ -81,7 +81,7 @@ All of this is on the **personal** Cloudflare account
    chmod +x ~/.local/bin/cloudflared
    ```
 3. **Tunnel.** Create a named, remotely-managed tunnel `nlp-learning`, give it
-   the public hostname `nlp.gabrielsambo.com` -> `http://127.0.0.1:8000`
+   the public hostname `nlp.gabrielsambo.com` -> `http://127.0.0.1:3020`
    (Zero Trust > Networks > Tunnels, or the API). Save the tunnel token in
    `~/.cloudflared/nlp-learning.token` (`chmod 600`).
 4. **Service.** `~/.config/systemd/user/cloudflared-nlp.service`:
@@ -133,7 +133,7 @@ Costly buttons ask for confirmation and show the remaining budget beside them.
     systemctl --user disable --now cloudflared-nlp
 
 The hostname then answers Cloudflare's "tunnel down" error and the app is
-reachable only at `http://localhost:8000`. Turn it back on with `enable --now`.
+reachable only at `http://localhost:3020`. Turn it back on with `enable --now`.
 To remove it for good, delete the tunnel and the Access application in the
 dashboard.
 
@@ -148,4 +148,4 @@ dashboard.
 - **Wrong "remote or desktop" call**: the app classifies by proxy headers, not
   client IP, because Docker rewrites the source address of host-loopback
   connections to the bridge gateway. Anything that adds `X-Forwarded-*` in
-  front of `localhost:8000` makes the desktop look remote.
+  front of `localhost:3020` makes the desktop look remote.

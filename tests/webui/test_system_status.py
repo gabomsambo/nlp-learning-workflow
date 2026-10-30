@@ -140,8 +140,8 @@ def test_disabled_scheduler_is_ok():
 def test_tts_down_includes_the_start_command_and_workstation():
     check = status.classify_tts({
         "ready": False,
-        "message": "IndexTTS is not running on port 7860.",
-        "start_command": "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 7860",
+        "message": "IndexTTS is not running on port 3026.",
+        "start_command": "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 3026",
     })
     assert check["state"] == "down"
     assert "./workstation up --tts" in check["fix"]

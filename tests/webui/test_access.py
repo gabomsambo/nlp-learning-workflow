@@ -181,7 +181,7 @@ def test_certs_endpoint_down_with_no_cached_keys_answers_503():
 
 
 def test_is_remote_markers():
-    assert not is_remote({"host": "localhost:8000", "user-agent": "x"})
+    assert not is_remote({"host": "localhost:3020", "user-agent": "x"})
     assert is_remote({"cf-ray": "1"})
     assert is_remote({"CF-Connecting-IP": "1.2.3.4"})
     assert is_remote({"x-forwarded-proto": "https"})
