@@ -443,7 +443,7 @@ def test_screen_batches_fifteen_claims():
 
 
 def test_extract_windows_and_drops_a_span_that_is_not_in_the_line():
-    lines = [f"[HOST]: fact number {i} stays here." for i in range(31)]
+    lines = ["[HOST]: a fact stays here." for _ in range(31)]
     script = "\n".join(lines)
 
     def parse(**kwargs):
