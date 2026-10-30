@@ -97,6 +97,11 @@ PAGE_SKIP = {PAGE_DIR / "static"}
 PAGE_SUFFIXES = {".js", ".mjs", ".html", ".css"}
 # An XML namespace, never fetched.
 PAGE_URL_OK = ("http://www.w3.org/2000/svg",)
+# importScripts is allowed on the page only for the reader's own files: every
+# argument a root-relative string literal ('/x.js', never '//host/x.js').
+IMPORT_SCRIPTS_OK_RE = re.compile(
+    r"""importScripts\s*\(\s*'/(?!/)[^'\s]*'(?:\s*,\s*'/(?!/)[^'\s]*')*\s*,?\s*\)"""
+)
 
 URL_RE = re.compile(r"https?://", re.I)
 
@@ -368,6 +373,8 @@ def check_page(root: pathlib.Path) -> list[Problem]:
             bad(m.start(), "protocol-relative URL; the page talks to its own origin only")
         if path.suffix in {".js", ".mjs"}:
             for m in re.finditer(r"\b(" + "|".join(SUSPECT_NAMES) + r")\b", blank):
+                if m.group(1) == "importScripts" and IMPORT_SCRIPTS_OK_RE.match(keep, m.start()):
+                    continue
                 bad(m.start(), f"`{m.group(1)}` is not used by the reader")
             for m in re.finditer(r"""\bfetch\s*\(\s*(['"`])\s*//""", keep):
                 bad(m.start(), "fetch of a protocol-relative URL")

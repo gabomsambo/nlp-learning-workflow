@@ -79,7 +79,7 @@ export function createOffline({
 
   async function cachedPaths(cache) {
     if (!cache) return new Set();
-    return new Set((await cache.keys()).map((request) => new URL(request.url, 'https://reader.invalid').pathname));
+    return new Set((await cache.keys()).map((request) => new URL(request.url).pathname));
   }
 
   async function downloadAudio(audioKey, onProgress) {
