@@ -12,6 +12,11 @@ alias and the model behind it is served as ``deepseek-flash`` now, so that is
 what this route sends. ``PODCAST_EXTRACTION_PROVIDER`` and
 ``LLM_PODCAST_EXTRACTION_MODEL`` can move the calls to Claude instead, with
 no code change.
+
+``PODCAST_WRITER_MODE=evidence`` swaps all five calls for two: an evidence
+ledger of quote-verified facts (and the paper's repaired table rows), then a
+script whose every line cites it. The default stays ``free`` until that mode
+passes its gate (``docs/PODCAST_EVIDENCE_WRITER.md``).
 """
 
 import asyncio
@@ -26,6 +31,10 @@ import httpx
 from anthropic import AsyncAnthropic
 
 from ..config import get_settings
+from ..evidence import resolve_writer_mode
+from ..evidence import ledger as evidence_ledger
+from ..evidence import prompts as evidence_prompts
+from ..evidence import settle as evidence_settle
 from ..llm_client import supports_thinking_disabled
 from ..llm_prices import price_tokens
 from ..podcast_models import EXTRACTION_ROUTE, SYNTHESIS_ROUTE
@@ -36,6 +45,7 @@ from ..schemas import (
     GroundPackCallRecord, PaperNote, PaperRef, PodcastOptions, PodcastScript,
     SourceMaterial, StageName, StageStatus,
 )
+from .. import db
 from ..db import get_paper_by_id, get_notes_by_paper_id, get_stored_paper_text
 from ..orchestrator import RunCancelledError, _first_line
 from .ingest_agent import IngestAgent, IngestError
@@ -98,6 +108,15 @@ class InsufficientSourceMaterialError(Exception):
     The message carries the reason the body is missing (a dead ``file://`` path,
     a 404, a parse failure), because the caller has to put something actionable
     in front of the person who clicked the button.
+    """
+
+
+class EvidenceLedgerError(Exception):
+    """The evidence ledger is too thin to write a script from.
+
+    Raised before the (dearer) script call. Evidence mode never falls back to
+    the free writer on its own: the person asked for a script every line of
+    which cites the paper, and a free script would not be one.
     """
 
 
@@ -336,6 +355,15 @@ DEFAULT_OPTIONS = resolve(None)
 DEFAULT_VARIABLES = build_variables(DEFAULT_OPTIONS)
 DEFAULT_SETTINGS_BLOCK = settings_block(DEFAULT_OPTIONS)
 
+# Evidence mode (PODCAST_WRITER_MODE=evidence). Derived from the free prompts so
+# the output format, TTS rules and structure cannot drift between the modes.
+EVIDENCE_SYSTEM = evidence_prompts.build_evidence_system(FINAL_SYNTHESIS_SYSTEM)
+EVIDENCE_PROMPT = evidence_prompts.build_evidence_user_template(FINAL_SYNTHESIS_PROMPT)
+
+# A ledger with fewer verified narrative facts than this has nothing to write
+# an episode from; the identity entry does not count.
+MIN_LEDGER_FACTS = 5
+
 
 class PodcastAgent:
     """Generate podcast scripts using 4-prompt Ground Pack system."""
@@ -362,20 +390,31 @@ class PodcastAgent:
     #: The last call 5 made, for the run's stage detail.
     last_synthesis_call: Optional[LLMCallResult] = None
 
+    #: "free" or "evidence"; see ``evidence.resolve_writer_mode``. Class-level
+    #: for the same reason as the fields above.
+    writer_mode: str = "free"
+
     # Unlike the other agents, this class has no module-level singleton
     # (webui/routers/api/podcast.py constructs it per request), so the lazy-proxy
     # pattern used by SummarizerAgent/SynthesisAgent/QuizAgent does not apply
     # here: there is nothing built at import time to fail, and a missing key
     # already raises a ValueError that names the variable.
-    def __init__(self, options: Optional[PodcastOptions] = None):
+    def __init__(
+        self,
+        options: Optional[PodcastOptions] = None,
+        writer_mode: Optional[str] = None,
+    ):
         """
         Args:
             options: what this episode is aimed at — field, audience, length,
                 tone. ``None`` means every default, which reproduces the aiming
                 the prompts hardcoded before they were configurable, so the CLI,
                 the tests and any existing caller are unaffected.
+            writer_mode: ``"free"`` or ``"evidence"``. ``None`` reads
+                ``PODCAST_WRITER_MODE`` (default ``free``).
         """
         settings = get_settings()
+        self.writer_mode = resolve_writer_mode(writer_mode)
         if not settings.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for podcast generation")
 
@@ -787,6 +826,183 @@ LIMITATIONS & THREATS:
         self.last_synthesis_call = result
         return result.text
 
+    # -- evidence mode ---------------------------------------------------------
+
+    def _get_paper_tables(self, paper_id: str) -> list[dict]:
+        """Stored table transcriptions, or none.
+
+        A paper nobody has repaired has none, which is normal; a read that
+        fails is logged and treated the same, because a script without table
+        rows is still a script and the ledger says how many rows it had.
+        """
+        try:
+            return db.list_paper_tables(paper_id)
+        except Exception as e:  # noqa: BLE001 — tables are an addition, not a requirement
+            logger.warning("Table rows for %s could not be read (%s); writing without them", paper_id, e)
+            return []
+
+    async def _build_ledger(self, paper: PaperRef, body: str) -> evidence_ledger.Ledger:
+        tables = await asyncio.to_thread(self._get_paper_tables, paper.id)
+        return await asyncio.to_thread(
+            evidence_ledger.build_ledger,
+            title=paper.title,
+            authors=list(paper.authors or []),
+            year=paper.year,
+            abstract=paper.abstract,
+            body=body,
+            tables=tables,
+        )
+
+    async def _generate_evidence_script(self, ledger: evidence_ledger.Ledger) -> str:
+        """Call 5 in evidence mode: the ledger instead of the Ground Pack and paper."""
+        logger.info("Generating evidence-mode podcast script...")
+        prompt = EVIDENCE_PROMPT.format(
+            settings_block=self._settings_block,
+            precedence_note=PRECEDENCE_NOTE,
+            ledger=ledger.prompt_text(),
+            **self._variables,
+        )
+        result = await self._call_claude(
+            system=EVIDENCE_SYSTEM,
+            user=prompt,
+            max_tokens=SYNTHESIS_MAX_TOKENS,
+        )
+        self.last_synthesis_call = result
+        return result.text
+
+    @staticmethod
+    def _evidence_key_points(ledger: evidence_ledger.Ledger) -> list:
+        """Up to five of the ledger's findings, in the paper's own words."""
+        preferred = [
+            e.statement for e in ledger.narrative if e.kind in ("result", "comparison")
+        ]
+        fallback = [e.statement for e in ledger.narrative if e.kind != "identity"]
+        return (preferred or fallback)[:5]
+
+    async def _generate_evidence(
+        self,
+        paper: PaperRef,
+        pillar_id: str,
+        full_text: str,
+        source_material: SourceMaterial,
+        *,
+        on_stage: Optional[StageCallback],
+        cancel: Optional[threading.Event],
+        total_start: float,
+    ) -> PodcastScript:
+        """Write the script from a verified evidence ledger.
+
+        Two calls instead of five: the ledger (Haiku, whole paper, quotes
+        checked in code) and the script (Sonnet, ledger only). The Ground Pack
+        stages are marked skipped with the reason, never left pending.
+        """
+        ledger_stage = StageName.PODCAST_FACTS_OUTLINE
+        self._check_cancel(cancel, ledger_stage)
+        route = evidence_ledger.PODCAST_LEDGER_ROUTE.resolve()
+        self._emit_stage(
+            on_stage, ledger_stage, StageStatus.RUNNING,
+            f"Building the evidence ledger via {route.model}",
+        )
+        try:
+            ledger = await self._build_ledger(paper, full_text)
+            if len(ledger.narrative) - 1 < MIN_LEDGER_FACTS:
+                raise EvidenceLedgerError(
+                    f"The evidence ledger for \"{paper.title}\" has only "
+                    f"{max(len(ledger.narrative) - 1, 0)} verified fact(s) "
+                    f"({len(ledger.dropped)} of {ledger.proposed} proposed entries failed "
+                    f"quote verification), which is too little to write an episode from. "
+                    f"Nothing was spent on the script."
+                )
+        except Exception as e:
+            self._emit_stage(on_stage, ledger_stage, StageStatus.FAILED, _first_line(e))
+            raise
+        self._emit_stage(on_stage, ledger_stage, StageStatus.COMPLETED, ledger.detail())
+
+        for stage in (
+            StageName.PODCAST_CORE_CONCEPTS,
+            StageName.PODCAST_METRICS,
+            StageName.PODCAST_LIMITATIONS,
+        ):
+            self._emit_stage(
+                on_stage, stage, StageStatus.SKIPPED,
+                "Not used in evidence mode: the ledger replaces the Ground Pack",
+            )
+
+        synth = StageName.PODCAST_SYNTHESIZE
+        synth_model = SYNTHESIS_ROUTE.resolved_model()
+        self._check_cancel(cancel, synth)
+        self._emit_stage(
+            on_stage, synth, StageStatus.RUNNING,
+            f"Writing script via {synth_model} from {len(ledger.entries)} ledger entries",
+        )
+        try:
+            raw = await self._generate_evidence_script(ledger)
+        except Exception as e:
+            self._emit_stage(on_stage, synth, StageStatus.FAILED, _first_line(e))
+            raise
+
+        settled = evidence_settle.settle(raw, ledger)
+        synth_call = getattr(self, "last_synthesis_call", None)
+        ledger.stats = {
+            **settled.stats,
+            "prompt_version": evidence_prompts.EVIDENCE_PROMPT_VERSION,
+            "writer": (
+                {
+                    "model": synth_call.model,
+                    "input_tokens": synth_call.input_tokens,
+                    "output_tokens": synth_call.output_tokens,
+                    "cost_usd": synth_call.cost_usd,
+                    "finish_reason": synth_call.finish_reason,
+                }
+                if synth_call is not None else {}
+            ),
+        }
+        word_count = len(settled.script.split())
+        synth_bits = [synth_model, f"{word_count:,} words"]
+        if settled.stats["untagged_lines"]:
+            synth_bits.append(f"{settled.stats['untagged_lines']} untagged line(s)")
+        if synth_call is not None and synth_call.cost_usd is not None:
+            synth_bits.append(f"${synth_call.cost_usd:.6f}")
+        self._emit_stage(on_stage, synth, StageStatus.COMPLETED, " · ".join(synth_bits))
+
+        warnings = evidence_settle.warnings_for(ledger, settled.stats)
+        for warning in warnings:
+            logger.warning("Podcast for %s: %s", paper.id, warning)
+        source_material = source_material.model_copy(
+            update={"warnings": [*source_material.warnings, *warnings]}
+        )
+
+        ledger_call = GroundPackCallRecord(
+            section="ledger",
+            provider="anthropic",
+            model=ledger.model,
+            fallback=ledger.fallback,
+            input_tokens=ledger.input_tokens,
+            output_tokens=ledger.output_tokens,
+            cost_usd=ledger.cost_usd,
+        )
+        podcast_script = PodcastScript(
+            paper_id=paper.id,
+            pillar_id=pillar_id,
+            title=f"Deep Dive: {paper.title}",
+            script=settled.script,
+            word_count=word_count,
+            key_points=self._evidence_key_points(ledger),
+            ground_pack={},
+            ground_pack_calls={"ledger": ledger_call},
+            source_material=source_material,
+            options=self.options,
+            writer_mode="evidence",
+            ledger=ledger.as_dict(),
+            line_citations=settled.as_storage(),
+            created_at=datetime.now(),
+        )
+        logger.info(
+            "Generated evidence-mode podcast script with %s words in %.1fs",
+            word_count, time.time() - total_start,
+        )
+        return podcast_script
+
     def _extract_key_points(self, ground_pack: dict) -> list:
         """Extract key points from the facts outline."""
         facts = ground_pack.get('facts_outline', '')
@@ -1054,6 +1270,12 @@ LIMITATIONS & THREATS:
                 f"Truncating full_text from {len(full_text)} to {MAX_FULL_TEXT_CHARS} chars"
             )
             full_text = full_text[:MAX_FULL_TEXT_CHARS] + "\n\n[TRUNCATED - paper continues...]"
+
+        if self.writer_mode == "evidence":
+            return await self._generate_evidence(
+                paper, pillar_id, full_text, source_material,
+                on_stage=on_stage, cancel=cancel, total_start=total_start,
+            )
 
         # Assemble paper content with FULL TEXT
         paper_content = f"""

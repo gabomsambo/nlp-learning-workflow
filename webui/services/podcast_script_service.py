@@ -102,6 +102,7 @@ def _script_result_payload(
         "word_count": script.word_count,
         "key_points": list(script.key_points or []),
         "source_material_level": script.source_material.level,
+        "writer_mode": script.writer_mode,
         "warnings": warnings,
         "options": script.options.model_dump(),
         "paper_id": script.paper_id,

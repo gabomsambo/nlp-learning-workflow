@@ -363,7 +363,7 @@ def _dict_to_lesson(row: Dict[str, Any]) -> Lesson:
 
 def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
     """Convert PodcastScript to podcast_scripts table row."""
-    return {
+    data = {
         'paper_id': script.paper_id,
         'pillar_id': script.pillar_id,
         'title': script.title,
@@ -389,6 +389,15 @@ def _podcast_script_to_dict(script: PodcastScript) -> Dict[str, Any]:
         'audio_metadata': script.audio_metadata.model_dump(mode='json'),
         'created_at': script.created_at.isoformat() if script.created_at else None
     }
+    # Evidence-writer record. Requires docs/migrations/036_podcast_evidence_writer.sql;
+    # add_podcast_script() retries without these keys and says so. Sent only for
+    # an evidence-mode script, so the free writer saves exactly as it always did
+    # on a database that has not had 035 applied.
+    if script.writer_mode != 'free':
+        data['writer_mode'] = script.writer_mode
+        data['ledger'] = script.ledger
+        data['line_citations'] = script.line_citations
+    return data
 
 
 def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
@@ -415,6 +424,10 @@ def _dict_to_podcast_script(row: Dict[str, Any]) -> PodcastScript:
         # honest reading: those scripts were made when nothing was choosable.
         options=PodcastOptions(**(row.get('options') or {})),
         audio_metadata=AudioMetadata(**(row.get('audio_metadata') or {})),
+        # Absent on rows written before 035: those were all the free writer.
+        writer_mode=row.get('writer_mode') or 'free',
+        ledger=row.get('ledger') or {},
+        line_citations=row.get('line_citations') or {},
         created_at=datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
     )
 
@@ -1088,6 +1101,37 @@ def list_repaired_table_paper_ids() -> List[str]:
         raise PaperTablesError(
             f"Could not read paper_tables: {e}. Apply {MIGRATION} by hand."
         ) from e
+
+
+def list_paper_tables(paper_id: str) -> List[Dict[str, Any]]:
+    """The stored ``paper_tables`` rows of one paper, in table order.
+
+    An unrepaired paper has none, and that is an empty list. A read that fails
+    (the table is missing, the database is down) raises.
+
+    Raises:
+        PaperTablesError: the read failed. Names migration 032.
+    """
+    from .table_repair import MIGRATION
+
+    try:
+        response = (
+            get_client().table('paper_tables')
+            .select('table_index,label,page,caption,columns,rows,status,agreement')
+            .eq('paper_id', paper_id)
+            .order('table_index')
+            .execute()
+        )
+    except Exception as e:
+        raise PaperTablesError(
+            f"Could not read paper_tables for {paper_id}: {e}. Apply {MIGRATION} by hand."
+        ) from e
+    if response['error']:
+        raise PaperTablesError(
+            f"Could not read paper_tables for {paper_id}: {response['error']}. "
+            f"Apply {MIGRATION} by hand."
+        )
+    return list(response['data'] or [])
 
 
 def get_stored_paper_extractor(paper_id: str) -> Optional[str]:
@@ -1941,20 +1985,33 @@ def add_podcast_script(script: PodcastScript) -> str:
         # than losing the script. Looped because a database can be behind by
         # more than one migration, and one retry per column would leave the
         # second failure looking like a real error.
-        for column, migration in (
+        optional_columns = (
             ('source_material', 'docs/migrations/011_podcast_source_material.sql'),
             ('options', 'docs/migrations/012_podcast_options.sql'),
             ('ground_pack_calls', 'docs/migrations/013_podcast_ground_pack_calls.sql'),
             ('audio_metadata', 'docs/migrations/014_podcast_audio.sql'),
-        ):
-            if not response['error'] or not _is_missing_column(response['error'], column):
-                continue
-            logger.error(
-                f"podcast_scripts has no {column} column — run {migration}. "
-                f"Saving the script without it."
-            )
-            data.pop(column, None)
-            response = client.table('podcast_scripts').insert(data)
+            ('writer_mode', 'docs/migrations/036_podcast_evidence_writer.sql'),
+            ('ledger', 'docs/migrations/036_podcast_evidence_writer.sql'),
+            ('line_citations', 'docs/migrations/036_podcast_evidence_writer.sql'),
+        )
+        # PostgREST names one missing column per error, in no order this loop
+        # can predict, so go round until nothing more can be dropped.
+        for _ in optional_columns:
+            dropped_one = False
+            for column, migration in optional_columns:
+                if not response['error'] or not _is_missing_column(response['error'], column):
+                    continue
+                if column not in data:
+                    continue
+                logger.error(
+                    f"podcast_scripts has no {column} column — run {migration}. "
+                    f"Saving the script without it."
+                )
+                data.pop(column, None)
+                response = client.table('podcast_scripts').insert(data)
+                dropped_one = True
+            if not dropped_one:
+                break
 
         if response['error']:
             logger.error(f"Failed to add podcast script for paper {script.paper_id}: {response['error']}")
