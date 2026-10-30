@@ -3458,6 +3458,11 @@ def add_paper_citations(citations: List[PaperCitation]) -> int:
     """
     Add multiple paper citations to the database.
 
+    Since migration 031 the rows are stored as ``work_citations`` (both ends
+    resolved to works, so ``arxiv:1706.03762`` and ``1706.03762`` are one
+    node) and ``paper_citations`` is a read-only view of them. Before it is
+    applied the old table is still there and is written as it always was.
+
     Args:
         citations: List of PaperCitation objects to add
 
@@ -3467,6 +3472,20 @@ def add_paper_citations(citations: List[PaperCitation]) -> int:
     if not citations:
         return 0
 
+    from . import works_store
+
+    try:
+        return works_store.store_citations(citations)
+    except works_store.WorksUnavailable as e:
+        logger.info(f"Works tables not available, using paper_citations: {e}")
+    except Exception as e:
+        logger.error(f"Failed to add paper citations: {e}")
+        return 0
+    return _add_paper_citations_legacy(citations)
+
+
+def _add_paper_citations_legacy(citations: List[PaperCitation]) -> int:
+    """Insert into the pre-031 ``paper_citations`` table."""
     try:
         client = get_client()
         added = 0

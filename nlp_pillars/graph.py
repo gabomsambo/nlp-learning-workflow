@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 from .citations import fetch_library_citations
 from .paper_vectors import SOURCE_TITLE_ABSTRACT
 from .schemas import PaperCitation
+from .work_ids import WorkKey, parse_paper_id
 
 # Surface variants of one concept ("Self-Attention" / "self attention mechanism")
 # merge when their name embeddings are at least this similar. High on purpose:
@@ -40,6 +41,13 @@ RELATED_MIN_COSINE = 0.70
 
 # One 319-author paper would otherwise flood the graph. First authors win.
 AUTHORS_PER_PAPER = 10
+
+# `work_citations` holds every reference and the newest 1,000 citers of each
+# library paper, for the paper map. This graph draws the same neighbourhood it
+# always did: per library paper and direction, at most this many papers that are
+# not in the library, influential first, then most cited. Citations between two
+# library papers are never capped.
+EXTERNAL_CITES_PER_DIRECTION = 20
 
 MAX_NODES = 400
 MAX_EDGES = 800
@@ -548,10 +556,20 @@ def _related_edges(
 
 def _citation_edges(snapshot: GraphSnapshot) -> List[GraphEdge]:
     library = {str(paper["id"]) for paper in snapshot.papers if paper.get("id")}
-    edges: List[GraphEdge] = []
+    by_key = _library_keys(library)
+
+    def canonical(paper_id: str) -> str:
+        """The library id for any spelling of a library paper, else the id as given."""
+        if paper_id in library:
+            return paper_id
+        key = parse_paper_id(paper_id)
+        return by_key.get(key, paper_id) if key else paper_id
+
+    edges: Dict[EdgeKey, GraphEdge] = {}
+    external: Dict[Tuple[str, str], List[Tuple[tuple, str, str]]] = defaultdict(list)
     for row in snapshot.citations:
-        library_id = str(row.get("paper_id") or "")
-        other_id = str(row.get("cited_paper_id") or "")
+        library_id = canonical(str(row.get("paper_id") or ""))
+        other_id = canonical(str(row.get("cited_paper_id") or ""))
         if library_id not in library or not other_id or library_id == other_id:
             continue
         direction = row.get("direction") or row.get("citation_direction")
@@ -561,23 +579,34 @@ def _citation_edges(snapshot: GraphSnapshot) -> List[GraphEdge]:
             src_id, dst_id = other_id, library_id
         else:
             continue
-        if src_id == dst_id:
+        if other_id in library:
+            edge = _edge("paper", src_id, "paper", dst_id, "cites", PROVENANCE_S2)
+            edges[edge.key] = edge
             continue
-
-        def _kind(paper_id: str) -> str:
-            return "paper" if paper_id in library else "external_paper"
-
-        edges.append(
-            _edge(
-                _kind(src_id),
-                src_id,
-                _kind(dst_id),
-                dst_id,
-                "cites",
-                PROVENANCE_S2,
-            )
+        rank = (
+            0 if row.get("is_influential") else 1,
+            -int(row.get("other_citation_count") or 0),
+            other_id,
         )
-    return edges
+        external[(library_id, str(direction))].append((rank, src_id, dst_id))
+
+    for rows in external.values():
+        for _, src_id, dst_id in sorted(set(rows))[:EXTERNAL_CITES_PER_DIRECTION]:
+            src_kind = "paper" if src_id in library else "external_paper"
+            dst_kind = "paper" if dst_id in library else "external_paper"
+            edge = _edge(src_kind, src_id, dst_kind, dst_id, "cites", PROVENANCE_S2)
+            edges[edge.key] = edge
+    return [edges[key] for key in sorted(edges)]
+
+
+def _library_keys(library: Iterable[str]) -> Dict[WorkKey, str]:
+    """Identity key -> library paper id, so ``1706.03762`` finds ``arxiv:1706.03762``."""
+    by_key: Dict[WorkKey, str] = {}
+    for paper_id in sorted(library):
+        key = parse_paper_id(paper_id)
+        if key:
+            by_key.setdefault(key, paper_id)
+    return by_key
 
 
 def build_plan(
@@ -697,26 +726,36 @@ def _citation_dict(row: PaperCitation) -> dict:
         "cited_paper_id": row.cited_paper_id,
         "direction": row.citation_direction,
         "source": row.source,
+        "is_influential": row.is_influential,
     }
 
 
 def _merge_citations(
     existing: Sequence[dict], fetched: Sequence[PaperCitation]
 ) -> List[dict]:
+    """Union of stored and just-fetched rows, one per (paper, other end, direction).
+
+    The other end is compared by identity key, so a fetched ``1706.03762`` and a
+    stored ``arxiv:1706.03762`` are one row. The stored row wins: it came from
+    ``work_citations`` and carries the citation count the planner ranks by.
+    """
     merged: Dict[Tuple[str, str, str], dict] = {}
-    for row in list(existing) + [_citation_dict(item) for item in fetched]:
-        key = (
-            str(row.get("paper_id") or ""),
-            str(row.get("cited_paper_id") or ""),
-            str(row.get("direction") or row.get("citation_direction") or ""),
-        )
-        if key[0] and key[1] and key[2]:
-            merged[key] = {
-                "paper_id": key[0],
-                "cited_paper_id": key[1],
-                "direction": key[2],
-                "source": row.get("source") or PROVENANCE_S2,
-            }
+    for row in [_citation_dict(item) for item in fetched] + list(existing):
+        paper_id = str(row.get("paper_id") or "")
+        other_id = str(row.get("cited_paper_id") or "")
+        direction = str(row.get("direction") or row.get("citation_direction") or "")
+        if not (paper_id and other_id and direction):
+            continue
+        identity = parse_paper_id(other_id)
+        key = (paper_id, f"{identity[0]}:{identity[1]}" if identity else other_id, direction)
+        merged[key] = {
+            "paper_id": paper_id,
+            "cited_paper_id": other_id,
+            "direction": direction,
+            "source": row.get("source") or PROVENANCE_S2,
+            "is_influential": bool(row.get("is_influential")),
+            "other_citation_count": row.get("other_citation_count"),
+        }
     return [merged[key] for key in sorted(merged)]
 
 
