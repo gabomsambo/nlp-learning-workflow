@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% from "_components.html" import page_header, button %}
+{% block title %}Paper map{% endblock %}
+{% block content %}
+<div class="map-page" id="map-page"
+     data-pillar="{{ page.selected }}"
+     data-pillar-name="{{ page.selected_name }}">
+{% call page_header('Paper map', 'Library') %}
+  <div class="map-seg" id="map-views" role="group" aria-label="View">
+    <button type="button" data-view="timeline" aria-pressed="true">Timeline</button>
+    <button type="button" data-view="clusters" aria-pressed="false">Clusters</button>
+    <button type="button" data-view="list" aria-pressed="false">List</button>
+  </div>
+  {{ button('Add papers', 'secondary', href='/discovery/' ~ ('?pillar=' ~ page.selected if page.selected else '')) }}
+{% endcall %}
+
+{% if page.chips %}
+<div class="filter-chips map-chips" role="group" aria-label="Pillar">
+  {% for chip in page.chips %}
+  <a class="filter-chip{% if chip.pillar_class %} {{ chip.pillar_class }}{% endif %}{% if chip.empty %} is-empty{% endif %}"
+     href="{{ chip.href }}"
+     data-pillar="{{ chip.id }}" data-name="{{ chip.name }}"
+     {% if chip.current %}aria-current="true"{% endif %}
+     {% if chip.empty and not chip.current %}title="No papers in this pillar yet"{% endif %}>
+    {% if chip.pillar_class %}<span class="pillar-dot" aria-hidden="true"></span>{% endif %}
+    {{ chip.name }}
+    {% if chip.count is not none %}<span class="map-chip-count">{{ chip.count }}</span>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<aside class="callout callout-warn" role="status">
+  <p class="callout-title">No pillars to map</p>
+  <div class="callout-body">The pillar list could not be read, or no pillar exists yet. The map is built per pillar.</div>
+</aside>
+{% endif %}
+
+<noscript>
+  <aside class="callout callout-warn">
+    <p class="callout-title">The map needs JavaScript</p>
+    <div class="callout-body">Your papers are listed in the <a href="/papers/{% if page.selected %}?pillar={{ page.selected|urlencode }}{% endif %}">library</a>.</div>
+  </aside>
+</noscript>
+
+<div id="map-notices" class="map-notices" aria-live="polite"></div>
+
+<div id="map-state" class="map-state" hidden></div>
+
+<div id="map-insights" class="map-insights" hidden></div>
+
+<div id="map-work" class="map-work" hidden>
+  <section class="map-stage" aria-label="Map">
+    <div class="map-toolbar">
+      <input type="search" id="map-find" class="map-find" placeholder="Find on map ( / )" aria-label="Find a paper on the map" autocomplete="off">
+      <label class="map-ctl" data-only="timeline">Y axis
+        <select id="map-yaxis" aria-label="Vertical axis"></select>
+      </label>
+      <label class="map-ctl">Suggestions
+        <select id="map-nsugg" aria-label="Suggested papers shown"></select>
+      </label>
+      <label class="map-ctl">Other papers
+        <select id="map-ncontext" aria-label="Other connected papers shown"></select>
+      </label>
+      <label class="map-check"><input type="checkbox" id="map-cites" checked> Citations</label>
+      <label class="map-check"><input type="checkbox" id="map-lineage" checked> Lineage</label>
+      <label class="map-check"><input type="checkbox" id="map-align" checked> Alignment</label>
+      <span class="map-count" id="map-count"></span>
+    </div>
+    <div class="map-canvas-wrap" id="map-canvas-wrap">
+      <canvas id="map-canvas" class="map-canvas" tabindex="0" role="img"
+              aria-label="Map of papers. The List view has the same papers as a table."></canvas>
+      <div class="map-listwrap" id="map-listwrap" hidden></div>
+      <div class="map-focus-pill" id="map-focus-pill" hidden>
+        Showing links of <b id="map-focus-name"></b>
+        <button type="button" id="map-focus-exit">Show all</button>
+      </div>
+      <div class="map-hover" id="map-hover" role="tooltip" hidden></div>
+      <div class="map-zoom" id="map-zoom">
+        <button type="button" id="map-zout" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="map-zin" aria-label="Zoom in">+</button>
+        <button type="button" id="map-zfit" class="is-wide">Fit</button>
+      </div>
+    </div>
+    <div class="map-legend" id="map-legend" aria-label="Legend"></div>
+  </section>
+
+  <aside class="map-panel" aria-label="Details">
+    <div class="map-tabs" id="map-tabs" role="tablist">
+      <button type="button" role="tab" data-tab="suggested" aria-selected="true">Suggested</button>
+      <button type="button" role="tab" data-tab="queue" aria-selected="false">Queue check</button>
+      <button type="button" role="tab" data-tab="yours" aria-selected="false">Your papers</button>
+      <button type="button" role="tab" data-tab="lineage" aria-selected="false">Lineage</button>
+    </div>
+    <div class="map-panel-body" id="map-panel" aria-live="polite"></div>
+  </aside>
+</div>
+
+<p class="map-foot" id="map-foot" hidden></p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/d3.min.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/paper-map-core.js?v={{ asset_v | default('1', true) }}"></script>
+<script src="/static/paper-map.js?v={{ asset_v | default('1', true) }}"></script>
+{% endblock %}
