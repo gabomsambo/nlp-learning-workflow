@@ -32,7 +32,7 @@ from .constants import (
 )
 from .cost import require_price
 from .errors import FactcheckCancelled, FactcheckError
-from .extract import DraftClaim, extract_claims
+from .extract import DraftClaim, Extraction, extract_claims
 from .schemas import TERMINAL_SCREEN_VERDICTS
 from .severity import assign_severity
 from .verify import rejudge_claims, screen_claims
@@ -66,6 +66,9 @@ class FactcheckResult:
     calls: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
     fact_check_id: str | None = None
+    # Per-window claim and dropped-span counts, and number-bearing host lines
+    # that still have no claim. Also the extract stage detail on a run.
+    extraction: list[dict[str, Any]] = field(default_factory=list)
 
     def header(self) -> dict[str, Any]:
         return {
@@ -226,21 +229,15 @@ def run_factcheck(
 
     spend = Spend(budget_usd)
 
-    def _extract():
+    def _extract() -> Extraction:
         return extract_claims(
             client, script_text, model=chosen["extract"], spend=spend,
         )
 
-    def _extract_detail(pair: tuple[list[DraftClaim], int]) -> str:
-        found, dropped = pair
-        text = f"{len(found)} claims"
-        if dropped:
-            text += f", {dropped} spans dropped"
-        return text
-
-    claims, _dropped = _stage(
-        STAGE_EXTRACT, on_stage, cancel, _extract, _extract_detail,
+    extraction = _stage(
+        STAGE_EXTRACT, on_stage, cancel, _extract, Extraction.describe,
     )
+    claims = extraction.claims
 
     def _screen() -> int:
         screen_claims(
@@ -302,6 +299,7 @@ def run_factcheck(
         cost_usd=spend.total,
         calls=list(spend.calls),
         claims=rows,
+        extraction=[window.as_dict() for window in extraction.windows],
     )
 
 

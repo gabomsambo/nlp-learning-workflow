@@ -1,6 +1,6 @@
 """Shared names for the fact-check engine and its migrations."""
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 MIGRATION = "docs/migrations/022_podcast_fact_checks.sql"
 RUNS_MIGRATION = "docs/migrations/023_podcast_factcheck_runs.sql"
 DISMISSAL_MIGRATION = "docs/migrations/031_claim_dismissals.sql"

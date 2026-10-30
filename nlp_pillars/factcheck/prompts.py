@@ -1,7 +1,10 @@
-"""Measured v2 prompts.
+"""Measured v2 prompts, and the v3 change to the verifier.
 
 Text is the fact-check research report, section 9 (2026-10-24). The schema
 field order that goes with the verifier prompt lives on ``ClaimVerdict``.
+v3 narrows ``contradicted`` to a passage the source actually states, so a
+paper that is merely silent (the AML "authors built GFP" line) reads as
+``unsupported`` instead of ``contradicted``/high.
 """
 
 from __future__ import annotations
@@ -24,8 +27,8 @@ Only the source counts. Your own knowledge of this paper, its authors or the fie
 Verdicts:
 - supported: the source states it, or it follows directly. Paraphrase, rounding, and spoken number forms ("about three thousand nine hundred" for 3,912; "seven billion" for 7B) count as the same.
 - partially_supported: the core is supported but a detail is not: a number, qualifier, scope, or condition is missing from the source, or the claim states something more strongly or more generally than the source does.
-- contradicted: the source says something incompatible: a different number, a different method or dataset, the wrong author, the opposite direction of a result, or a result attributed to the wrong system.
-- unsupported: the source does not address it.
+- contradicted: the source says something incompatible: a different number, a different method or dataset, the wrong author, the opposite direction of a result, or a result attributed to the wrong system. You must be able to quote the incompatible passage. A source that merely does not say what the claim says is not a contradiction, even if you believe the claim is true or false in the world: a paper that uses a tool and cites it, without saying who built it, does not contradict "the authors built it".
+- unsupported: the source does not address it, or addresses the topic without stating the specific fact (who built or invented something, where it came from, a detail the source leaves out).
 - not_checkable: an opinion, analogy, or prediction that no text could confirm.
 Claims of ABSENCE ("the paper does not test X", "the authors never discuss Y") are checkable: supported if the source indeed does not do or discuss it, contradicted if it does. Quote the closest passage that shows the scope.
 For every verdict except not_checkable, give evidence: up to 3 quotes copied VERBATIM from the source (each under 300 characters) … "rationale" is one short sentence. Work in this order: find the quotes, state what the source says, reason, THEN choose the verdict, so the verdict follows from the evidence.
