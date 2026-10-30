@@ -958,6 +958,16 @@ class UploadService:
         if self.citation_tool is None:
             return
         try:
+            from ..map_refresh import sync_new_paper
+
+            outcome = sync_new_paper(paper_id, tool=self.citation_tool)
+            if outcome.ok:
+                if outcome.edges:
+                    logger.info("Stored %s citation(s) for %s", outcome.edges, paper_id)
+                return
+            if not outcome.legacy:
+                return
+
             from ..citations import fetch_and_store_citations
 
             stored = fetch_and_store_citations(paper_id, self.citation_tool)

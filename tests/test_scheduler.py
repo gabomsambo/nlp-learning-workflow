@@ -114,6 +114,9 @@ class TestMain:
             schedule_enabled=enabled,
             schedule_time=time,
             schedule_timezone=tz,
+            weekly_map_refresh_enabled=True,
+            weekly_map_refresh_day="sun",
+            weekly_map_refresh_time="03:00",
             log_level="INFO",
         )
 
@@ -154,6 +157,9 @@ class TestMain:
         assert kwargs["minute"] == 30
         assert kwargs["tzinfo"] == ZoneInfo("America/New_York")
         assert kwargs["func"] is run_all_pillars
+        weekly = service.add_weekly_job.call_args.kwargs
+        assert (weekly["day_of_week"], weekly["hour"], weekly["minute"]) == ("sun", 3, 0)
+        assert weekly["tzinfo"] == ZoneInfo("America/New_York")
         # start() also brings up the FSRS jobs, which nothing else ever started.
         service.start.assert_called_once()
         service.stop.assert_called_once()

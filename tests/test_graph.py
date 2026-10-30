@@ -889,6 +889,7 @@ def test_select_and_daily_both_fetch_citations_for_the_processed_paper():
 
 
 def test_upload_stores_citations_without_failing_the_paper(tmp_path):
+    from nlp_pillars.works_store import WorksUnavailable
     from nlp_pillars.schemas import ParsedPaper
     from nlp_pillars.services.upload_service import UploadService
 
@@ -924,6 +925,12 @@ def test_upload_stores_citations_without_failing_the_paper(tmp_path):
         patch("nlp_pillars.services.upload_service.db", db_mock),
         patch("nlp_pillars.services.upload_service.vectors", vectors),
         patch("nlp_pillars.citations.db.add_paper_citations", save),
+        # Before migration 031 the typed sync reports the works tables missing
+        # and the upload keeps the old capped fetch.
+        patch(
+            "nlp_pillars.works_store.load_library",
+            side_effect=WorksUnavailable("031 not applied"),
+        ),
     ):
         outcome = service._run_full_pipeline(
             paper=paper,

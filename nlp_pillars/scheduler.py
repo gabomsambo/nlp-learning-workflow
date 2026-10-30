@@ -41,6 +41,7 @@ from . import db
 from .config import get_settings
 from .orchestrator import Orchestrator
 from .services.background_jobs import get_background_jobs_service
+from .map_refresh import build_maps_inline, run_weekly_refresh
 from .vault import resolve_vault_dir
 
 logger = logging.getLogger(__name__)
@@ -136,11 +137,14 @@ def run_all_pillars() -> None:
     orchestrator = Orchestrator()
 
     succeeded = 0
+    pillars_with_new_papers: list[str] = []
     for pillar in pillars:
         try:
             result = orchestrator.run_daily(pillar.id, papers_limit=papers_limit)
             if result.success:
                 succeeded += 1
+            if result.papers_processed:
+                pillars_with_new_papers.append(pillar.id)
             logger.info(
                 f"Daily run: pillar {pillar.id} "
                 f"processed={len(result.papers_processed)} "
@@ -155,7 +159,28 @@ def run_all_pillars() -> None:
             logger.error(f"Daily run: pillar {pillar.id} raised: {e}")
 
     logger.info(f"Daily run finished: {succeeded}/{len(pillars)} pillars succeeded")
+    _rebuild_maps(pillars_with_new_papers)
     _refresh_vault()
+
+
+def _rebuild_maps(pillar_ids: list[str]) -> None:
+    """Rebuild the paper map of every pillar the daily run added papers to.
+
+    Citations were fetched per paper inside the run, so the evidence is in
+    place. Never raises: the papers are saved, and a map that did not rebuild
+    is rebuilt by the next hook or the weekly refresh.
+    """
+    if not pillar_ids:
+        return
+    try:
+        report = build_maps_inline(pillar_ids)
+    except Exception:
+        logger.exception("Map rebuild after the daily run failed")
+        return
+    logger.info(
+        "Map rebuild after the daily run: %d started, %d not: %s",
+        len(report.started), len(report.failed), report.failed,
+    )
 
 
 def _refresh_vault() -> None:
@@ -221,6 +246,21 @@ def main() -> int:
     service.add_daily_pillar_run_job(
         func=run_all_pillars, hour=hour, minute=minute, tzinfo=tzinfo
     )
+    if settings.weekly_map_refresh_enabled:
+        try:
+            week_hour, week_minute = parse_schedule_time(settings.weekly_map_refresh_time)
+            service.add_weekly_job(
+                func=run_weekly_refresh,
+                day_of_week=settings.weekly_map_refresh_day.strip().lower(),
+                hour=week_hour,
+                minute=week_minute,
+                tzinfo=tzinfo,
+            )
+        except ValueError as e:
+            logger.error(f"WEEKLY_MAP_REFRESH_* is invalid: {e}")
+            return 1
+    else:
+        logger.info("WEEKLY_MAP_REFRESH_ENABLED is false — no weekly map refresh")
     # Also starts the FSRS optimization and maintenance jobs, which had never
     # run anywhere before this service existed.
     service.start()

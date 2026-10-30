@@ -125,6 +125,39 @@ class BackgroundJobsService:
         )
         logger.info(f"Daily pillar run scheduled at {hour:02d}:{minute:02d} {tzinfo}")
 
+    def add_weekly_job(self, func: Callable[[], Any], day_of_week: str, hour: int,
+                       minute: int, tzinfo: Any, job_id: str = 'weekly_map_refresh',
+                       name: str = 'Weekly Paper Map Refresh') -> None:
+        """Register a once-a-week job (the paper-map refresh) on this scheduler.
+
+        Same contract as ``add_daily_pillar_run_job``: the caller owns the work.
+
+        Args:
+        ----
+            func: Zero-argument callable to run
+            day_of_week: APScheduler day_of_week expression, e.g. "sun"
+            hour: Hour of day, 0-23, in `tzinfo`
+            minute: Minute of hour, 0-59, in `tzinfo`
+            tzinfo: tzinfo instance the cron fields are interpreted in
+            job_id: APScheduler job id
+            name: Human-readable job name
+
+        """
+        self.scheduler.add_job(
+            func=func,
+            trigger=CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute,
+                                timezone=tzinfo),
+            id=job_id,
+            name=name,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            f"Weekly job {job_id!r} scheduled {day_of_week} "
+            f"{hour:02d}:{minute:02d} {tzinfo}"
+        )
+
     def _setup_maintenance_jobs(self) -> None:
         """Set up general maintenance jobs."""
         try:
