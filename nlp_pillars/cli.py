@@ -1584,6 +1584,59 @@ def graph_build(
     raise typer.Exit(0)
 
 
+works_app = typer.Typer(
+    help="Work identity: one id per paper, and its typed citations",
+    add_completion=False,
+)
+app.add_typer(works_app, name="works")
+
+
+@works_app.command("sync")
+def works_sync(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print counts only. Do not call Semantic Scholar or write.",
+    ),
+    max_citers: int = typer.Option(
+        1000,
+        "--max-citers",
+        min=0,
+        help="Newest citers kept per library paper. 0 skips citers.",
+    ),
+):
+    """Link every library paper to one work and store its typed citations.
+
+    Resolves each library paper (arXiv, DOI or Semantic Scholar id) through
+    Semantic Scholar, writes ``papers.work_id`` and ``papers.citation_count``,
+    then stores all of its references and its newest citers with their
+    intents, citing sentences and influence flag. Idempotent: a second run
+    finds the same works and adds nothing, and a citer walk stops at the first
+    page that holds a citer it already has. Every request goes through the
+    shared Semantic Scholar limiter. Apply docs/migrations/031_works_identity.sql
+    first. ``--dry-run`` sends no request.
+    """
+    from .works_store import WorksStoreError, execute_works_sync
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        report = execute_works_sync(dry_run=dry_run, max_citers=max_citers)
+    except typer.Exit:
+        raise
+    except WorksStoreError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("works sync failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("works sync failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+
+    console.print(report.render(), markup=False)
+    raise typer.Exit(1 if report.failures or report.stopped_early else 0)
+
+
 concepts_app = typer.Typer(
     help="Vocabulary-aware concepts selected from stored paper notes",
     add_completion=False,

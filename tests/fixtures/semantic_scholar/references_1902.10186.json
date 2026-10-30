@@ -1,0 +1,1705 @@
+{
+ "offset": 0,
+ "data": [
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Such instantiations explicitly select (modest) subsets of inputs to be considered when making a prediction, which are then by construction responsible for model output (Lei et al., 2016; Peters et al."
+   ],
+   "citedPaper": {
+    "paperId": "aaf24fae03c08355c93d0e3407ad5b7f9e0927c9",
+    "externalIds": {
+     "ACL": "W18-5450",
+     "DBLP": "conf/emnlp/PetersNM18",
+     "MAG": "2914649017",
+     "DOI": "10.18653/v1/W18-5450",
+     "CorpusId": 53604866
+    },
+    "corpusId": 53604866,
+    "title": "Interpretable Structure Induction via Sparse Attention",
+    "venue": "BlackboxNLP@EMNLP",
+    "year": 2018,
+    "referenceCount": 13,
+    "citationCount": 9,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/W18-5450.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2018-11-01",
+    "authors": [
+     {
+      "authorId": "49470779",
+      "name": "Ben Peters"
+     },
+     {
+      "authorId": "2114966",
+      "name": "Vlad Niculae"
+     },
+     {
+      "authorId": "145644643",
+      "name": "Andr\u00e9 F. T. Martins"
+     }
+    ],
+    "abstract": "Neural network methods are experiencing wide adoption in NLP, thanks to their empirical performance on many tasks. Modern neural architectures go way beyond simple feedforward and recurrent models: they are complex pipelines that perform so"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Tying attention weights to human-provided rationales is another potentially promising avenue (Bao et al., 2018)."
+   ],
+   "citedPaper": {
+    "paperId": "8b37185ad6e25c8e1a6ec622a73d3281e80f4378",
+    "externalIds": {
+     "MAG": "2952115010",
+     "DBLP": "journals/corr/abs-1808-09367",
+     "ACL": "D18-1216",
+     "ArXiv": "1808.09367",
+     "DOI": "10.18653/v1/D18-1216",
+     "CorpusId": 52113465
+    },
+    "corpusId": 52113465,
+    "title": "Deriving Machine Attention from Human Rationales",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2018,
+    "referenceCount": 35,
+    "citationCount": 117,
+    "influentialCitationCount": 9,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D18-1216.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2018-08-28",
+    "authors": [
+     {
+      "authorId": "26565554",
+      "name": "Yujia Bao"
+     },
+     {
+      "authorId": "3307026",
+      "name": "Shi-Yu Chang"
+     },
+     {
+      "authorId": "2482533",
+      "name": "Mo Yu"
+     },
+     {
+      "authorId": "1741283",
+      "name": "R. Barzilay"
+     }
+    ],
+    "abstract": "Attention-based models are successful when trained on large amounts of data. In this paper, we demonstrate that even in the low-resource scenario, attention can be learned effectively. To this end, we start with discrete human-annotated rat"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Comparing such importance measures to attention scores may provide additional insights into the working of attention based models (Ghaeini et al., 2018)."
+   ],
+   "citedPaper": {
+    "paperId": "f447c73de2f5cee843ad14d70e1d373294611934",
+    "externalIds": {
+     "MAG": "2885396331",
+     "ArXiv": "1808.03894",
+     "DBLP": "journals/corr/abs-1808-03894",
+     "ACL": "D18-1537",
+     "DOI": "10.18653/v1/d18-1537",
+     "CorpusId": 51979567
+    },
+    "corpusId": 51979567,
+    "title": "Interpreting Recurrent and Attention-Based Neural Models: a Case Study on Natural Language Inference",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2018,
+    "referenceCount": 19,
+    "citationCount": 105,
+    "influentialCitationCount": 2,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D18-1537.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2018-08-12",
+    "authors": [
+     {
+      "authorId": "3443717",
+      "name": "Reza Ghaeini"
+     },
+     {
+      "authorId": "1694273",
+      "name": "Xiaoli Z. Fern"
+     },
+     {
+      "authorId": "1729906",
+      "name": "Prasad Tadepalli"
+     }
+    ],
+    "abstract": "Deep learning models have achieved remarkable success in natural language inference (NLI) tasks. While these models are widely explored, they are hard to interpret and it is often unclear how and why they actually work. In this paper, we ta"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": true,
+   "contexts": [
+    "While such measures do enjoy a clear intrinsic (to the model) semantics, their interpretation in the context of nonlinear neural networks can nonetheless be difficult for humans (Feng et al., 2018).",
+    "While such measures do enjoy a clear intrinsic (to the model) semantics, their interpretation for non-linear neural networks can nonetheless be difficult for humans (Feng et al., 2018).",
+    "ral model behavior (Feng et al., 2018), they do provide measures of individual feature importance with known semantics (Ross et al."
+   ],
+   "citedPaper": {
+    "paperId": "74e9053d6f44f4507bd40bbea999ee65f0cbefb2",
+    "externalIds": {
+     "MAG": "2950893515",
+     "ACL": "D18-1407",
+     "DBLP": "conf/emnlp/FengWGIRB18",
+     "ArXiv": "1804.07781",
+     "DOI": "10.18653/v1/D18-1407",
+     "CorpusId": 52003282
+    },
+    "corpusId": 52003282,
+    "title": "Pathologies of Neural Models Make Interpretations Difficult",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2018,
+    "referenceCount": 50,
+    "citationCount": 353,
+    "influentialCitationCount": 40,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D18-1407.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2018-04-20",
+    "authors": [
+     {
+      "authorId": "144588144",
+      "name": "Shi Feng"
+     },
+     {
+      "authorId": "145217343",
+      "name": "Eric Wallace"
+     },
+     {
+      "authorId": "2778913",
+      "name": "Alvin Grissom II"
+     },
+     {
+      "authorId": "2136562",
+      "name": "M. Iyyer"
+     },
+     {
+      "authorId": "145009056",
+      "name": "Pedro Rodriguez"
+     },
+     {
+      "authorId": "2260114875",
+      "name": "J. Boyd-Graber"
+     }
+    ],
+    "abstract": "One way to interpret neural model predictions is to highlight the most important input features\u2014for example, a heatmap visualization over the words in an input sentence. In existing interpretation methods for NLP, a word\u2019s importance is det"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    ", (Xu et al., 2015; Choi et al., 2016; Lei et al., 2017; Martins and Astudillo, 2016; Xie et al., 2017; Mullenbach et al., 2018)."
+   ],
+   "citedPaper": {
+    "paperId": "5b721c8767f895f03e1316c5e7ce6d93f19e2937",
+    "externalIds": {
+     "MAG": "2964142373",
+     "ArXiv": "1802.05695",
+     "DBLP": "conf/naacl/MullenbachWDSE18",
+     "ACL": "N18-1100",
+     "DOI": "10.18653/v1/N18-1100",
+     "CorpusId": 3305987
+    },
+    "corpusId": 3305987,
+    "title": "Explainable Prediction of Medical Codes from Clinical Text",
+    "venue": "North American Chapter of the Association for Computational Linguistics",
+    "year": 2018,
+    "referenceCount": 39,
+    "citationCount": 733,
+    "influentialCitationCount": 169,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/N18-1100.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2018-02-15",
+    "authors": [
+     {
+      "authorId": "36063260",
+      "name": "J. Mullenbach"
+     },
+     {
+      "authorId": "35823986",
+      "name": "Sarah Wiegreffe"
+     },
+     {
+      "authorId": "3008745",
+      "name": "J. Duke"
+     },
+     {
+      "authorId": "2504051310",
+      "name": "Ji-Meng Sun"
+     },
+     {
+      "authorId": "144154709",
+      "name": "Jacob Eisenstein"
+     }
+    ],
+    "abstract": "Clinical notes are text documents that are created by clinicians for each patient encounter. They are typically accompanied by medical codes, which describe the diagnosis and treatment. Annotating these codes is labor intensive and error pr"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Another novel line of work in this direction involves explicitly identifying explanations of black-box predictions via a causal framework (Alvarez-Melis and Jaakkola, 2017)."
+   ],
+   "citedPaper": {
+    "paperId": "6b5cb359a6a6c2a3d79ade3a825eb3e9a65f3a89",
+    "externalIds": {
+     "DBLP": "journals/corr/Alvarez-MelisJ17",
+     "MAG": "2962807820",
+     "ACL": "D17-1042",
+     "ArXiv": "1707.01943",
+     "DOI": "10.18653/v1/D17-1042",
+     "CorpusId": 5509327
+    },
+    "corpusId": 5509327,
+    "title": "A causal framework for explaining the predictions of black-box sequence-to-sequence models",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2017,
+    "referenceCount": 26,
+    "citationCount": 217,
+    "influentialCitationCount": 12,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D17-1042.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2017-07-06",
+    "authors": [
+     {
+      "authorId": "1390096054",
+      "name": "David Alvarez-Melis"
+     },
+     {
+      "authorId": "35132120",
+      "name": "T. Jaakkola"
+     }
+    ],
+    "abstract": "We interpret the predictions of any black-box structured input-structured output model around a specific input-output pair. Our method returns an \u201cexplanation\u201d consisting of groups of input-output tokens that are causally related. These dep"
+   }
+  },
+  {
+   "intents": [
+    "background",
+    "methodology"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "hQ \u221a m (Vaswani et al., 2017), where v,W1,W2 are model parameters.",
+    "In this work we consider two common similarity functions: Additive et al., 2014) and Scaled Dot-Product \u03c6 ( h , Q ) = hQ \u221a m (Vaswani et al., 2017), where v , W 1 , W 2 are model parameters."
+   ],
+   "citedPaper": {
+    "paperId": "204e3073870fae3d05bcbc2f6a8e263d9b72e776",
+    "externalIds": {
+     "MAG": "2626778328",
+     "DBLP": "journals/corr/VaswaniSPUJGKP17",
+     "ArXiv": "1706.03762",
+     "CorpusId": 13756489
+    },
+    "corpusId": 13756489,
+    "title": "Attention is All you Need",
+    "venue": "Neural Information Processing Systems",
+    "year": 2017,
+    "referenceCount": 41,
+    "citationCount": 200318,
+    "influentialCitationCount": 21385,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2017-06-12",
+    "authors": [
+     {
+      "authorId": "40348417",
+      "name": "Ashish Vaswani"
+     },
+     {
+      "authorId": "1846258",
+      "name": "Noam Shazeer"
+     },
+     {
+      "authorId": "3877127",
+      "name": "N. Parmar"
+     },
+     {
+      "authorId": "39328010",
+      "name": "J. Uszkoreit"
+     },
+     {
+      "authorId": "145024664",
+      "name": "Llion Jones"
+     },
+     {
+      "authorId": "19177000",
+      "name": "Aidan N. Gomez"
+     },
+     {
+      "authorId": "40527594",
+      "name": "Lukasz Kaiser"
+     },
+     {
+      "authorId": "3443442",
+      "name": "I. Polosukhin"
+     }
+    ],
+    "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks in an encoder-decoder configuration. The best performing models also connect the encoder and decoder through an attention mechanism. W"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Indeed, claims that attention provides interpretability are common in the literature, e.g., (Xu et al., 2015; Choi et al., 2016; Lei et al., 2017; Martins and Astudillo, 2016; Xie et al., 2017)."
+   ],
+   "citedPaper": {
+    "paperId": "226756461524d661c566812694a648ff7aad02cb",
+    "externalIds": {
+     "DBLP": "journals/corr/XieMDH17",
+     "MAG": "2609287048",
+     "ACL": "P17-1088",
+     "ArXiv": "1704.05908",
+     "DOI": "10.18653/v1/P17-1088",
+     "CorpusId": 982761
+    },
+    "corpusId": 982761,
+    "title": "An Interpretable Knowledge Transfer Model for Knowledge Base Completion",
+    "venue": "Annual Meeting of the Association for Computational Linguistics",
+    "year": 2017,
+    "referenceCount": 44,
+    "citationCount": 112,
+    "influentialCitationCount": 10,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/P17-1088.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2017-04-01",
+    "authors": [
+     {
+      "authorId": "1912046",
+      "name": "Qizhe Xie"
+     },
+     {
+      "authorId": "2378954",
+      "name": "Xuezhe Ma"
+     },
+     {
+      "authorId": "3422912",
+      "name": "Zi-Hang Dai"
+     },
+     {
+      "authorId": "144547315",
+      "name": "E. Hovy"
+     }
+    ],
+    "abstract": "Knowledge bases are important resources for a variety of natural language processing tasks but suffer from incompleteness. We propose a novel embedding model, ITransF, to perform knowledge base completion. Equipped with a sparse attention m"
+   }
+  },
+  {
+   "intents": [
+    "background",
+    "methodology"
+   ],
+   "isInfluential": true,
+   "contexts": [
+    "These include approaches that measure feature importance based on gradient information (Ross et al., 2017; Sundararajan et al., 2017) (aligned with the gradient-based measures that we have used here),",
+    "This is sometimes called faithful explanation (Ross et al., 2017).",
+    "While these measures are themselves insuf\ufb01cient for interpretation of neural model behavior (Feng et al., 2018), they do provide measures of individual feature importance with known semantics (Ross et"
+   ],
+   "citedPaper": {
+    "paperId": "7db2afdc5eb5db46cc64185d0a51ed079b0976e8",
+    "externalIds": {
+     "MAG": "2952901124",
+     "DBLP": "conf/ijcai/RossHD17",
+     "ArXiv": "1703.03717",
+     "DOI": "10.24963/ijcai.2017/371",
+     "CorpusId": 7053611
+    },
+    "corpusId": 7053611,
+    "title": "Right for the Right Reasons: Training Differentiable Models by Constraining their Explanations",
+    "venue": "International Joint Conference on Artificial Intelligence",
+    "year": 2017,
+    "referenceCount": 44,
+    "citationCount": 721,
+    "influentialCitationCount": 98,
+    "openAccessPdf": {
+     "url": "https://www.ijcai.org/proceedings/2017/0371.pdf",
+     "status": "BRONZE",
+     "license": null
+    },
+    "publicationDate": "2017-03-10",
+    "authors": [
+     {
+      "authorId": "2068943123",
+      "name": "Andrew Slavin Ross"
+     },
+     {
+      "authorId": "2169240",
+      "name": "M. Hughes"
+     },
+     {
+      "authorId": "1388372395",
+      "name": "F. Doshi-Velez"
+     }
+    ],
+    "abstract": "Neural networks are among the most accurate supervised learning methods in use today, but their opacity makes them difficult to trust in critical applications, especially when conditions in training differ from those in test. Recent work on"
+   }
+  },
+  {
+   "intents": [
+    "methodology"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "These include approaches that measure feature importance based on gradient information (Ross et al., 2017; Sundararajan et al., 2017) (aligned with the gradient-based measures that we have used here),",
+    "These include approaches that measure feature importance based on gradient information (Ross et al., 2017; Sundararajan et al., 2017) (aligned with the gradient-based measures that we have used here),"
+   ],
+   "citedPaper": {
+    "paperId": "f302e136c41db5de1d624412f68c9174cf7ae8be",
+    "externalIds": {
+     "ArXiv": "1703.01365",
+     "MAG": "2949197630",
+     "DBLP": "conf/icml/SundararajanTY17",
+     "CorpusId": 16747630
+    },
+    "corpusId": 16747630,
+    "title": "Axiomatic Attribution for Deep Networks",
+    "venue": "International Conference on Machine Learning",
+    "year": 2017,
+    "referenceCount": 35,
+    "citationCount": 9335,
+    "influentialCitationCount": 1154,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2017-03-04",
+    "authors": [
+     {
+      "authorId": "30740726",
+      "name": "Mukund Sundararajan"
+     },
+     {
+      "authorId": "40511120",
+      "name": "Ankur Taly"
+     },
+     {
+      "authorId": "34789908",
+      "name": "Qi-Qi Yan"
+     }
+    ],
+    "abstract": "We study the problem of attributing the prediction of a deep network to its input features, a problem previously studied by several other works. We identify two fundamental axioms\u2014 Sensitivity and Implementation Invariance that attribution "
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Structured attention models (Kim et al., 2017) provide a generalized framework for describing and fitting attention variants with explicit probabilistic semantics.",
+    "Structured attention models (Kim et al., 2017) provide a generalized framework for describing and \ufb01tting attention variants with explicit probabilistic semantics."
+   ],
+   "citedPaper": {
+    "paperId": "13d9323a8716131911bfda048a40e2cde1a76a46",
+    "externalIds": {
+     "MAG": "2949847915",
+     "DBLP": "journals/corr/KimDHR17",
+     "ArXiv": "1702.00887",
+     "CorpusId": 6961760
+    },
+    "corpusId": 6961760,
+    "title": "Structured Attention Networks",
+    "venue": "International Conference on Learning Representations",
+    "year": 2017,
+    "referenceCount": 66,
+    "citationCount": 508,
+    "influentialCitationCount": 22,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2017-02-03",
+    "authors": [
+     {
+      "authorId": "38367242",
+      "name": "Yoon Kim"
+     },
+     {
+      "authorId": "47472547",
+      "name": "Carl Denton"
+     },
+     {
+      "authorId": "144294755",
+      "name": "Luong Hoang"
+     },
+     {
+      "authorId": "2531268",
+      "name": "Alexander M. Rush"
+     }
+    ],
+    "abstract": "Attention networks have proven to be an effective approach for embedding categorical inference within a deep neural network. However, for many tasks we may want to model richer structural dependencies without abandoning end-to-end training."
+   }
+  },
+  {
+   "intents": [
+    "background",
+    "methodology"
+   ],
+   "isInfluential": true,
+   "contexts": [
+    "Li et al. (2016) summarized this commonly held view in NLP: \u201cAttention provides an important way to explain the workings of neural models\".",
+    ", 2017) (aligned with the gradient-based measures that we have used here), and methods based on representation erasure (Li et al., 2016), in which dimensions are removed and then the resultant change ",
+    "\u20262017; Sundararajan et al., 2017) (aligned with the gradient-based measures that we have used here), and methods based on representation erasure (Li et al., 2016), in which dimensions are removed and "
+   ],
+   "citedPaper": {
+    "paperId": "4c41104e871bccbd56494350a71d77a7f1da5bb0",
+    "externalIds": {
+     "MAG": "2562979205",
+     "ArXiv": "1612.08220",
+     "DBLP": "journals/corr/LiMJ16a",
+     "CorpusId": 13017314
+    },
+    "corpusId": 13017314,
+    "title": "Understanding Neural Networks through Representation Erasure",
+    "venue": "arXiv.org",
+    "year": 2016,
+    "referenceCount": 55,
+    "citationCount": 649,
+    "influentialCitationCount": 54,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2016-12-24",
+    "authors": [
+     {
+      "authorId": "2386020817",
+      "name": "Jiwei Li"
+     },
+     {
+      "authorId": "145768639",
+      "name": "Will Monroe"
+     },
+     {
+      "authorId": "1746807",
+      "name": "Dan Jurafsky"
+     }
+    ],
+    "abstract": "While neural networks have been successfully applied to many natural language processing tasks, they come at the cost of interpretability. In this paper, we propose a general methodology to analyze and interpret decisions from a neural mode"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "This means we do not consider recently proposed \u2018BiAttentive\u2019 architectures that attend to tokens in the respective inputs, conditioned on the other inputs (Parikh et al., 2016; Seo et al., 2016; Xion"
+   ],
+   "citedPaper": {
+    "paperId": "e978d832a4d86571e1b52aa1685dc32ccb250f50",
+    "externalIds": {
+     "MAG": "2963871484",
+     "DBLP": "journals/corr/XiongZS16",
+     "ArXiv": "1611.01604",
+     "CorpusId": 3714278
+    },
+    "corpusId": 3714278,
+    "title": "Dynamic Coattention Networks For Question Answering",
+    "venue": "International Conference on Learning Representations",
+    "year": 2016,
+    "referenceCount": 32,
+    "citationCount": 810,
+    "influentialCitationCount": 118,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2016-11-05",
+    "authors": [
+     {
+      "authorId": "2228109",
+      "name": "Caiming Xiong"
+     },
+     {
+      "authorId": "3428769",
+      "name": "Victor Zhong"
+     },
+     {
+      "authorId": "2166511",
+      "name": "R. Socher"
+     }
+    ],
+    "abstract": "Several deep learning models have been proposed for question answering. However, due to their single-pass nature, they have no way to recover from local maxima corresponding to incorrect answers. To address this problem, we introduce the Dy"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "This means we do not consider recently proposed \u2018BiAttentive\u2019 architectures that attend to tokens in the respective inputs, conditioned on the other inputs (Parikh et al., 2016; Seo et al., 2016; Xion"
+   ],
+   "citedPaper": {
+    "paperId": "3a7b63b50c64f4ec3358477790e84cbd6be2a0b4",
+    "externalIds": {
+     "DBLP": "conf/iclr/SeoKFH17",
+     "MAG": "2551396370",
+     "ArXiv": "1611.01603",
+     "CorpusId": 8535316
+    },
+    "corpusId": 8535316,
+    "title": "Bidirectional Attention Flow for Machine Comprehension",
+    "venue": "International Conference on Learning Representations",
+    "year": 2016,
+    "referenceCount": 40,
+    "citationCount": 2307,
+    "influentialCitationCount": 500,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2016-11-04",
+    "authors": [
+     {
+      "authorId": "4418074",
+      "name": "Minjoon Seo"
+     },
+     {
+      "authorId": "2684226",
+      "name": "Aniruddha Kembhavi"
+     },
+     {
+      "authorId": "143787583",
+      "name": "Ali Farhadi"
+     },
+     {
+      "authorId": "2548384",
+      "name": "Hannaneh Hajishirzi"
+     }
+    ],
+    "abstract": "Machine comprehension (MC), answering a query about a given context paragraph, requires modeling complex interactions between the context and the query. Recently, attention mechanisms have been successfully extended to MC. Typically these m"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "We also note that there has been complementary work demonstrating low correlation between human attention and induced attention weights (Pappas and Popescu-Belis, 2016)."
+   ],
+   "citedPaper": {
+    "paperId": "3262a92f83d1c986c55f46e7fb09f2085cf2bacf",
+    "externalIds": {
+     "MAG": "2567428100",
+     "DBLP": "conf/acl-socialnlp/PappasP16",
+     "ACL": "W16-6213",
+     "DOI": "10.18653/v1/W16-6213",
+     "CorpusId": 12664997
+    },
+    "corpusId": 12664997,
+    "title": "Human versus Machine Attention in Document Classification: A Dataset with Crowdsourced Annotations",
+    "venue": "SocialNLP@EMNLP",
+    "year": 2016,
+    "referenceCount": 24,
+    "citationCount": 7,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "https://doi.org/10.18653/v1/w16-6213",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2016-11-01",
+    "authors": [
+     {
+      "authorId": "1680075",
+      "name": "Nikolaos Pappas"
+     },
+     {
+      "authorId": "1797819",
+      "name": "Andrei Popescu-Belis"
+     }
+    ],
+    "abstract": "Keywords: aspect-based sentiment analysis ; attention mechanism ; Document Classification Reference EPFL-CONF-222451 Record created on 2016-10-19, modified on 2017-05-10"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [],
+   "citedPaper": {
+    "paperId": "e8e9125704edbcf73999f2f452fe4a701163d6b6",
+    "externalIds": {
+     "MAG": "2963271116",
+     "DBLP": "conf/nips/ChoiBSKSS16",
+     "ArXiv": "1608.05745",
+     "CorpusId": 948039
+    },
+    "corpusId": 948039,
+    "title": "RETAIN: An Interpretable Predictive Model for Healthcare using Reverse Time Attention Mechanism",
+    "venue": "Neural Information Processing Systems",
+    "year": 2016,
+    "referenceCount": 41,
+    "citationCount": 1659,
+    "influentialCitationCount": 226,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2016-08-19",
+    "authors": [
+     {
+      "authorId": "3242613",
+      "name": "E. Choi"
+     },
+     {
+      "authorId": "2342604",
+      "name": "M. T. Bahadori"
+     },
+     {
+      "authorId": "3959063",
+      "name": "Joshua A. Kulas"
+     },
+     {
+      "authorId": "20079790",
+      "name": "A. Schuetz"
+     },
+     {
+      "authorId": "49523072",
+      "name": "W. Stewart"
+     },
+     {
+      "authorId": "2504051310",
+      "name": "Ji-Meng Sun"
+     }
+    ],
+    "abstract": "Accuracy and interpretability are two dominant features of successful predictive models. Typically, a choice must be made in favor of complex black box models such as recurrent neural networks (RNN) for accuracy versus less accurate but mor"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Such instantiations explicitly select (modest) subsets of inputs to be considered when making a prediction, which are then by construction responsible for model output (Lei et al., 2016; Peters et al."
+   ],
+   "citedPaper": {
+    "paperId": "467d5d8fc766e73bfd3e9415f75479823f92c2f7",
+    "externalIds": {
+     "ACL": "D16-1011",
+     "MAG": "2963233086",
+     "DBLP": "conf/emnlp/LeiBJ16",
+     "ArXiv": "1606.04155",
+     "DOI": "10.18653/v1/D16-1011",
+     "CorpusId": 7205805
+    },
+    "corpusId": 7205805,
+    "title": "Rationalizing Neural Predictions",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2016,
+    "referenceCount": 38,
+    "citationCount": 915,
+    "influentialCitationCount": 116,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D16-1011.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2016-06-13",
+    "authors": [
+     {
+      "authorId": "49986267",
+      "name": "Tao Lei"
+     },
+     {
+      "authorId": "1741283",
+      "name": "R. Barzilay"
+     },
+     {
+      "authorId": "35132120",
+      "name": "T. Jaakkola"
+     }
+    ],
+    "abstract": "Prediction without justification has limited applicability. As a remedy, we learn to extract pieces of input text as justifications -- rationales -- that are tailored to be short and coherent, yet sufficient for making the same prediction. "
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "We examine the extent to which the (often implicit) narrative that attention provides model transparency (Lipton, 2016)."
+   ],
+   "citedPaper": {
+    "paperId": "d516daff247f7157fccde6649ace91d969cd1973",
+    "externalIds": {
+     "MAG": "3083430015",
+     "ArXiv": "1606.03490",
+     "DBLP": "journals/cacm/Lipton18",
+     "DOI": "10.1145/3233231",
+     "CorpusId": 5981909
+    },
+    "corpusId": 5981909,
+    "title": "The mythos of model interpretability",
+    "venue": "Queue",
+    "year": 2016,
+    "referenceCount": 38,
+    "citationCount": 4840,
+    "influentialCitationCount": 290,
+    "openAccessPdf": {
+     "url": "https://arxiv.org/pdf/1606.03490",
+     "status": "GREEN",
+     "license": null
+    },
+    "publicationDate": "2016-06-10",
+    "authors": [
+     {
+      "authorId": "32219137",
+      "name": "Zachary Chase Lipton"
+     }
+    ],
+    "abstract": "In machine learning, the concept of interpretability is both important and slippery."
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "This means we do not consider recently proposed \u2018BiAttentive\u2019 architectures that attend to tokens in the respective inputs, conditioned on the other inputs (Parikh et al., 2016; Seo et al., 2016; Xion"
+   ],
+   "citedPaper": {
+    "paperId": "2cd8e8f510c89c7c18268e8ad51c061e459ad321",
+    "externalIds": {
+     "MAG": "2950738719",
+     "ACL": "D16-1244",
+     "ArXiv": "1606.01933",
+     "DBLP": "journals/corr/ParikhT0U16",
+     "DOI": "10.18653/v1/D16-1244",
+     "CorpusId": 8495258
+    },
+    "corpusId": 8495258,
+    "title": "A Decomposable Attention Model for Natural Language Inference",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2016,
+    "referenceCount": 31,
+    "citationCount": 1450,
+    "influentialCitationCount": 146,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D16-1244.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2016-06-06",
+    "authors": [
+     {
+      "authorId": "144729897",
+      "name": "Ankur P. Parikh"
+     },
+     {
+      "authorId": "2556289",
+      "name": "Oscar T\u00e4ckstr\u00f6m"
+     },
+     {
+      "authorId": "143790066",
+      "name": "Dipanjan Das"
+     },
+     {
+      "authorId": "39328010",
+      "name": "J. Uszkoreit"
+     }
+    ],
+    "abstract": "We propose a simple neural architecture for natural language inference. Our approach uses attention to decompose the problem into subproblems that can be solved separately, thus making it trivially parallelizable. On the Stanford Natural La"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [],
+   "citedPaper": {
+    "paperId": "db0751478590cf6d9b61045bbd6f8ff4a9cc2294",
+    "externalIds": {
+     "DBLP": "journals/corr/ZhangMW16",
+     "MAG": "2963082289",
+     "ACL": "D16-1076",
+     "PubMedCentral": "5300751",
+     "ArXiv": "1605.04469",
+     "DOI": "10.18653/v1/D16-1076",
+     "CorpusId": 6262432,
+     "PubMed": "28191551"
+    },
+    "corpusId": 6262432,
+    "title": "Rationale-Augmented Convolutional Neural Networks for Text Classification",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2016,
+    "referenceCount": 33,
+    "citationCount": 175,
+    "influentialCitationCount": 10,
+    "openAccessPdf": {
+     "url": "https://www.aclweb.org/anthology/D16-1076.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2016-05-14",
+    "authors": [
+     {
+      "authorId": "39724818",
+      "name": "Ye Zhang"
+     },
+     {
+      "authorId": "1808775",
+      "name": "I. Marshall"
+     },
+     {
+      "authorId": "1912476",
+      "name": "Byron C. Wallace"
+     }
+    ],
+    "abstract": "We present a new Convolutional Neural Network (CNN) model for text classification that jointly exploits labels on documents and their constituent sentences. Specifically, we consider scenarios in which annotators explicitly mark sentences ("
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": true,
+   "contexts": [
+    "MIMIC ICD9 (Diabetes) (Johnson et al., 2016).",
+    "MIMIC ICD9 (Chronic vs Acute Anemia) (Johnson et al., 2016).",
+    "html MIMIC ICD9 (Chronic vs Acute Anemia) (Johnson et al., 2016)."
+   ],
+   "citedPaper": {
+    "paperId": "95cd83603a0d2b6918a8e34a5637a8f382da96f5",
+    "externalIds": {
+     "PubMedCentral": "4878278",
+     "MAG": "2396881363",
+     "DOI": "10.1038/sdata.2016.35",
+     "CorpusId": 33285731,
+     "PubMed": "27219127"
+    },
+    "corpusId": 33285731,
+    "title": "MIMIC-III, a freely accessible critical care database",
+    "venue": "Scientific Data",
+    "year": 2016,
+    "referenceCount": 24,
+    "citationCount": 9370,
+    "influentialCitationCount": 956,
+    "openAccessPdf": {
+     "url": "https://www.nature.com/articles/sdata201635.pdf",
+     "status": "GOLD",
+     "license": "CCBY"
+    },
+    "publicationDate": "2016-05-01",
+    "authors": [
+     {
+      "authorId": "28972636",
+      "name": "A. Johnson"
+     },
+     {
+      "authorId": "40541154",
+      "name": "T. Pollard"
+     },
+     {
+      "authorId": "2115648970",
+      "name": "Lu Shen"
+     },
+     {
+      "authorId": "2771337",
+      "name": "L. Lehman"
+     },
+     {
+      "authorId": "2773476",
+      "name": "M. Feng"
+     },
+     {
+      "authorId": "143811844",
+      "name": "Mohammad M. Ghassemi"
+     },
+     {
+      "authorId": "39934542",
+      "name": "B. Moody"
+     },
+     {
+      "authorId": "1679873",
+      "name": "Peter Szolovits"
+     },
+     {
+      "authorId": "2482152634",
+      "name": "Leo Anthony Celi"
+     },
+     {
+      "authorId": "1978710",
+      "name": "R. Mark"
+     }
+    ],
+    "abstract": "MIMIC-III (\u2018Medical Information Mart for Intensive Care\u2019) is a large, single-center database comprising information relating to patients admitted to critical care units at a large tertiary care hospital. Data includes vital signs, medicatio"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    ", (Xu et al., 2015; Choi et al., 2016; Lei et al., 2017; Martins and Astudillo, 2016; Xie et al., 2017; Mullenbach et al., 2018)."
+   ],
+   "citedPaper": {
+    "paperId": "c1e3a26fb88c6720f4e84b7118e6f2df7dc8efa3",
+    "externalIds": {
+     "MAG": "2963123301",
+     "ArXiv": "1602.02068",
+     "DBLP": "conf/icml/MartinsA16",
+     "CorpusId": 16432551
+    },
+    "corpusId": 16432551,
+    "title": "From Softmax to Sparsemax: A Sparse Model of Attention and Multi-Label Classification",
+    "venue": "International Conference on Machine Learning",
+    "year": 2016,
+    "referenceCount": 57,
+    "citationCount": 971,
+    "influentialCitationCount": 90,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2016-02-05",
+    "authors": [
+     {
+      "authorId": "145644643",
+      "name": "Andr\u00e9 F. T. Martins"
+     },
+     {
+      "authorId": "3394760",
+      "name": "Ram\u00f3n Fern\u00e1ndez Astudillo"
+     }
+    ],
+    "abstract": "We propose sparsemax, a new activation function similar to the traditional softmax, but able to output sparse probabilities. After deriving its properties, we show how its Jacobian can be efficiently computed, enabling its use in a network "
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "We follow (Zhang et al., 2015) in \ufb01ltering out all but the top 4 categories."
+   ],
+   "citedPaper": {
+    "paperId": "51a55df1f023571a7e07e338ee45a3e3d66ef73e",
+    "externalIds": {
+     "DBLP": "journals/corr/ZhangZL15",
+     "MAG": "2963012544",
+     "ArXiv": "1509.01626",
+     "CorpusId": 368182
+    },
+    "corpusId": 368182,
+    "title": "Character-level Convolutional Networks for Text Classification",
+    "venue": "Neural Information Processing Systems",
+    "year": 2015,
+    "referenceCount": 32,
+    "citationCount": 7530,
+    "influentialCitationCount": 1112,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2015-09-04",
+    "authors": [
+     {
+      "authorId": "2492751965",
+      "name": "Xiang Zhang"
+     },
+     {
+      "authorId": "7818229",
+      "name": "J. Zhao"
+     },
+     {
+      "authorId": "1688882",
+      "name": "Yann LeCun"
+     }
+    ],
+    "abstract": "This article offers an empirical exploration on the use of character-level convolutional networks (ConvNets) for text classification. We constructed several large-scale datasets to show that character-level convolutional networks could achi"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Finally, for Natural Language Inference (NLI): The SNLI dataset (Bowman et al., 2015)."
+   ],
+   "citedPaper": {
+    "paperId": "f04df4e20a18358ea2f689b4c129781628ef7fc1",
+    "externalIds": {
+     "MAG": "2953084091",
+     "ACL": "D15-1075",
+     "DBLP": "conf/emnlp/BowmanAPM15",
+     "ArXiv": "1508.05326",
+     "DOI": "10.18653/v1/D15-1075",
+     "CorpusId": 14604520
+    },
+    "corpusId": 14604520,
+    "title": "A large annotated corpus for learning natural language inference",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2015,
+    "referenceCount": 40,
+    "citationCount": 4897,
+    "influentialCitationCount": 936,
+    "openAccessPdf": {
+     "url": "https://aclanthology.org/D15-1075.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2015-08-21",
+    "authors": [
+     {
+      "authorId": "3644767",
+      "name": "Samuel R. Bowman"
+     },
+     {
+      "authorId": "32301760",
+      "name": "Gabor Angeli"
+     },
+     {
+      "authorId": "144922861",
+      "name": "Christopher Potts"
+     },
+     {
+      "authorId": "144783904",
+      "name": "Christopher D. Manning"
+     }
+    ],
+    "abstract": "Understanding entailment and contradiction is fundamental to understanding natural language, and inference about entailment and contradiction is a valuable testing ground for the development of semantic representations. However, machine lea"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "For Question Answering (QA): CNN News Articles (Hermann et al., 2015).",
+    "For Question Answering (QA) : CNN News Articles (Hermann et al., 2015)."
+   ],
+   "citedPaper": {
+    "paperId": "d1505c6123c102e53eb19dff312cb25cea840b72",
+    "externalIds": {
+     "MAG": "2949615363",
+     "DBLP": "conf/nips/HermannKGEKSB15",
+     "ArXiv": "1506.03340",
+     "CorpusId": 6203757
+    },
+    "corpusId": 6203757,
+    "title": "Teaching Machines to Read and Comprehend",
+    "venue": "Neural Information Processing Systems",
+    "year": 2015,
+    "referenceCount": 22,
+    "citationCount": 4088,
+    "influentialCitationCount": 505,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2015-06-10",
+    "authors": [
+     {
+      "authorId": "2910877",
+      "name": "K. Hermann"
+     },
+     {
+      "authorId": "2367821",
+      "name": "Tom\u00e1s Kocisk\u00fd"
+     },
+     {
+      "authorId": "1864353",
+      "name": "Edward Grefenstette"
+     },
+     {
+      "authorId": "2311318",
+      "name": "L. Espeholt"
+     },
+     {
+      "authorId": "2062879616",
+      "name": "W. Kay"
+     },
+     {
+      "authorId": "2573615",
+      "name": "M. Suleyman"
+     },
+     {
+      "authorId": "1685771",
+      "name": "P. Blunsom"
+     }
+    ],
+    "abstract": "Teaching machines to read natural language documents remains an elusive challenge. Machine reading systems can be tested on their ability to answer questions posed on the contents of documents that they have seen, but until now large scale "
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    "Twitter Adverse Drug Reaction dataset (Nikfarjam et al., 2015)."
+   ],
+   "citedPaper": {
+    "paperId": "ee8085bd00f437318cce5b919b47233de8c5f6ff",
+    "externalIds": {
+     "PubMedCentral": "4457113",
+     "DBLP": "journals/jamia/NikfarjamSOGG15",
+     "MAG": "2171469118",
+     "DOI": "10.1093/jamia/ocu041",
+     "CorpusId": 8319232,
+     "PubMed": "25755127"
+    },
+    "corpusId": 8319232,
+    "title": "Pharmacovigilance from social media: mining adverse drug reaction mentions using sequence labeling with word embedding cluster features",
+    "venue": "J. Am. Medical Informatics Assoc.",
+    "year": 2015,
+    "referenceCount": 74,
+    "citationCount": 577,
+    "influentialCitationCount": 42,
+    "openAccessPdf": {
+     "url": "https://academic.oup.com/jamia/article-pdf/22/3/671/34146284/ocu041.pdf",
+     "status": "HYBRID",
+     "license": "CCBYNC"
+    },
+    "publicationDate": "2015-03-09",
+    "authors": [
+     {
+      "authorId": "1902199",
+      "name": "Azadeh Nikfarjam"
+     },
+     {
+      "authorId": "48673524",
+      "name": "A. Sarker"
+     },
+     {
+      "authorId": "1400829836",
+      "name": "K. O'Connor"
+     },
+     {
+      "authorId": "46645804",
+      "name": "Rachel E. Ginn"
+     },
+     {
+      "authorId": "2064655679",
+      "name": "Graciela H. Gonzalez"
+     }
+    ],
+    "abstract": "Abstract Objective Social media is becoming increasingly popular as a platform for sharing personal health-related information. This information can be utilized for public health monitoring tasks, particularly for pharmacovigilance, via the"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [],
+   "citedPaper": {
+    "paperId": "abb33d75dc297993fcc3fb75e0f4498f413eb4f6",
+    "externalIds": {
+     "MAG": "2949122016",
+     "ArXiv": "1502.05698",
+     "DBLP": "journals/corr/WestonBCM15",
+     "CorpusId": 3178759
+    },
+    "corpusId": 3178759,
+    "title": "Towards AI-Complete Question Answering: A Set of Prerequisite Toy Tasks",
+    "venue": "International Conference on Learning Representations",
+    "year": 2015,
+    "referenceCount": 46,
+    "citationCount": 1313,
+    "influentialCitationCount": 151,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2015-02-19",
+    "authors": [
+     {
+      "authorId": "145183709",
+      "name": "J. Weston"
+     },
+     {
+      "authorId": "1713934",
+      "name": "Antoine Bordes"
+     },
+     {
+      "authorId": "3295092",
+      "name": "S. Chopra"
+     },
+     {
+      "authorId": "2260132137",
+      "name": "Alexander M. Rush"
+     },
+     {
+      "authorId": "2309395471",
+      "name": "Bart van Merri\u00ebnboer"
+     },
+     {
+      "authorId": "2319608",
+      "name": "A. Joulin"
+     },
+     {
+      "authorId": "2047446108",
+      "name": "Tomas Mikolov"
+     }
+    ],
+    "abstract": "One long-term goal of machine learning research is to produce methods that are applicable to reasoning and natural language, in particular building an intelligent dialogue agent. To measure progress towards that goal, we argue for the usefu"
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Indeed, claims that attention provides interpretability are common in the literature, e.g., (Xu et al., 2015; Choi et al., 2016; Lei et al., 2017; Martins and Astudillo, 2016; Xie et al., 2017)."
+   ],
+   "citedPaper": {
+    "paperId": "4d8f2d14af5991d4f0d050d22216825cac3157bd",
+    "externalIds": {
+     "ArXiv": "1502.03044",
+     "DBLP": "journals/corr/XuBKCCSZB15",
+     "MAG": "2950178297",
+     "CorpusId": 1055111
+    },
+    "corpusId": 1055111,
+    "title": "Show, Attend and Tell: Neural Image Caption Generation with Visual Attention",
+    "venue": "International Conference on Machine Learning",
+    "year": 2015,
+    "referenceCount": 55,
+    "citationCount": 11140,
+    "influentialCitationCount": 829,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2015-02-10",
+    "authors": [
+     {
+      "authorId": "2117101253",
+      "name": "Ke Xu"
+     },
+     {
+      "authorId": "2503659",
+      "name": "Jimmy Ba"
+     },
+     {
+      "authorId": "3450996",
+      "name": "R. Kiros"
+     },
+     {
+      "authorId": "1979489",
+      "name": "Kyunghyun Cho"
+     },
+     {
+      "authorId": "1760871",
+      "name": "Aaron C. Courville"
+     },
+     {
+      "authorId": "145124475",
+      "name": "R. Salakhutdinov"
+     },
+     {
+      "authorId": "1804104",
+      "name": "R. Zemel"
+     },
+     {
+      "authorId": "1751762",
+      "name": "Yoshua Bengio"
+     }
+    ],
+    "abstract": "Inspired by recent work in machine translation and object detection, we introduce an attention based model that automatically learns to describe the content of images. We describe how we can train this model in a deterministic manner using "
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    "In practice we maximize a relaxed version of this objective via the Adam SGD optimizer (Kingma and Ba, 2014): f({\u03b1}i=1) + \u03bb k \u2211k i=1 max(0,TVD[\u0177(x, \u03b1 (i)), \u0177(x, \u03b1\u0302)]\u2212 )."
+   ],
+   "citedPaper": {
+    "paperId": "a6cb366736791bcccc5c8639de5a8f9636bf87e8",
+    "externalIds": {
+     "MAG": "1522301498",
+     "DBLP": "journals/corr/KingmaB14",
+     "ArXiv": "1412.6980",
+     "CorpusId": 6628106
+    },
+    "corpusId": 6628106,
+    "title": "Adam: A Method for Stochastic Optimization",
+    "venue": "International Conference on Learning Representations",
+    "year": 2014,
+    "referenceCount": 26,
+    "citationCount": 174374,
+    "influentialCitationCount": 27660,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2014-12-22",
+    "authors": [
+     {
+      "authorId": "1726807",
+      "name": "Diederik P. Kingma"
+     },
+     {
+      "authorId": "2503659",
+      "name": "Jimmy Ba"
+     }
+    ],
+    "abstract": "We introduce Adam, an algorithm for first-order gradient-based optimization of stochastic objective functions, based on adaptive estimates of lower-order moments. The method is straightforward to implement, is computationally efficient, has"
+   }
+  },
+  {
+   "intents": [
+    "background",
+    "methodology"
+   ],
+   "isInfluential": true,
+   "contexts": [
+    "Attention mechanisms (Bahdanau et al., 2014) induce conditional distributions over input units to compose a weighted context vector for down-stream modules.",
+    "In this work we consider two common similarity functions: Additive \u03c6(h,Q) = vT tanh(W1h + W2Q) (Bahdanau et al., 2014) and Scaled Dot-Product \u03c6(h,Q) =",
+    "Attention mechanisms (Bahdanau et al., 2014) induce conditional distributions over input units to compose a weighted context vector for downstream modules."
+   ],
+   "citedPaper": {
+    "paperId": "fa72afa9b2cbc8f0d7b05d52548906610ffbb9c5",
+    "externalIds": {
+     "MAG": "2964308564",
+     "ArXiv": "1409.0473",
+     "DBLP": "journals/corr/BahdanauCB14",
+     "CorpusId": 11212020
+    },
+    "corpusId": 11212020,
+    "title": "Neural Machine Translation by Jointly Learning to Align and Translate",
+    "venue": "International Conference on Learning Representations",
+    "year": 2014,
+    "referenceCount": 33,
+    "citationCount": 30686,
+    "influentialCitationCount": 2668,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2014-09-01",
+    "authors": [
+     {
+      "authorId": "3335364",
+      "name": "D. Bahdanau"
+     },
+     {
+      "authorId": "1979489",
+      "name": "Kyunghyun Cho"
+     },
+     {
+      "authorId": "1751762",
+      "name": "Yoshua Bengio"
+     }
+    ],
+    "abstract": "Neural machine translation is a recently proposed approach to machine translation. Unlike the traditional statistical machine translation, the neural machine translation aims at building a single neural network that can be jointly tuned to "
+   }
+  },
+  {
+   "intents": [
+    "methodology"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "For binary text classi\ufb01cation , we use: Stanford Sentiment Treebank (SST) (Socher et al., 2013)."
+   ],
+   "citedPaper": {
+    "paperId": "687bac2d3320083eb4530bf18bb8f8f721477600",
+    "externalIds": {
+     "MAG": "2251939518",
+     "ACL": "D13-1170",
+     "DBLP": "conf/emnlp/SocherPWCMNP13",
+     "DOI": "10.18653/v1/d13-1170",
+     "CorpusId": 990233
+    },
+    "corpusId": 990233,
+    "title": "Recursive Deep Models for Semantic Compositionality Over a Sentiment Treebank",
+    "venue": "Conference on Empirical Methods in Natural Language Processing",
+    "year": 2013,
+    "referenceCount": 45,
+    "citationCount": 9929,
+    "influentialCitationCount": 1579,
+    "openAccessPdf": {
+     "url": "https://aclanthology.org/D13-1170.pdf",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2013-10-01",
+    "authors": [
+     {
+      "authorId": "2166511",
+      "name": "R. Socher"
+     },
+     {
+      "authorId": "24590005",
+      "name": "A. Perelygin"
+     },
+     {
+      "authorId": "2110402830",
+      "name": "Jean Y. Wu"
+     },
+     {
+      "authorId": "1964541",
+      "name": "Jason Chuang"
+     },
+     {
+      "authorId": "144783904",
+      "name": "Christopher D. Manning"
+     },
+     {
+      "authorId": "34699434",
+      "name": "A. Ng"
+     },
+     {
+      "authorId": "144922861",
+      "name": "Christopher Potts"
+     }
+    ],
+    "abstract": "Semantic word spaces have been very useful but cannot express the meaning of longer phrases in a principled way. Further progress towards understanding compositionality in tasks such as sentiment detection requires richer supervised trainin"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [],
+   "citedPaper": {
+    "paperId": "1c61f9ef06fe74505775a833ff849185757199e7",
+    "externalIds": {
+     "ACL": "P11-1015",
+     "MAG": "2113459411",
+     "DBLP": "conf/acl/MaasDPHNP11",
+     "CorpusId": 1428702
+    },
+    "corpusId": 1428702,
+    "title": "Learning Word Vectors for Sentiment Analysis",
+    "venue": "Annual Meeting of the Association for Computational Linguistics",
+    "year": 2011,
+    "referenceCount": 31,
+    "citationCount": 6295,
+    "influentialCitationCount": 777,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2011-06-19",
+    "authors": [
+     {
+      "authorId": "34961461",
+      "name": "Andrew L. Maas"
+     },
+     {
+      "authorId": "119816047",
+      "name": "Raymond E. Daly"
+     },
+     {
+      "authorId": "2061523260",
+      "name": "Peter T. Pham"
+     },
+     {
+      "authorId": "2110408720",
+      "name": "Dan Huang"
+     },
+     {
+      "authorId": "34699434",
+      "name": "A. Ng"
+     },
+     {
+      "authorId": "144922861",
+      "name": "Christopher Potts"
+     }
+    ],
+    "abstract": null
+   }
+  },
+  {
+   "intents": [
+    "background"
+   ],
+   "isInfluential": false,
+   "contexts": [
+    "Indeed, claims that attention provides interpretability are common in the literature, e.g., (Xu et al., 2015; Choi et al., 2016; Lei et al., 2017; Martins and Astudillo, 2016; Xie et al., 2017)."
+   ],
+   "citedPaper": {
+    "paperId": "a99c491cde6e5c45aa8fe7c388b0e18c93ff1801",
+    "externalIds": {
+     "DBLP": "phd/ndltd/Lei17",
+     "CorpusId": 197662435
+    },
+    "corpusId": 197662435,
+    "title": "Interpretable neural models for natural language processing",
+    "venue": "",
+    "year": 2017,
+    "referenceCount": 0,
+    "citationCount": 21,
+    "influentialCitationCount": 1,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": null,
+    "authors": [
+     {
+      "authorId": "49986267",
+      "name": "Tao Lei"
+     }
+    ],
+    "abstract": null
+   }
+  }
+ ]
+}

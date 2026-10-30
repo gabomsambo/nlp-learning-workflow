@@ -1,0 +1,263 @@
+{
+ "offset": 0,
+ "next": 6,
+ "data": [
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [],
+   "citingPaper": {
+    "paperId": "b607ab6ac40ae6e1ef67025653be154667f170b9",
+    "externalIds": {
+     "DOI": "10.1016/j.jisa.2026.104669",
+     "CorpusId": 292742209
+    },
+    "corpusId": 292742209,
+    "title": "HiTPhish: A hierarchical transformer architecture for robust phishing detection",
+    "venue": "Journal of Information Security and Applications",
+    "year": 2026,
+    "referenceCount": 40,
+    "citationCount": 0,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "https://doi.org/10.1016/j.jisa.2026.104669",
+     "status": "HYBRID",
+     "license": "CCBY"
+    },
+    "publicationDate": "2026-12-01",
+    "authors": [
+     {
+      "authorId": "2214807270",
+      "name": "Felipe Casta\u00f1o"
+     },
+     {
+      "authorId": "2064994465",
+      "name": "Eduardo Fidalgo"
+     },
+     {
+      "authorId": "1398291662",
+      "name": "Roc\u00edo Ala\u00edz-Rodr\u00edguez"
+     },
+     {
+      "authorId": "2169715493",
+      "name": "Raul Orduna"
+     }
+    ],
+    "abstract": null
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [],
+   "citingPaper": {
+    "paperId": "498b3b56f7f2ed65860f98722475fef5107b1c3b",
+    "externalIds": {
+     "DOI": "10.1016/j.jestch.2026.102557",
+     "CorpusId": 293871902
+    },
+    "corpusId": 293871902,
+    "title": "Turkish abstractive text summarization with a multi-encoder transformer approach",
+    "venue": "Engineering Science and Technology, an International Journal",
+    "year": 2026,
+    "referenceCount": 65,
+    "citationCount": 0,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "https://www.sciencedirect.com/science/article/pii/S2215098626002831/pdf",
+     "status": "GOLD",
+     "license": "CCBY"
+    },
+    "publicationDate": "2026-12-01",
+    "authors": [
+     {
+      "authorId": "2138495664",
+      "name": "Nihal Zuhal Kayali"
+     },
+     {
+      "authorId": "3445548",
+      "name": "S. Omurca"
+     }
+    ],
+    "abstract": null
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    "\u2212 Subword tokenization: methods like byte pair encoding (BPE) [16] and SentencePiece [17] allow models to break down uncommon or complex words into subwords, making them easier to manage."
+   ],
+   "citingPaper": {
+    "paperId": "f6a101622163c16740354605d4467445caadcacf",
+    "externalIds": {
+     "DOI": "10.11591/csit.v7i3.p404-418",
+     "CorpusId": 291273869
+    },
+    "corpusId": 291273869,
+    "title": "A comparative review of modern large language model paradigms: GPT-4, BERT, Gemini, and DeepSeek",
+    "venue": "Computer Science and Information Technology",
+    "year": 2026,
+    "referenceCount": 76,
+    "citationCount": 0,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "https://iaesprime.com/index.php/csit/article/download/571/516",
+     "status": "GOLD",
+     "license": "CCBYSA"
+    },
+    "publicationDate": "2026-11-01",
+    "authors": [
+     {
+      "authorId": "90244695",
+      "name": "Kavish Sanghvi"
+     },
+     {
+      "authorId": "2457946257",
+      "name": "Aparna S. Sharma"
+     },
+     {
+      "authorId": "2458823135",
+      "name": "Surbhi Hooda"
+     }
+    ],
+    "abstract": "This review provides comparative analysis of GPT-4, BERT (bidirectional encoder representations from transformers), Gemini, and DeepSeek large language models (LLM), focusing architectures, training methodologies, and real-world application"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    "In language processing, BPE and WordPiece construct reusable sub-word vocabularies [35, 49], whereas unigram tokenization uses a probabilistic segmentation model [18]; SentencePiece provides a languag"
+   ],
+   "citingPaper": {
+    "paperId": "e77607565ea4f2d801545a885b80dc66cd62b0cd",
+    "externalIds": {
+     "ArXiv": "2610.36937",
+     "CorpusId": 294620937
+    },
+    "corpusId": 294620937,
+    "title": "JevRec: Linguistic Encoding with Jev-like Decision Modeling for LLM-based Generative Recommendation",
+    "venue": "",
+    "year": 2026,
+    "referenceCount": 59,
+    "citationCount": 0,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2026-10-27",
+    "authors": [
+     {
+      "authorId": "2351600155",
+      "name": "Qi-Yong Zhong"
+     },
+     {
+      "authorId": null,
+      "name": "Jia-Jie Su"
+     },
+     {
+      "authorId": "2391787001",
+      "name": "Ming Yang"
+     },
+     {
+      "authorId": null,
+      "name": "Li Zhang"
+     }
+    ],
+    "abstract": "Generative recommendation (GR) represents items as semantic identifiers (SIDs) and autoregressively generates the next item's SID from interaction history. However, most methods assign the same SID length to all items despite highly unequal"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": false,
+   "contexts": [
+    "\u2026tokenizers: 1) FAST+ [56], which applies the Discrete Cosine Transform (DCT) to each action dimension of a chunk, quantizes the coefficients by scaling and rounding, flattens them from low to high fr"
+   ],
+   "citingPaper": {
+    "paperId": "7a04002ddc33a45acd6268edc34e8d0f6e89cb70",
+    "externalIds": {
+     "ArXiv": "2610.34828",
+     "CorpusId": 294367128
+    },
+    "corpusId": 294367128,
+    "title": "Transporting Quantiles to Codebook: Scalable Vector Quantization without Codebook Collapse",
+    "venue": "",
+    "year": 2026,
+    "referenceCount": 65,
+    "citationCount": 0,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2026-10-26",
+    "authors": [
+     {
+      "authorId": "2284952386",
+      "name": "Yu-Wei Zeng"
+     },
+     {
+      "authorId": "2249122388",
+      "name": "Ze-Kun Shi"
+     }
+    ],
+    "abstract": "Effective discrete representation learning with VQ-VAE serves as a fundamental component of modern autoregressive generative models. However, it is widely known to suffer from codebook collapse and inefficient code utilization. To address t"
+   }
+  },
+  {
+   "intents": [],
+   "isInfluential": true,
+   "contexts": [
+    "\u2026can be summarised as follows: (i) MxlTok : We introduce the first general-purpose tokenisation framework for MusicXML, following the extensible design of MidiTok [11], with built-in support for custo",
+    "BPE [14] is a subword tokenisa-tion algorithm that iteratively merges the most frequent token pair into a new vocabulary entry until a target size is reached."
+   ],
+   "citingPaper": {
+    "paperId": "34e27d96eb3153a8aafea27fe7b61a64a749bc3d",
+    "externalIds": {
+     "ArXiv": "2610.34247",
+     "CorpusId": 294364777
+    },
+    "corpusId": 294364777,
+    "title": "Does Notation Matter? MusicXML Tokenisation for Symbolic Music Generation and Understanding",
+    "venue": "",
+    "year": 2026,
+    "referenceCount": 45,
+    "citationCount": 1,
+    "influentialCitationCount": 0,
+    "openAccessPdf": {
+     "url": "",
+     "status": null,
+     "license": null
+    },
+    "publicationDate": "2026-10-25",
+    "authors": [
+     {
+      "authorId": "2141309560",
+      "name": "Andrea Poltronieri"
+     },
+     {
+      "authorId": "2348473151",
+      "name": "Matteo Spanio"
+     },
+     {
+      "authorId": "2369511574",
+      "name": "Simone Chieppa"
+     },
+     {
+      "authorId": "2312200194",
+      "name": "Xavier Serra"
+     },
+     {
+      "authorId": "2345811424",
+      "name": "Mart\u00edn Rocamora"
+     }
+    ],
+    "abstract": "Symbolic music representations encode musical content at varying levels of completeness, from performance-oriented formats such as MIDI to fully notated scores such as MusicXML. Yet the impact of this representational richness on deep learn"
+   }
+  }
+ ]
+}
