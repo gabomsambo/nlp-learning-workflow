@@ -2140,6 +2140,66 @@ def factcheck_run(
     raise typer.Exit(0)
 
 
+@factcheck_app.command("lint")
+def factcheck_lint(
+    script: str = typer.Option(..., "--script", help="podcast_scripts id"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the flags and stop. Do not write source_material.warnings.",
+    ),
+):
+    """Flag numbers a script states that its paper never does.
+
+    Free and offline: no model call. Reads the script and paper_texts, then
+    replaces the earlier "Number check" entries in source_material.warnings.
+    It only warns; the script and its audio are never blocked or changed.
+    """
+    from .factcheck.numbers import lint_script, merge_warnings, warnings_for
+
+    _log_env_path()
+    _setup_logging()
+    try:
+        row = db.get_podcast_script_by_id(script)
+        if row is None:
+            console.print(f"[bold red]no podcast script {script}[/bold red]")
+            raise typer.Exit(1)
+        paper_text = db.get_stored_paper_text(row.paper_id)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        logging.error("factcheck lint failed: %s", e, exc_info=True)
+        raise typer.Exit(1)
+    if not paper_text:
+        console.print(
+            f"[bold red]no stored paper text for {row.paper_id}[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    result = lint_script(row.script, paper_text)
+    console.print(
+        f"script {script} paper {row.paper_id}: {result.host_lines} host lines, "
+        f"{result.numbers_checked} numbers, {result.flagged_lines} flagged "
+        f"({result.per_ten_host_lines:.2f} per 10 host lines)"
+    )
+    for flag in result.flags:
+        console.print(f"  line {flag.line} [{flag.kind}] {flag.reason}")
+    if dry_run:
+        console.print("Dry run. Nothing written.")
+        raise typer.Exit(0)
+    existing = list(row.source_material.warnings)
+    try:
+        db.update_podcast_source_material_warnings(
+            script, merge_warnings(existing, warnings_for(result)),
+        )
+    except db.PodcastScriptSaveError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        raise typer.Exit(1)
+    console.print("Saved to source_material.warnings. The script was not changed.")
+    raise typer.Exit(0)
+
+
 @factcheck_app.command("backfill")
 def factcheck_backfill(
     dry_run: bool = typer.Option(
