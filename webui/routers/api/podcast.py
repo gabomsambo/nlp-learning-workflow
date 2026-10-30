@@ -17,6 +17,7 @@ from nlp_pillars.db import (
     get_podcast_scripts, get_podcast_script_by_id,
     get_active_factcheck_run, get_latest_podcast_fact_check,
     FactcheckLookupError, PipelineRunCreateError, PodcastScriptLookupError,
+    ClaimDismissalError, get_claim_script_id, set_claim_dismissal,
 )
 from webui.services import (
     podcast_audio_service,
@@ -26,6 +27,7 @@ from webui.services import (
 )
 from webui.services.podcast_factcheck_service import (
     FactcheckAlreadyRunning,
+    claim_payload,
     public_factcheck,
     script_sha256,
 )
@@ -379,6 +381,49 @@ async def get_factcheck(script_id: str):
             raise HTTPException(status_code=404, detail="Script not found")
         raise HTTPException(status_code=404, detail="No fact check for this script")
     return public_factcheck(row)
+
+
+class ClaimDismissalRequest(BaseModel):
+    dismissed: bool = True
+    note: str = Field(default="", max_length=1000)
+
+
+@router.put("/{script_id}/factcheck/claims/{claim_id}/dismissal")
+async def put_claim_dismissal(
+    script_id: str, claim_id: str, request: ClaimDismissalRequest,
+):
+    """Dismiss one fact-check flag with a note, or restore it.
+
+    Dismissing needs a note (422 without one): the note is what turns a click
+    into a calibration label. The claim's verdict and severity are not changed,
+    and every dismiss/restore is appended to ``podcast_claim_reviews``. 404 when
+    the claim is not one of this script's. 503 names migration 031 when the
+    function is missing.
+    """
+    script_id = _script_id_or_404(script_id)
+    try:
+        claim_id = str(uuid.UUID(claim_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Claim not found")
+    note = request.note.strip()
+    if request.dismissed and not note:
+        raise HTTPException(
+            status_code=422,
+            detail="Say why this flag is fine. The note is kept with the dismissal.",
+        )
+    try:
+        owner = get_claim_script_id(claim_id)
+    except (FactcheckLookupError, ClaimDismissalError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if owner is None or owner != script_id:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    try:
+        row = set_claim_dismissal(claim_id, request.dismissed, note)
+    except ClaimDismissalError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    return claim_payload(row)
 
 
 @router.get("/{script_id}")

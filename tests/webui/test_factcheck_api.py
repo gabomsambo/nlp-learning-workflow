@@ -260,3 +260,112 @@ def test_the_view_hash_is_the_hash_the_engine_stored():
 
     assert script_sha256("the same text") == sha256_text("the same text")
     assert script_sha256("") == sha256_text("")
+
+
+# --- dismiss with a note ----------------------------------------------------
+
+CLAIM_ID = "c1a1a1a1-1111-4111-8111-111111111111"
+DISMISS_URL = f"/api/podcast/{SCRIPT_ID}/factcheck/claims/{CLAIM_ID}/dismissal"
+
+
+def _stored_claim(**extra):
+    row = {
+        "id": CLAIM_ID,
+        "line_index": 138,
+        "span_start": 0,
+        "span_end": 10,
+        "span_text": "Stage 1",
+        "claim": "Stage 1 plus 3 gives 61.7",
+        "scope": "paper",
+        "category": "number",
+        "verdict": "contradicted",
+        "error_type": "number_mismatch",
+        "severity": "high",
+        "evidence": [],
+        "evidence_status": "not_required",
+        "judge_trail": [],
+        "dismissed_at": None,
+        "dismissed_note": None,
+    }
+    row.update(extra)
+    return row
+
+
+def _wire(monkeypatch, *, owner=SCRIPT_ID, store=None):
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_claim_script_id", lambda claim_id: owner,
+    )
+    calls = []
+
+    def fake_store(claim_id, dismissed, note):
+        calls.append((claim_id, dismissed, note))
+        if store is not None:
+            return store(claim_id, dismissed, note)
+        return _stored_claim(
+            dismissed_at="2026-10-30T10:00:00+00:00" if dismissed else None,
+            dismissed_note=note if dismissed else None,
+        )
+
+    monkeypatch.setattr("webui.routers.api.podcast.set_claim_dismissal", fake_store)
+    return calls
+
+
+def test_dismiss_stores_the_trimmed_note(api_client, monkeypatch):
+    calls = _wire(monkeypatch)
+    response = api_client.put(DISMISS_URL, json={"dismissed": True, "note": "  paper says so  "})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dismissed_note"] == "paper says so"
+    assert body["dismissed_at"]
+    # The flag itself is untouched: a dismissal is an opinion, not an edit.
+    assert body["verdict"] == "contradicted"
+    assert body["severity"] == "high"
+    assert calls == [(CLAIM_ID, True, "paper says so")]
+
+
+def test_dismiss_without_a_note_is_refused_before_the_database(api_client, monkeypatch):
+    calls = _wire(monkeypatch)
+    for payload in ({"dismissed": True}, {"dismissed": True, "note": "   "}):
+        response = api_client.put(DISMISS_URL, json=payload)
+        assert response.status_code == 422
+    assert calls == []
+
+
+def test_restore_needs_no_note(api_client, monkeypatch):
+    calls = _wire(monkeypatch)
+    response = api_client.put(DISMISS_URL, json={"dismissed": False})
+    assert response.status_code == 200
+    assert response.json()["dismissed_at"] is None
+    assert calls == [(CLAIM_ID, False, "")]
+
+
+def test_a_claim_of_another_script_is_404(api_client, monkeypatch):
+    calls = _wire(monkeypatch, owner="99999999-9999-4999-8999-999999999999")
+    response = api_client.put(DISMISS_URL, json={"dismissed": True, "note": "x"})
+    assert response.status_code == 404
+    assert calls == []
+
+
+def test_an_unknown_or_malformed_claim_is_404(api_client, monkeypatch):
+    _wire(monkeypatch, owner=None)
+    assert api_client.put(DISMISS_URL, json={"dismissed": True, "note": "x"}).status_code == 404
+    bad = f"/api/podcast/{SCRIPT_ID}/factcheck/claims/not-a-uuid/dismissal"
+    assert api_client.put(bad, json={"dismissed": True, "note": "x"}).status_code == 404
+
+
+def test_a_missing_migration_is_503_and_names_it(api_client, monkeypatch):
+    from nlp_pillars.db import ClaimDismissalError
+
+    def boom(*args):
+        raise ClaimDismissalError("Dismissal is not set up. Apply docs/migrations/031_claim_dismissals.sql by hand.")
+
+    _wire(monkeypatch, store=boom)
+    response = api_client.put(DISMISS_URL, json={"dismissed": True, "note": "x"})
+    assert response.status_code == 503
+    assert "031_claim_dismissals.sql" in response.json()["detail"]
+
+
+def test_a_note_over_the_limit_is_422(api_client, monkeypatch):
+    _wire(monkeypatch)
+    response = api_client.put(DISMISS_URL, json={"dismissed": True, "note": "x" * 1001})
+    assert response.status_code == 422

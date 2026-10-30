@@ -143,6 +143,37 @@
    * would let the unmentioned lines read as verified, which is the point the
    * research makes about the implied-truth effect.
    */
+  // Flags (not supported claims, not opinions) a reader has marked fine.
+  function dismissedCount(claims) {
+    return (claims || []).filter(function (claim) {
+      return claim && claim.dismissed_at && canDismiss(claim);
+    }).length;
+  }
+
+  // Only a flag can be dismissed. A supported claim or an opinion has nothing
+  // to disagree with.
+  function canDismiss(claim) {
+    if (!claim || !claim.id) return false;
+    var bucket = claimBucket(claim);
+    return bucket !== 'supported' && bucket !== 'unchecked';
+  }
+
+  var DISMISSAL_NOTE_MAX = 1000;
+
+  /*
+   * The note is required: it is what turns a click into a label somebody can
+   * later check the verifier against. The server enforces the same rule; this
+   * only saves the round trip and words the refusal.
+   */
+  function checkDismissalNote(raw) {
+    var note = String(raw == null ? '' : raw).trim();
+    if (!note) return { ok: false, note: '', error: 'Say why this flag is fine. The note is kept with the dismissal.' };
+    if (note.length > DISMISSAL_NOTE_MAX) {
+      return { ok: false, note: note, error: 'Keep the note under ' + DISMISSAL_NOTE_MAX + ' characters (it is ' + note.length + ').' };
+    }
+    return { ok: true, note: note, error: '' };
+  }
+
   function factcheckSummary(claims) {
     claims = claims || [];
     var counts = {};
@@ -157,6 +188,10 @@
       if (!counts[bucket]) return;
       parts.push(counts[bucket] + ' ' + SUMMARY_LABELS[bucket]);
     });
+    // A dismissal is a person's opinion about a flag. The flag stays counted
+    // above; this says how many of them somebody has disagreed with.
+    var dismissed = dismissedCount(claims);
+    if (dismissed) parts.push(dismissed + ' dismissed');
     return parts.join(' · ');
   }
 
@@ -297,6 +332,10 @@
     issueClaims: issueClaims,
     factcheckSummary: factcheckSummary,
     isFactcheckStale: isFactcheckStale,
+    canDismiss: canDismiss,
+    dismissedCount: dismissedCount,
+    checkDismissalNote: checkDismissalNote,
+    DISMISSAL_NOTE_MAX: DISMISSAL_NOTE_MAX,
     panelState: panelState,
     highSeverityItems: highSeverityItems,
     scriptLineHref: scriptLineHref,

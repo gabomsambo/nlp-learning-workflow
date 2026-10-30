@@ -3869,6 +3869,17 @@ html[data-theme="cockpit"] .player-title {
 .factcheck-issue blockquote { color: var(--muted); }
 .factcheck-jump { justify-self: start; }
 
+.factcheck-issue.is-dismissed { opacity: 0.7; }
+.factcheck-mark.is-dismissed { border-bottom-color: var(--border-strong); border-bottom-style: dotted; }
+
+.factcheck-dismiss { display: grid; gap: var(--space-2); justify-items: start; }
+.factcheck-dismiss-form { display: grid; gap: var(--space-2); width: 100%; }
+.factcheck-dismiss-form label { display: grid; gap: var(--space-1); font-weight: 600; }
+.factcheck-dismiss-form textarea { width: 100%; min-width: 0; }
+.factcheck-dismiss-form .btn { justify-self: start; }
+.factcheck-dismissed { margin: 0; color: var(--muted); font-style: italic; }
+.factcheck-dismiss-error { margin: 0; color: var(--danger); }
+
 .script-body .script-line {
   position: relative;
   display: grid;

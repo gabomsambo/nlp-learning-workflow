@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any
 
 from .embeddings import EmbeddingError, MIGRATION as EMBEDDINGS_MIGRATION
 from .factcheck.constants import (
+    DISMISSAL_MIGRATION,
     KIND as FACTCHECK_RUN_KIND,
     MIGRATION as FACTCHECK_MIGRATION,
 )
@@ -2144,6 +2145,90 @@ def get_latest_podcast_fact_check(script_id: str) -> Optional[Dict[str, Any]]:
     header = dict(response['data'][0])
     header['claims'] = _claims_for_fact_check(client, header['id'])
     return header
+
+
+class ClaimDismissalError(Exception):
+    """A dismissal or restore could not be stored. Names 031 when it is missing."""
+
+
+def _claim_id_or_error(claim_id: str) -> str:
+    try:
+        return str(uuid.UUID(str(claim_id)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ClaimDismissalError(f"claim id {claim_id!r} is not a uuid") from exc
+
+
+def get_claim_script_id(claim_id: str) -> Optional[str]:
+    """The script a stored claim belongs to, or None when there is no such claim."""
+    claim_id = _claim_id_or_error(claim_id)
+    try:
+        client = get_client()
+        claim = (
+            client.table('podcast_claims')
+            .select('id,fact_check_id')
+            .eq('id', claim_id)
+            .limit(1)
+            .execute()
+        )
+        if claim['error']:
+            raise _factcheck_read_error(claim['error'], "Could not read the claim")
+        if not claim['data']:
+            return None
+        check = (
+            client.table('podcast_fact_checks')
+            .select('script_id')
+            .eq('id', claim['data'][0]['fact_check_id'])
+            .limit(1)
+            .execute()
+        )
+    except FactcheckLookupError:
+        raise
+    except Exception as exc:
+        raise _factcheck_read_error(exc, "Could not read the claim") from exc
+    if check['error']:
+        raise _factcheck_read_error(check['error'], "Could not read the claim")
+    if not check['data']:
+        return None
+    return str(check['data'][0]['script_id'])
+
+
+def set_claim_dismissal(
+    claim_id: str, dismissed: bool, note: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Dismiss a claim's flag with a note, or restore it. One transaction.
+
+    The claim's verdict and severity are never changed: a dismissal records
+    that a person disagreed, which is a calibration label, not an edit.
+
+    Returns:
+        The updated claim row, or None when there is no such claim.
+
+    Raises:
+        ClaimDismissalError: the note was empty or too long, or the write
+            failed. A missing function names
+            ``docs/migrations/031_claim_dismissals.sql``.
+    """
+    claim_id = _claim_id_or_error(claim_id)
+    try:
+        client = get_client()
+        response = client.rpc('set_podcast_claim_dismissal', {
+            'p_claim_id': claim_id,
+            'p_dismissed': bool(dismissed),
+            'p_note': note or '',
+        })
+    except Exception as exc:
+        raise ClaimDismissalError(str(exc)) from exc
+    if response['error']:
+        text = str(response['error'])
+        lowered = text.lower()
+        if "set_podcast_claim_dismissal" in lowered and any(
+            token in lowered for token in ("pgrst202", "does not exist", "schema cache", "404")
+        ):
+            raise ClaimDismissalError(
+                f"Dismissal is not set up. Apply {DISMISSAL_MIGRATION} by hand."
+            )
+        raise ClaimDismissalError(text)
+    return response['data'] or None
 
 
 def _claims_for_fact_check(client, fact_check_id: str) -> List[Dict[str, Any]]:
