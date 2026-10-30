@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { createHandler } from '../src/worker.js';
 import { isDocKey } from '../src/docs.js';
 import { isIngestKey } from '../src/ingest.js';
-import { KID, NOW_MS, fakeBucket, makeEnv, makeKeyPair, serviceClaims, signJwt, userClaims } from './helpers.mjs';
+import { KID, NOW_MS, fakeAssets, fakeBucket, makeEnv, makeKeyPair, serviceClaims, signJwt, userClaims } from './helpers.mjs';
 
 const pair = await makeKeyPair();
 const handle = createHandler({ keyFor: async (kid) => (kid === KID ? pair.jwk : null), now: () => NOW_MS });
@@ -171,4 +171,29 @@ test('the Worker has no outbound path beyond the Access key store', async () => 
   assert.match(wrangler, /\[\[d1_databases\]\]\s*\nbinding = "REVIEWS"/);
   assert.deepEqual([...wrangler.matchAll(/^binding = "(\w+)"/gm)].map((m) => m[1]).sort(), ['ASSETS', 'DOCS', 'REVIEWS']);
   assert.match(wrangler, /workers_dev = false/);
+});
+
+test('the install manifest and the service worker are behind Access like everything else, and served as what they are', async () => {
+  const env = makeEnv({ ASSETS: fakeAssets({ '/manifest.webmanifest': '{"name":"NLP Reader"}', '/sw.js': 'self.x = 1', '/shell.js': 'self.y = 1' }) });
+  for (const path of ['/manifest.webmanifest', '/sw.js', '/shell.js']) {
+    assert.equal((await get(path, { env })).status, 401, path);
+  }
+  const token = await userToken();
+  const manifest = await get('/manifest.webmanifest', { token, env });
+  assert.equal(manifest.status, 200);
+  assert.match(manifest.headers.get('content-type'), /^application\/manifest\+json/);
+  assert.deepEqual(await manifest.json(), { name: 'NLP Reader' });
+  // The worker script is never held by a shared cache or served stale: the browser must be able to notice a new one.
+  const worker = await get('/sw.js', { token, env });
+  assert.equal(worker.status, 200);
+  assert.equal(worker.headers.get('cache-control'), 'private, no-cache');
+  assert.equal((await get('/manifest.webmanifest', { token })).status, 404);
+});
+
+test('the Content-Security-Policy lets the page register its worker and read its manifest, and nothing wider', async () => {
+  const csp = (await get('/', { token: await userToken() })).headers.get('content-security-policy');
+  assert.match(csp, /script-src 'self'(;|$)/); // service workers fall back to script-src
+  assert.match(csp, /manifest-src 'self'/);
+  assert.doesNotMatch(csp, /worker-src/);
+  assert.doesNotMatch(csp, /unsafe-|https?:|\*/);
 });

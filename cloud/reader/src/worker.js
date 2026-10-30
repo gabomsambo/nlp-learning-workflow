@@ -116,7 +116,14 @@ export function createHandler({ keyFor, now } = {}) {
     }
     if (pathname.startsWith('/api/')) return secured(reply(404, { error: 'not found' }));
 
-    return secured(await env.ASSETS.fetch(request));
+    const asset = await env.ASSETS.fetch(request);
+    // The install manifest: browsers want this type, and not every static server knows .webmanifest.
+    if (pathname === '/manifest.webmanifest' && asset.ok) {
+      const typed = new Response(asset.body, asset);
+      typed.headers.set('content-type', 'application/manifest+json; charset=utf-8');
+      return secured(typed);
+    }
+    return secured(asset);
   };
 }
 

@@ -5,7 +5,8 @@ account at `read.gabrielsambo.com` so it works with the computer off.
 It shows what `python -m nlp_pillars.cli cloud export` writes: Today, Library,
 Paper (with a read-only Playground tab), Lessons and Listen (episodes with audio,
 read-along, fact-check highlights and the code drawer), and cards can be reviewed on it. `cloud publish` keeps it current; a review
-is the one thing that travels the other way. It has no offline mode and nothing that generates.
+is the one thing that travels the other way. It installs to the home screen, opens with no connection, and keeps the
+newest three episodes playable offline (Offline and install, below). It has nothing that generates.
 
 Plan and reasoning: the cloud-reader report, sections 4, 7 and 9.
 
@@ -136,8 +137,8 @@ the script is not followed; the drawer says to match it again on the computer.
   `availability`), all copied by `build-assets.sh`. `playground-session.js` (the runner) is not.
 - **Before migrations 028/029** the export publishes without playgrounds (or without follow-along)
   and the report says which migration is missing.
-- **Offline.** There is no offline layer yet (below), so a playground is fetched like any other
-  document. When the offline step lands, a downloaded episode's `follow_along` docs belong in it.
+- **Offline.** A playground is a document like any other: it is kept once read, and a saved episode
+  brings the playgrounds its code drawer follows (Offline and install, below).
 
 ## Reviewing on the phone
 
@@ -173,7 +174,9 @@ rate a card
   and says so.
 - **The outbox** (`public/js/outbox.js`) is the only data on the phone that cannot be fetched
   again. A review is written there first and kept until the computer's snapshot includes it
-  (`through_seq`). Its storage is an interface; localStorage today, IndexedDB with the offline step.
+  (`through_seq`). Its storage is an interface, and it stays localStorage even with the offline layer: that write is
+  synchronous, so a review is on disk before the tap returns, which an IndexedDB write (finished later) cannot promise if
+  the page is killed. `navigator.storage.persist()` protects it with the rest.
 - **Scheduling.** `public/js/fsrs.js` is a port of py-fsrs 6.3.1's scheduler, fuzz off, held to
   `tests/fixtures/fsrs/sequences.json` and to 400 random histories (every due date, step and state
   identical; stability and difficulty within 1e-12). It is a port rather than ts-fsrs because
@@ -197,6 +200,49 @@ If a pull stops half-way (the database goes away), `cloud_sync_state.reviews_pen
 of `reviews_seq` and `cloud export` refuses to publish a snapshot until the next pull finishes the
 job. Events for a card that no longer exists are skipped and reported; the cursor moves past them.
 
+## Offline and install
+
+The reader opens with no connection, and an episode saved on the phone plays and seeks with none.
+Nothing here widens what the Worker serves: it adds one script and one manifest, both behind Access.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Service worker | `public/sw.js`, rules in `public/sw-core.js` | Precaches every file the page loads under a version; answers page loads and those files from it; answers `/api/audio/<sha>.mp3` from the saved copy with `Range`. Leaves `/api/*` (documents, reviews) and `/ingest` alone |
+| Shell version | `scripts/build-shell.mjs` -> `public/shell.js` (generated, not committed) | A hash of every file under `public/` (the worker excluded). A changed file changes the version, which changes what the browser finds when it checks for a new worker |
+| Documents | `public/js/kv.js`, `data.js` | IndexedDB copy of the manifest and every document that was read and matched its hash. With a good connection a kept document whose hash is the manifest's is not fetched again |
+| Saved episodes | `public/js/offline.js`, rules in `offline-core.js` | Audio in the Cache API (`nlp-audio-v1`) plus the episode, its paper and its playground documents in IndexedDB |
+| Install | `public/manifest.webmanifest`, icons from `webui/static/icons` | `display: standalone`, `start_url: /`. The `<link>` carries `crossorigin="use-credentials"`: behind Access a plain manifest request has no cookie and would be redirected to the login page |
+| Offline & sync page | `#/offline`, `public/js/offline-view.js` | Connection, the reviews waiting, saved episodes (Save / Remove, keep the newest 3 automatically on or off), storage use, whether the browser promised to keep the data, install and "Reload to update" |
+
+**Which episodes stay.** The newest three with audio, kept automatically (switch off on the Offline page), plus any the
+person saved by hand, which newer episodes never push out. When a newer one arrives the oldest unpinned copy's audio is deleted
+and the new one downloaded. A copy also goes when its episode leaves the library or is re-recorded. A failure to reach the
+library or the login ending deletes nothing: it cannot be told what is wanted, so it touches nothing.
+
+**Audio.** A download is one complete `200` fetched with `cache: 'no-store'` (so the browser does not keep a second copy),
+stored only if its SHA-256 equals the name it was fetched under, which also rejects a login page answering at `200`. One
+download at a time. The worker slices the saved body as a blob, so a seek in a 26 MB episode reads what it plays.
+`sw-core.js`'s range rules are held to the Worker's `src/audio.js` by a test.
+
+**Updates.** A new version installs beside the old one and waits. The page says "Update ready" in the header and
+the Offline page offers "Reload to update", so code never changes under an open episode. The audio cache survives updates.
+
+**Signed out.** When the Access session ends, a fetch is redirected to the login page, which the page sees as `auth`. It
+keeps showing what is on the device under a banner with **Sign in again**, and the reviews stay in the outbox. The link goes
+to `/?signin=1`: the worker lets that navigation through (a cached page would never reach Access), and the page strips the
+marker afterwards. The worker also refuses to install itself, or to cache a file, from a redirect or an HTML page, so an
+ended session cannot turn the login page into the app.
+
+**Storage.** `navigator.storage.persist()` is asked once something is saved, and the Offline page shows the answer. Nothing
+reproducible depends on it except the outbox. About 0.5-1 MB of audio per minute at 64 kbps; the three newest are roughly
+25-75 MB.
+
+Build before you deploy (`build-assets.sh` now also writes `public/shell.js`), and check it on a device: the checklist is in
+the pull request that added this, and the notes below say what could not be checked off the device.
+
+Not checked off a device: whether the one-time-PIN login completes inside an installed iOS Home Screen app, how long iOS keeps
+Cache API audio under storage pressure, and `Range` behaviour of Safari against the real Worker (the Worker's side is tested).
+
 ## Day to day
 
 Run from the repository root. `wrangler` is pinned to 4.147.0 and run through `npx`;
@@ -210,7 +256,7 @@ python -m nlp_pillars.cli cloud publish                    # export, then send w
 python -m nlp_pillars.cli cloud export --out /tmp/bundle   # the manual route, on the computer (see AGENTS.md for the container form)
 node cloud/reader/scripts/upload-bundle.mjs /tmp/bundle    # audio, then documents, then the manifest last (--no-audio to skip the MP3s)
 
-cloud/reader/scripts/build-assets.sh                       # copies tokens.css, app.css, fonts, icons from webui/static
+cloud/reader/scripts/build-assets.sh                       # copies tokens.css, app.css, fonts, icons from webui/static; writes public/shell.js (the offline version)
 cd cloud/reader && npx wrangler@4.147.0 deploy             # only when the code or the look changed
 ```
 
@@ -267,6 +313,4 @@ next deploy.
 
 ## Not here yet
 
-The offline service worker and install manifest (a page that is open keeps working without a
-connection; one that is closed needs it to load, and card text is fetched when the card is shown;
-playgrounds are fetched the same way), and a mini player that outlives the page.
+A mini player that outlives the page.
