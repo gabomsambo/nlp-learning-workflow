@@ -2019,6 +2019,11 @@
         showSettings(result.options);
         loadScript(result.script_id).then(function () {
           if (partial && global.RunProgress) global.RunProgress.applyStatusClass(statusEl, 'run-warn');
+          if (result.audio_queue_error) {
+            if (statusEl) statusEl.textContent =
+              'The script was saved, but audio was not queued: ' + result.audio_queue_error;
+            if (global.RunProgress) global.RunProgress.applyStatusClass(statusEl, 'run-warn');
+          }
           if (result.audio_run_id) {
             audioRunId = result.audio_run_id;
             if (audioSection) audioSection.hidden = false;

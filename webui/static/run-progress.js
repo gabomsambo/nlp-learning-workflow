@@ -472,7 +472,11 @@
         return 'Script generated' + wordBit + ' but NOT saved — download it now';
       }
       if (run.status === 'succeeded') {
-        return 'Done — "' + scriptTitle + '"' + wordBit;
+        var scriptDone = 'Done — "' + scriptTitle + '"' + wordBit;
+        if (run.result && run.result.audio_queue_error) {
+          return scriptDone + ' — audio was not queued: ' + run.result.audio_queue_error;
+        }
+        return scriptDone;
       }
       if (run.status === 'failed') {
         return 'Failed' + (run.error ? ' — ' + run.error : '');
@@ -567,6 +571,10 @@
     var partial = typeof run === 'object' && run && run.papers_failed > 0;
     if (status === 'succeeded' && typeof run === 'object' && run
         && run.result && run.result.saved === false) {
+      return TONE_WARN;
+    }
+    if (status === 'succeeded' && typeof run === 'object' && run
+        && run.result && run.result.audio_queue_error) {
       return TONE_WARN;
     }
     if (status === 'succeeded') return partial ? TONE_WARN : TONE_OK;

@@ -248,6 +248,29 @@ def test_pending_audio_cancel_closes_stages_and_removes_cancel_event():
     assert all(call.args[2] == StageStatus.SKIPPED.value for call in update_stage.call_args_list)
 
 
+def test_execute_audio_job_never_constructs_the_discovery_orchestrator():
+    with (
+        patch.object(run_service.db, "start_pipeline_run"),
+        patch.object(run_service, "_finish_podcast_audio") as finish_audio,
+        patch.object(run_service, "Orchestrator", side_effect=AssertionError("Qdrant path")) as orchestrator,
+        patch.object(run_service.cloud_publish_service, "notify"),
+    ):
+        run_service.execute_run(
+            RUN_ID,
+            "podcast_audio",
+            PILLAR,
+            threading.Event(),
+            {RUN_ID: threading.Event()},
+            script_id=SCRIPT_ID,
+            voice_path=VOICE,
+            audio_request={"script_sha256": SCRIPT_HASH},
+        )
+
+    orchestrator.assert_not_called()
+    finish_audio.assert_called_once()
+    assert finish_audio.call_args.args[3]["audio_request"]["script_sha256"] == SCRIPT_HASH
+
+
 def test_auto_audio_is_queued_only_after_a_script_is_saved():
     saved_result = {"saved": True, "script_id": SCRIPT_ID, "script": SCRIPT}
     script = SimpleNamespace(script=SCRIPT)

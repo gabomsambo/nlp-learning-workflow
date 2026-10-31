@@ -127,6 +127,19 @@ test('a durable audio waiter shows IndexTTS state and only its start command', (
   assert.doesNotMatch(mismatch, /Start command/);
 });
 
+test('a saved script reports when requested audio could not be queued', () => {
+  const run = {
+    kind: 'podcast_script', status: 'succeeded', stages: stages(7),
+    result: {
+      saved: true, title: 'Episode', word_count: 120,
+      audio_queue_error: 'Apply docs/migrations/037_podcast_audio_queue.sql.',
+    },
+  };
+  assert.match(summarise(run), /audio was not queued/i);
+  assert.match(summarise(run), /037_podcast_audio_queue\.sql/);
+  assert.equal(statusColor(run), 'run-warn');
+});
+
 test('a failure carries its error text', () => {
   const run = { status: 'failed', error: 'RateLimitError 429', stages: stages(6) };
   assert.equal(summarise(run), 'Failed — RateLimitError 429');

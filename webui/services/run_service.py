@@ -285,6 +285,7 @@ def pump_podcast_audio_queue(
 
     run = pending[0]
     request = dict(run.result or {})
+    original_request = dict(request)
     if (
         not request.get("script_id")
         or not request.get("voice_path")
@@ -296,7 +297,8 @@ def pump_podcast_audio_queue(
             "queue_message": "The stored audio request is incomplete or lacks consent.",
             "start_command": None,
         })
-        db.update_pending_podcast_audio_result(run.id, request)
+        if request != original_request:
+            db.update_pending_podcast_audio_result(run.id, request)
         return
 
     try:
@@ -324,7 +326,8 @@ def pump_podcast_audio_queue(
                 status.get("start_command") if state == "not_running" else None
             ),
         })
-        db.update_pending_podcast_audio_result(run.id, request)
+        if request != original_request:
+            db.update_pending_podcast_audio_result(run.id, request)
         return
 
     request.update({
@@ -410,6 +413,13 @@ def execute_run(
             )
             return
 
+        if kind == KIND_PODCAST_AUDIO:
+            # Audio synthesis only needs the stored script, voice file and TTS
+            # client. Constructing Orchestrator would dial Qdrant before the TTS
+            # stage had a chance to report its own readiness.
+            _finish_podcast_audio(run_id, pillar_id, cancel_event, kwargs, on_stage)
+            return
+
         if kind == KIND_PODCAST_FACTCHECK:
             # Same no-Orchestrator rule: a fact-check reads stored text only.
             _finish_podcast_factcheck(run_id, cancel_event, kwargs, on_stage)
@@ -439,8 +449,6 @@ def execute_run(
 
         if kind == KIND_DISCOVER:
             _finish_discovery(run_id, orchestrator, pillar_id, kwargs)
-        elif kind == KIND_PODCAST_AUDIO:
-            _finish_podcast_audio(run_id, pillar_id, cancel_event, kwargs, on_stage)
         elif kind == KIND_RUN_DAILY:
             result = orchestrator.run_daily(
                 pillar_id, papers_limit=kwargs.get("papers_limit", 1)
@@ -590,6 +598,9 @@ def _finish_podcast_audio(
         voice_path,
         on_stage,
         cancel_event,
+        expected_script_sha256=(
+            (kwargs.get("audio_request") or {}).get("script_sha256")
+        ),
     )
     script = db.get_podcast_script_by_id(script_id)
     meta = script.audio_metadata if script else None
@@ -602,6 +613,7 @@ def _finish_podcast_audio(
             "duration_seconds": meta.duration_seconds,
             "voice_path": meta.voice_path,
             "engine": meta.engine,
+            "audio_metadata": meta.model_dump(mode="json"),
         })
     db.finish_pipeline_run(
         run_id,
