@@ -12,7 +12,7 @@
 {% endcall %}
 
 {% if studio %}
-<p class="page-lede">Write a script from a paper you already have, then record it. Nothing starts until you press a button.</p>
+<p class="page-lede">Write a script from a paper you already have. Choose a voice and whether to make its audio once the saved script is ready.</p>
 {% else %}
 <p class="page-lede">Newest episodes first, grouped by pillar. Play continues in the bar at the bottom when you leave this page.</p>
 {% endif %}
@@ -45,7 +45,7 @@
 <div class="listen-stack{% if studio %} is-studio{% else %} is-episodes{% endif %}">
   <section id="listen-studio" aria-label="Episode studio" {% if not studio %}hidden{% endif %}>
     {% call callout('warn', 'This spends money') %}
-    <p>Generating a script calls paid models — about $0.26 for a short paper. Recording audio uses IndexTTS on your GPU and does not call a paid model. Neither runs when this page opens.</p>
+    <p>Writing the script makes paid model calls. If “Also make audio after saving” is checked, the saved script will also use IndexTTS on your local GPU. Neither runs when this page opens.</p>
     {% endcall %}
 
     <form id="generate-form" data-custom-value="{{ custom_value }}">
@@ -106,6 +106,24 @@
         <p class="field-help">Settings choose what the episode is aimed at. They never change what it
           is allowed to say: the script is still written only from the paper.</p>
       </details>
+
+      <div class="field">
+        <label for="request-voice-select">Voice for the saved episode</label>
+        <select id="request-voice-select" disabled>
+          <option value="">Loading voices…</option>
+        </select>
+        <p class="field-help" id="request-voice-reason"></p>
+        <p class="field-error" id="request-voice-error" role="alert" hidden>Select a usable voice, or turn off automatic audio.</p>
+        <div class="listen-actions">
+          <button type="button" class="btn btn-secondary" id="request-preview-voice-btn" disabled>Preview voice</button>
+        </div>
+        <audio id="request-voice-preview" class="voice-preview" controls hidden preload="none"></audio>
+      </div>
+      <label class="listen-audio-consent">
+        <input type="checkbox" id="auto-audio" checked>
+        <span>Also make audio after saving</span>
+      </label>
+      <p class="field-help">Audio waits in the queue until IndexTTS is ready. It uses your computer’s local GPU.</p>
 
       <button type="submit" class="btn btn-primary" id="generate-btn">Generate Podcast Script</button>
     </form>

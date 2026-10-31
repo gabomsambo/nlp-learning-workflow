@@ -1958,6 +1958,53 @@ class PodcastScriptLookupError(Exception):
     """
 
 
+class PodcastPreferenceError(Exception):
+    """A podcast preference could not be read or persisted."""
+
+
+def get_last_podcast_voice_path() -> Optional[str]:
+    """Return the server-side default voice selected in the podcast Studio."""
+    try:
+        response = (
+            get_client().table('podcast_settings')
+            .select('last_voice_path')
+            .eq('id', 'true')
+            .limit(1)
+            .execute()
+        )
+        if response['error']:
+            raise PodcastPreferenceError(str(response['error']))
+        rows = response.get('data') or []
+        if not rows or not rows[0].get('last_voice_path'):
+            return None
+        return str(rows[0]['last_voice_path'])
+    except PodcastPreferenceError:
+        raise
+    except Exception as exc:
+        raise PodcastPreferenceError(str(exc)) from exc
+
+
+def set_last_podcast_voice_path(voice_path: str) -> None:
+    """Persist the last voice confirmed by a podcast generation request."""
+    try:
+        response = (
+            get_client().table('podcast_settings')
+            .eq('id', 'true')
+            .update({
+                'last_voice_path': voice_path,
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+            })
+        )
+        if response['error']:
+            raise PodcastPreferenceError(str(response['error']))
+        if not response.get('data'):
+            raise PodcastPreferenceError('podcast_settings singleton row is missing')
+    except PodcastPreferenceError:
+        raise
+    except Exception as exc:
+        raise PodcastPreferenceError(str(exc)) from exc
+
+
 def add_podcast_script(script: PodcastScript) -> str:
     """
     Add a podcast script for a paper.

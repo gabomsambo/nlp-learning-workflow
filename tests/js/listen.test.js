@@ -31,6 +31,7 @@ const {
 } = require('../../webui/static/listen.js');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '../../webui/static/listen.js'), 'utf8');
+const TEMPLATE = fs.readFileSync(path.join(__dirname, '../../webui/templates/podcast.html'), 'utf8');
 
 test('paper links encode a colon and audio names cannot escape the directory', () => {
   assert.equal(paperPageHref('arxiv:1706.03762'), '/papers/arxiv%3A1706.03762');
@@ -233,4 +234,13 @@ test('the listen script does not build HTML or start a paid call by itself', () 
   const bootTail = SOURCE.slice(SOURCE.lastIndexOf('refreshTtsStatus();'));
   assert.equal(bootTail.includes('/api/podcast/generate'), false);
   assert.equal(bootTail.includes('/api/podcast/tts/generate'), false);
+});
+
+test('the script form shows a voice picker and explicit default-on audio consent', () => {
+  assert.match(TEMPLATE, /id="request-voice-select"/);
+  assert.match(TEMPLATE, /id="request-preview-voice-btn"/);
+  assert.match(TEMPLATE, /id="auto-audio" checked/);
+  assert.match(SOURCE, /voice_path: requestVoiceSelect \? requestVoiceSelect\.value \|\| null : null/);
+  assert.match(SOURCE, /auto_audio: !!\(autoAudioCheckbox && autoAudioCheckbox\.checked\)/);
+  assert.match(SOURCE, /lastVoicePath = data\.last_voice_path \|\| null/);
 });

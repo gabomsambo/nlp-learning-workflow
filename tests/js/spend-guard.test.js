@@ -26,6 +26,13 @@ test('every costly POST is recognised, query strings ignored', () => {
   }
 });
 
+test('script confirmation names paid calls and local GPU audio consent', () => {
+  const action = matchAction('POST', pathOf('/api/podcast/generate'));
+  assert.match(action.what, /paid model calls/i);
+  assert.match(action.what, /local GPU/i);
+  assert.match(action.what, /Also make audio after saving/);
+});
+
 test('reads and cheap writes are not gated', () => {
   assert.equal(matchAction('GET', pathOf(COSTLY[4])), null);
   assert.equal(matchAction('GET', pathOf('/api/podcast/abc/factcheck')), null);

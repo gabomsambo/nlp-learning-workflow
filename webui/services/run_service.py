@@ -628,6 +628,11 @@ def _finish_podcast_script(
         on_stage,
         cancel_event,
     )
+    # Retain the confirmed audio choice in the durable script-run payload. The
+    # finisher may replace the initial request result, and the later audio queue
+    # needs these values after the browser has left the page.
+    result_payload["voice_path"] = kwargs.get("voice_path")
+    result_payload["auto_audio"] = bool(kwargs.get("auto_audio", False))
     db.finish_pipeline_run(
         run_id,
         RunStatus.SUCCEEDED.value,

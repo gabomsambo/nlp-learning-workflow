@@ -120,6 +120,99 @@ def test_omitting_options_still_dispatches_defaults(api_client, monkeypatch):
     assert seen["options"] == DEFAULT_OPTIONS
 
 
+def test_generate_passes_voice_and_explicit_audio_choice_to_the_script_run(api_client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        lambda path: seen.setdefault("validated_voice", path),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.set_last_podcast_voice_path",
+        lambda path: seen.setdefault("remembered_voice", path),
+    )
+
+    def dispatch(*args, **kwargs):
+        seen["dispatch"] = kwargs
+        return "run-voice"
+
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.dispatch_run", dispatch
+    )
+    response = api_client.post(
+        "/api/podcast/generate",
+        json={
+            "paper_id": "p1",
+            "pillar_id": "ignored",
+            "voice_path": "Podcasts/voices/host.wav",
+            "auto_audio": True,
+        },
+    )
+
+    assert response.status_code == 202
+    assert seen["validated_voice"] == "Podcasts/voices/host.wav"
+    assert seen["remembered_voice"] == "Podcasts/voices/host.wav"
+    assert seen["dispatch"]["voice_path"] == "Podcasts/voices/host.wav"
+    assert seen["dispatch"]["auto_audio"] is True
+    assert seen["dispatch"]["initial_result"] == {
+        "voice_path": "Podcasts/voices/host.wav",
+        "auto_audio": True,
+    }
+
+
+def test_auto_audio_requires_a_selected_usable_voice(api_client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.dispatch_run",
+        lambda *a, **k: calls.append(1) or "run-1",
+    )
+
+    response = api_client.post(
+        "/api/podcast/generate",
+        json={"paper_id": "p1", "pillar_id": "ignored", "auto_audio": True},
+    )
+
+    assert response.status_code == 400
+    assert "Choose a usable voice" in response.json()["detail"]
+    assert calls == []
+
+
+def test_unusable_voice_is_rejected_before_script_dispatch(api_client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        MagicMock(side_effect=ValueError("voice is too long")),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.dispatch_run",
+        lambda *a, **k: calls.append(1) or "run-1",
+    )
+
+    response = api_client.post(
+        "/api/podcast/generate",
+        json={"paper_id": "p1", "pillar_id": "ignored", "voice_path": "long.wav"},
+    )
+
+    assert response.status_code == 400
+    assert "too long" in response.json()["detail"]
+    assert calls == []
+
+
+def test_voice_list_includes_the_server_remembered_default(api_client, monkeypatch):
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.list_voices_payload",
+        lambda: {"voices": [{"relative_path": "host.wav", "usability": "usable"}]},
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_last_podcast_voice_path",
+        lambda: "host.wav",
+    )
+
+    response = api_client.get("/api/podcast/tts/voices")
+
+    assert response.status_code == 200
+    assert response.json()["last_voice_path"] == "host.wav"
+
+
 def test_an_unknown_option_is_refused_before_dispatch(api_client, monkeypatch):
     calls = []
 
@@ -339,4 +432,5 @@ def test_a_paper_deep_link_opens_the_studio_with_that_paper_selected(page_client
     assert library_tag and "hidden" in library_tag.group(0)
     assert 'value="arxiv:1706.03762" data-pillar="neural-architectures-language" selected' in studio
     assert "Generate Podcast Script" in studio
-    assert "about $0.26" in studio
+    assert "paid model calls" in studio
+    assert "local GPU" in studio

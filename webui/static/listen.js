@@ -233,6 +233,12 @@
     var warningsEl = document.getElementById('script-warnings');
     var settingsEl = document.getElementById('script-settings');
     var settingsTextEl = document.getElementById('script-settings-text');
+    var requestVoiceSelect = document.getElementById('request-voice-select');
+    var requestVoiceReason = document.getElementById('request-voice-reason');
+    var requestPreviewVoiceBtn = document.getElementById('request-preview-voice-btn');
+    var requestVoicePreview = document.getElementById('request-voice-preview');
+    var requestVoiceError = document.getElementById('request-voice-error');
+    var autoAudioCheckbox = document.getElementById('auto-audio');
     var ttsStatusMessage = document.getElementById('tts-status-message');
     var ttsStatusChip = document.getElementById('tts-status-chip');
     var ttsStartCommand = document.getElementById('tts-start-command');
@@ -247,8 +253,8 @@
     var audioRunStatus = document.getElementById('audio-run-status');
     var audioProgressBar = document.getElementById('audio-progress-bar');
     var audioStages = document.getElementById('audio-stages');
-    // The only <audio> in the document is the bar's; this page drives it through
-    // the same controller the bar does.
+    // Episode playback uses the shared bar controller. The voice preview audio
+    // elements remain independent and never replace the episode's track.
     var episodePlayer = document.getElementById('mini-player-audio');
     var controller = global.NlpPlayer && typeof global.NlpPlayer.get === 'function'
       ? global.NlpPlayer.get() : null;
@@ -296,6 +302,8 @@
     var unsavedScript = null;
     var ttsReady = false;
     var voicesCatalog = [];
+    var lastVoicePath = null;
+    var episodeVoicePath = null;
     var audioRunId = null;
     var scriptRunId = null;
     var scrubbing = false;
@@ -1748,6 +1756,9 @@
       currentTimeline = audio.timeline || null;
       renderScript(script);
       showStoredAudio(audio);
+      episodeVoicePath = audio.voice_path || (requestVoiceSelect && requestVoiceSelect.value) || lastVoicePath;
+      if (voiceSelect && episodeVoicePath) voiceSelect.value = episodeVoicePath;
+      syncAudioControls();
       setFollowing(true);
       updateViewSwitch();
       syncFollow();
@@ -1807,9 +1818,9 @@
       if (controller && liveSnapshot()) controller.seekBy(delta);
     }
 
-    function selectedVoiceMeta() {
-      if (!voiceSelect) return null;
-      var path = voiceSelect.value;
+    function selectedVoiceMeta(select) {
+      if (!select) return null;
+      var path = select.value;
       for (var i = 0; i < voicesCatalog.length; i++) {
         if (voicesCatalog[i].relative_path === path) return voicesCatalog[i];
       }
@@ -1817,10 +1828,14 @@
     }
 
     function syncAudioControls() {
-      var voice = selectedVoiceMeta();
+      var voice = selectedVoiceMeta(voiceSelect);
+      var requestVoice = selectedVoiceMeta(requestVoiceSelect);
       if (voiceReason) voiceReason.textContent = voice && voice.reason ? voice.reason : '';
+      if (requestVoiceReason) requestVoiceReason.textContent = requestVoice && requestVoice.reason ? requestVoice.reason : '';
       var voiceOk = !!(voice && voice.usability !== 'unusable');
+      var requestVoiceOk = !!(requestVoice && requestVoice.usability !== 'unusable');
       if (previewVoiceBtn) previewVoiceBtn.disabled = !voiceOk;
+      if (requestPreviewVoiceBtn) requestPreviewVoiceBtn.disabled = !requestVoiceOk;
       if (generateAudioBtn) {
         generateAudioBtn.disabled = !(ttsReady && currentScriptId && voiceOk && !audioRunId);
       }
@@ -1869,29 +1884,42 @@
         return res.json();
       }).then(function (data) {
         voicesCatalog = data.voices || [];
-        if (!voiceSelect) return;
-        voiceSelect.replaceChildren();
-        var placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = 'Select a voice…';
-        voiceSelect.appendChild(placeholder);
-        voicesCatalog.forEach(function (v) {
-          var opt = document.createElement('option');
-          opt.value = v.relative_path;
-          var mark = v.usability === 'usable' ? '' : v.usability === 'warning' ? ' ⚠' : ' ✗';
-          opt.textContent = v.label + mark;
-          opt.disabled = v.usability === 'unusable';
-          voiceSelect.appendChild(opt);
-        });
-        voiceSelect.disabled = voicesCatalog.length === 0;
+        lastVoicePath = data.last_voice_path || null;
+        function populate(select, preferred) {
+          if (!select) return;
+          select.replaceChildren();
+          var placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = 'Select a voice…';
+          select.appendChild(placeholder);
+          voicesCatalog.forEach(function (v) {
+            var opt = document.createElement('option');
+            opt.value = v.relative_path;
+            var mark = v.usability === 'usable' ? '' : v.usability === 'warning' ? ' ⚠' : ' ✗';
+            opt.textContent = v.label + mark;
+            opt.disabled = v.usability === 'unusable';
+            select.appendChild(opt);
+          });
+          select.disabled = voicesCatalog.length === 0;
+          var candidate = preferred || lastVoicePath;
+          var valid = voicesCatalog.find(function (v) {
+            return v.relative_path === candidate && v.usability !== 'unusable';
+          });
+          if (!valid) valid = voicesCatalog.find(function (v) { return v.usability !== 'unusable'; });
+          select.value = valid ? valid.relative_path : '';
+        }
+        populate(requestVoiceSelect, lastVoicePath);
+        populate(voiceSelect, episodeVoicePath || lastVoicePath);
         syncAudioControls();
       }).catch(function () {
-        if (!voiceSelect) return;
-        voiceSelect.replaceChildren();
-        var opt = document.createElement('option');
-        opt.textContent = 'Could not load voices';
-        voiceSelect.appendChild(opt);
-        voiceSelect.disabled = true;
+        [requestVoiceSelect, voiceSelect].forEach(function (select) {
+          if (!select) return;
+          select.replaceChildren();
+          var opt = document.createElement('option');
+          opt.textContent = 'Could not load voices';
+          select.appendChild(opt);
+          select.disabled = true;
+        });
       });
     }
 
@@ -1981,6 +2009,9 @@
       }
       if (result.script_id) {
         currentScriptId = result.script_id;
+        episodeVoicePath = result.voice_path || (requestVoiceSelect && requestVoiceSelect.value) || lastVoicePath;
+        if (voiceSelect && episodeVoicePath) voiceSelect.value = episodeVoicePath;
+        syncAudioControls();
         unsavedScript = null;
         var warnings = result.warnings || [];
         var partial = warnings.length > 0;
@@ -2043,6 +2074,8 @@
           paper_id: paperId,
           pillar_id: pillarId,
           options: collectOptions(),
+          voice_path: requestVoiceSelect ? requestVoiceSelect.value || null : null,
+          auto_audio: !!(autoAudioCheckbox && autoAudioCheckbox.checked),
         }),
       }).then(function (res) {
         return res.json().then(function (data) { return { res: res, data: data }; });
@@ -2308,6 +2341,12 @@
         if (paperError) paperError.hidden = true;
         if (paperField) paperField.classList.remove('field-invalid');
         if (!pillarId) pillarId = paperId;
+        var autoAudio = !!(autoAudioCheckbox && autoAudioCheckbox.checked);
+        var requestedVoice = selectedVoiceMeta(requestVoiceSelect);
+        var usableVoice = !!(requestedVoice && requestedVoice.usability !== 'unusable');
+        if (requestVoiceError) requestVoiceError.hidden = !autoAudio || usableVoice;
+        if (autoAudio && !usableVoice) return;
+        episodeVoicePath = requestVoiceSelect ? requestVoiceSelect.value || null : null;
         startScript(paperId, pillarId);
       });
     }
@@ -2350,6 +2389,13 @@
         syncAudioControls();
       });
     }
+    if (requestVoiceSelect) {
+      requestVoiceSelect.addEventListener('change', function () {
+        if (requestVoicePreview) requestVoicePreview.hidden = true;
+        if (requestVoiceError) requestVoiceError.hidden = true;
+        syncAudioControls();
+      });
+    }
     if (factcheckBtn) {
       factcheckBtn.addEventListener('click', function () {
         if (factcheckButtonAction === 'reload') {
@@ -2374,6 +2420,15 @@
         voicePreview.src = '/api/podcast/tts/voices/preview?path=' + encodeURIComponent(voiceSelect.value) + '&t=' + Date.now();
         voicePreview.hidden = false;
         voicePreview.load();
+      });
+    }
+    if (requestPreviewVoiceBtn) {
+      requestPreviewVoiceBtn.addEventListener('click', function () {
+        if (!requestVoiceSelect || !requestVoiceSelect.value || !requestVoicePreview) return;
+        if (controller) controller.pause();
+        requestVoicePreview.src = '/api/podcast/tts/voices/preview?path=' + encodeURIComponent(requestVoiceSelect.value) + '&t=' + Date.now();
+        requestVoicePreview.hidden = false;
+        requestVoicePreview.load();
       });
     }
     if (generateAudioBtn) generateAudioBtn.addEventListener('click', startAudio);

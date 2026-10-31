@@ -17,7 +17,9 @@ from nlp_pillars.db import (
     get_podcast_scripts, get_podcast_script_by_id,
     get_active_factcheck_run, get_latest_podcast_fact_check,
     FactcheckLookupError, PipelineRunCreateError, PodcastScriptLookupError,
-    ClaimDismissalError, get_claim_script_id, set_claim_dismissal,
+    PodcastPreferenceError, ClaimDismissalError, get_claim_script_id,
+    get_last_podcast_voice_path, set_claim_dismissal,
+    set_last_podcast_voice_path,
 )
 from webui.services import (
     podcast_audio_service,
@@ -57,6 +59,12 @@ class PodcastGenerateRequest(BaseModel):
     paper_id: str
     pillar_id: str
     options: Optional[Dict[str, str]] = None
+    voice_path: Optional[str] = Field(
+        None, description="Library-relative voice path to use for the episode"
+    )
+    # Consent must be present in the request; the Studio supplies true from its
+    # checked-by-default control. Legacy callers that omit it do not authorize GPU work.
+    auto_audio: bool = False
 
 
 class PodcastGenerateResponse(BaseModel):
@@ -101,7 +109,18 @@ async def tts_status():
 @router.get("/tts/voices")
 async def tts_voices():
     """List voice references from the mounted library with usability preflight."""
-    return JSONResponse(content=podcast_audio_service.list_voices_payload())
+    payload = podcast_audio_service.list_voices_payload()
+    try:
+        payload["last_voice_path"] = get_last_podcast_voice_path()
+    except PodcastPreferenceError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Could not load the remembered podcast voice: {exc}. "
+                "Apply docs/migrations/037_podcast_audio_queue.sql."
+            ),
+        )
+    return JSONResponse(content=payload)
 
 
 @router.get("/tts/voices/preview")
@@ -188,6 +207,20 @@ async def generate_podcast(request: PodcastGenerateRequest, http_request: Reques
         # never four minutes of the wrong podcast.
         options = resolve(request.options)
 
+        if request.auto_audio and not request.voice_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a usable voice or turn off 'Also make audio after saving'.",
+            )
+
+        if request.voice_path:
+            try:
+                podcast_audio_service.validate_voice_for_generation(request.voice_path)
+            except FileNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
         from nlp_pillars.db import get_client
         client = get_client()
         paper_response = (client.table('papers')
@@ -204,6 +237,21 @@ async def generate_podcast(request: PodcastGenerateRequest, http_request: Reques
         actual_pillar_id = paper_response['data'][0]['pillar_id']
         logger.info(f"Using pillar_id from paper: {actual_pillar_id}")
 
+        # This POST has passed the spend confirmation dependency. Remember only a
+        # library voice that was checked above, and do so before a paid worker can
+        # start; a missing migration therefore cannot leave a hidden script run.
+        if request.voice_path:
+            try:
+                set_last_podcast_voice_path(request.voice_path)
+            except PodcastPreferenceError as e:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Could not remember the selected voice: {e}. "
+                        "Apply docs/migrations/037_podcast_audio_queue.sql."
+                    ),
+                )
+
         try:
             run_id = run_service.dispatch_run(
                 http_request.app.state.scheduler,
@@ -211,8 +259,14 @@ async def generate_podcast(request: PodcastGenerateRequest, http_request: Reques
                 pillar_id=actual_pillar_id,
                 trigger_source=podcast_script_service.TRIGGER_UI_PODCAST_SCRIPT,
                 kind=podcast_script_service.KIND_PODCAST_SCRIPT,
+                initial_result={
+                    "voice_path": request.voice_path,
+                    "auto_audio": request.auto_audio,
+                },
                 paper_id=request.paper_id,
                 options=options,
+                voice_path=request.voice_path,
+                auto_audio=request.auto_audio,
             )
         except RunAlreadyActiveError as e:
             # Should be unreachable once 016 is applied (script runs are exempt).

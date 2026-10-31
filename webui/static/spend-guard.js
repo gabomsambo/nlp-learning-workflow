@@ -20,7 +20,7 @@
     { re: /^\/pipeline\/run$/, title: 'Run the pipeline', what: 'Finds, reads and summarises new papers with Claude.' },
     { re: /^\/api\/pillars\/[^/]+\/select$/, title: 'Process selected papers', what: 'Reads each paper and writes notes, a lesson and a quiz with Claude.' },
     { re: /^\/api\/pillars\/[^/]+\/upload\/(url|pdf)$/, title: 'Add this paper', what: 'Processes the paper with Claude (summary, lesson, quiz).' },
-    { re: /^\/api\/podcast\/generate$/, title: 'Generate a podcast script', what: 'Five model calls, roughly a quarter of a dollar.' },
+    { re: /^\/api\/podcast\/generate$/, title: 'Generate a podcast script', what: 'Writing the script makes paid model calls. If “Also make audio after saving” is checked, it will also use IndexTTS on the local GPU after the script saves.' },
     { re: /^\/api\/podcast\/tts\/generate$/, title: 'Generate audio', what: 'Runs the speech model on the computer’s GPU for several minutes.' },
     { re: /^\/api\/podcast\/[^/]+\/factcheck$/, title: 'Check the facts', what: 'Checks every claim against the paper with Claude.' },
     { re: /^\/api\/playgrounds\/[^/]+\/explain$/, title: 'Generate the study guide', what: 'Explains every code cell with Claude Sonnet, about a dime per dozen cells.' },
