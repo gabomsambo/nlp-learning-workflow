@@ -313,7 +313,7 @@ def test_no_args_prints_help(launcher):
     proc = launcher["run"]([])
     assert proc.returncode == 0
     assert "NLP learning workstation" in proc.stdout
-    for name in ("up", "down", "status", "logs", "install-desktop"):
+    for name in ("up", "down", "tts stop", "status", "logs", "install-desktop"):
         assert name in proc.stdout
     assert "\x1b" not in proc.stdout
     assert _log(launcher) == ""
@@ -427,10 +427,69 @@ def test_down_stops_only_the_pid_this_script_started(launcher):
     assert "Database and uploads stay on disk." in stopped.stdout
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+    with pytest.raises(ProcessLookupError):
+        os.killpg(pid, 0)
     assert not pid_file.exists()
     log = _log(launcher)
     assert " stop" in log
     assert " down" not in log
+
+
+def test_tts_stop_stops_only_the_pid_this_script_started(launcher):
+    started = launcher["run"](["up", "--tts"], extra={"WORKSTATION_TTS_OK": "1"})
+    assert started.returncode == 0, started.stderr
+    pid_file = launcher["state"] / "nlp-workstation" / "indextts.pid"
+    pid = int(pid_file.read_text().strip())
+    os.kill(pid, 0)
+
+    launcher["log"].write_text("")
+    stopped = launcher["run"](["tts", "stop"])
+    assert stopped.returncode == 0, stopped.stderr
+    assert "Stopping IndexTTS" in stopped.stdout
+    assert "IndexTTS stopped." in stopped.stdout
+    assert "./workstation up --tts" in stopped.stdout
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    with pytest.raises(ProcessLookupError):
+        os.killpg(pid, 0)
+    assert not pid_file.exists()
+    assert "docker" not in _log(launcher)
+
+
+def test_tts_stop_when_not_running_does_not_call_docker(launcher):
+    proc = launcher["run"](["tts", "stop"])
+    assert proc.returncode == 0, proc.stderr
+    assert "IndexTTS is not running." in proc.stdout
+    assert "docker" not in _log(launcher)
+
+
+def test_tts_stop_leaves_a_foreign_listener_running(launcher):
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(1)
+    port = sock.getsockname()[1]
+    try:
+        proc = launcher["run"](
+            ["tts", "stop"],
+            extra={
+                "INDEXTTS_URL": f"http://127.0.0.1:{port}",
+                "WORKSTATION_SS_LISTEN_PORT": str(port),
+            },
+        )
+        assert proc.returncode == 1
+        assert f"listening on port {port}" in proc.stderr
+        assert "Leaving it alone" in proc.stderr
+        assert sock.getsockname()[1] == port
+        assert "docker" not in _log(launcher)
+    finally:
+        sock.close()
+
+
+def test_down_tts_is_an_alias_for_stopping_only_indextts(launcher):
+    proc = launcher["run"](["down", "--tts"])
+    assert proc.returncode == 0, proc.stderr
+    assert "IndexTTS is not running." in proc.stdout
+    assert "docker" not in _log(launcher)
 
 
 def test_down_leaves_a_listener_it_did_not_start(launcher):

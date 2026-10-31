@@ -50,6 +50,9 @@ the host GPU and stays off unless you opt in. It listens on port **3026**:
 `./workstation status` prints what is up. `./workstation logs webui` follows one
 service (`tts` follows the IndexTTS log). `./workstation down` stops the
 containers and leaves the database and uploaded PDFs in place.
+To stop only the IndexTTS process and free the GPU, run
+`./workstation tts stop` (also accepted as `./workstation down --tts`). Restart
+it with `./workstation up --tts`.
 `./workstation install-desktop` adds an application-menu icon for this checkout
 that runs `up` in a terminal. Pass `--build` when the script says the web image
 is older than the code (`./workstation up --build`).

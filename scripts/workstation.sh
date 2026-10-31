@@ -46,6 +46,7 @@ ${C_BOLD}NLP learning workstation${C_OFF}
 Usage:
   ./workstation up [--build] [--tts]   Start the stack and open the app
   ./workstation down                   Stop containers, keep database and uploads
+  ./workstation tts stop              Stop only IndexTTS started by this script
   ./workstation status                 Show whether each dependency is up
   ./workstation logs [service]         Follow logs (webui, db, postgrest, searxng, qdrant, scheduler,
                                        playground-runner, tts)
@@ -64,6 +65,7 @@ IndexTTS (podcast audio) runs on the host GPU and is off unless you pass --tts.
 It is started only when nothing is already listening on its port.
 
 down stops containers this checkout started. It does not delete them or their data.
+Use ./workstation tts stop to free the GPU without stopping the stack.
 EOF
 }
 
@@ -246,33 +248,43 @@ start_indextts_if_needed() {
 }
 
 stop_indextts_if_ours() {
-  local pid pgid
+  local pid pgid _
+  # Return 0 if absent, 1 if unowned, 2 if still running, 3 when stopped.
   [[ -f "$PID_FILE" ]] || return 0
   pid="$(tr -d '[:space:]' <"$PID_FILE")"
   if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
     rm -f "$PID_FILE"
     return 0
   fi
-  if ! kill -0 "$pid" 2>/dev/null; then
+  if kill -0 "$pid" 2>/dev/null; then
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$pgid" != "$pid" ]]; then
+      echo "IndexTTS pid ${pid} is not a process this script started. Leaving it alone."
+      return 1
+    fi
+  elif ! kill -0 -- "-$pid" 2>/dev/null; then
     rm -f "$PID_FILE"
     return 0
   fi
-  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  if [[ "$pgid" != "$pid" ]]; then
-    echo "IndexTTS pid ${pid} is not a process this script started. Leaving it alone."
-    return 0
-  fi
   echo "Stopping IndexTTS (pid ${pid})."
-  kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
-  local _
+  kill -- "-$pid" 2>/dev/null || return 2
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || break
+    kill -0 -- "-$pid" 2>/dev/null || break
     sleep 0.2
   done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -9 -- "-$pid" 2>/dev/null || true
+  if kill -0 -- "-$pid" 2>/dev/null; then
+    kill -9 -- "-$pid" 2>/dev/null || return 2
+    for _ in 1 2 3 4 5; do
+      kill -0 -- "-$pid" 2>/dev/null || break
+      sleep 0.2
+    done
+  fi
+  if kill -0 -- "-$pid" 2>/dev/null; then
+    echo "IndexTTS process group ${pid} is still running; keeping ${PID_FILE}." >&2
+    return 2
   fi
   rm -f "$PID_FILE"
+  return 3
 }
 
 open_browser() {
@@ -366,11 +378,38 @@ Usage: ./workstation up [--build] [--tts]"
 
 cmd_down() {
   require_docker
-  stop_indextts_if_ours
+  stop_indextts_if_ours || true
   echo "Stopping containers. Database and uploads stay on disk."
   if ! compose stop; then
     fail "Could not stop the containers. See why with: ./workstation logs"
   fi
+}
+
+cmd_tts_stop() {
+  local port stop_status=0
+  port="$(port_from_url "$(host_tts_url)")"
+  stop_indextts_if_ours || stop_status=$?
+
+  if port_open "$port"; then
+    echo "IndexTTS is listening on port ${port}, but this script did not start it. Leaving it alone." >&2
+    return 1
+  fi
+  case "$stop_status" in
+    0)
+      echo "IndexTTS is not running."
+      ;;
+    1)
+      echo "Could not verify ownership of the IndexTTS process; leaving it alone." >&2
+      return 1
+      ;;
+    2)
+      echo "Could not confirm the IndexTTS process group stopped." >&2
+      return 1
+      ;;
+    3)
+      echo "IndexTTS stopped. Start it again with: ./workstation up --tts"
+      ;;
+  esac
 }
 
 row() {
@@ -639,8 +678,20 @@ main() {
       ;;
     down)
       shift
-      [[ $# -eq 0 ]] || die "down takes no arguments"
-      cmd_down
+      if [[ $# -eq 0 ]]; then
+        cmd_down
+      elif [[ $# -eq 1 && "$1" == "--tts" ]]; then
+        cmd_tts_stop
+      else
+        die "down takes no arguments"
+      fi
+      ;;
+    tts)
+      shift
+      [[ "${1:-}" == "stop" ]] || die "Usage: ./workstation tts stop"
+      shift
+      [[ $# -eq 0 ]] || die "tts stop takes no arguments"
+      cmd_tts_stop
       ;;
     status)
       shift
