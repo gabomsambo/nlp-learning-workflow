@@ -560,6 +560,11 @@ class AudioMetadata(BaseModel):
     duration_seconds: Optional[float] = Field(None, description="Final audio duration")
     generated_at: Optional[datetime] = Field(None, description="When audio was generated")
     chunk_count: Optional[int] = Field(None, description="Number of synthesis chunks")
+    script_sha256: Optional[str] = Field(None, description="Hash of the saved source script")
+    voice_sha256: Optional[str] = Field(None, description="Hash of the voice reference used")
+    engine_revision: Optional[str] = Field(None, description="IndexTTS API and defaults revision")
+    synthesis_parameters: Dict[str, Any] = Field(default_factory=dict)
+    chunk_fingerprints: List[str] = Field(default_factory=list)
     timeline: Optional[Dict[str, Any]] = Field(
         None,
         description="Word and line times for read-along; see nlp_pillars/tts/alignment.py",

@@ -11,6 +11,8 @@ const {
   episodeInitial,
   paperPageHref,
   audioHref,
+  ttsStatusLabel,
+  shouldShowTtsStartCommand,
   formatDuration,
   formatCreated,
   formatValueText,
@@ -31,6 +33,7 @@ const {
 } = require('../../webui/static/listen.js');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '../../webui/static/listen.js'), 'utf8');
+const TEMPLATE = fs.readFileSync(path.join(__dirname, '../../webui/templates/podcast.html'), 'utf8');
 
 test('paper links encode a colon and audio names cannot escape the directory', () => {
   assert.equal(paperPageHref('arxiv:1706.03762'), '/papers/arxiv%3A1706.03762');
@@ -38,6 +41,16 @@ test('paper links encode a colon and audio names cannot escape the directory', (
   assert.equal(audioHref('episode.mp3'), '/api/podcast/audio/episode.mp3');
   assert.equal(audioHref('../secret.mp3'), null);
   assert.equal(audioHref('nested/ep.mp3'), null);
+});
+
+test('IndexTTS status labels stay distinct and only not-running shows the start command', () => {
+  assert.equal(ttsStatusLabel('ready'), 'Ready');
+  assert.equal(ttsStatusLabel('not_running'), 'Not running');
+  assert.equal(ttsStatusLabel('wrong_service'), 'Wrong service');
+  assert.equal(ttsStatusLabel('contract_mismatch'), 'Contract mismatch');
+  assert.equal(shouldShowTtsStartCommand('not_running', 'start IndexTTS'), true);
+  assert.equal(shouldShowTtsStartCommand('wrong_service', 'start IndexTTS'), false);
+  assert.equal(shouldShowTtsStartCommand('contract_mismatch', 'start IndexTTS'), false);
 });
 
 test('duration, dates, and the scrubber label', () => {
@@ -233,4 +246,13 @@ test('the listen script does not build HTML or start a paid call by itself', () 
   const bootTail = SOURCE.slice(SOURCE.lastIndexOf('refreshTtsStatus();'));
   assert.equal(bootTail.includes('/api/podcast/generate'), false);
   assert.equal(bootTail.includes('/api/podcast/tts/generate'), false);
+});
+
+test('the script form shows a voice picker and explicit default-on audio consent', () => {
+  assert.match(TEMPLATE, /id="request-voice-select"/);
+  assert.match(TEMPLATE, /id="request-preview-voice-btn"/);
+  assert.match(TEMPLATE, /id="auto-audio" checked/);
+  assert.match(SOURCE, /voice_path: requestVoiceSelect \? requestVoiceSelect\.value \|\| null : null/);
+  assert.match(SOURCE, /auto_audio: !!\(autoAudioCheckbox && autoAudioCheckbox\.checked\)/);
+  assert.match(SOURCE, /lastVoicePath = data\.last_voice_path \|\| null/);
 });

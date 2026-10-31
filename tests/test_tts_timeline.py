@@ -159,6 +159,8 @@ class TestAudioJob:
         script = MagicMock()
         script.script = SCRIPT
         script.paper_id = "paper-1"
+        (tmp_path / "v.wav").write_bytes(b"fake voice reference")
+        (tmp_path / "chunk.wav").write_bytes(b"fake synthesized chunk")
         client = MagicMock()
         client.check_status.return_value = MagicMock(status=service.TtsEngineStatus.READY, message="ready")
         client.synthesize.return_value = str(tmp_path / "chunk.wav")

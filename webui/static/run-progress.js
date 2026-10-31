@@ -409,6 +409,25 @@
     var done = countCompleted(run);
 
     if (run.status === 'running' || run.status === 'pending') {
+      if (run.kind === 'podcast_audio' && run.status === 'pending') {
+        var queue = run.result || {};
+        if (queue.queue_state === 'wrong_service') {
+          return 'Wrong service — ' + (queue.queue_message || 'IndexTTS is not available');
+        }
+        if (queue.queue_state === 'contract_mismatch') {
+          return 'IndexTTS contract mismatch — ' +
+                 (queue.queue_message || 'the audio API is incompatible');
+        }
+        if (queue.queue_state === 'invalid_request') {
+          return 'Audio request needs attention — ' +
+                 (queue.queue_message || 'stored request is incomplete');
+        }
+        if (queue.queue_state === 'waiting_for_indextts') {
+          return 'Waiting for IndexTTS' +
+                 (queue.queue_message ? ' — ' + queue.queue_message : '') +
+                 (queue.start_command ? ' Start command: ' + queue.start_command : '');
+        }
+      }
       if (!run.current_stage) return 'Starting…';
       return 'Step ' + Math.min(done + 1, total) + ' of ' + total + ' — ' +
              stageLabel(run.current_stage);
@@ -453,7 +472,11 @@
         return 'Script generated' + wordBit + ' but NOT saved — download it now';
       }
       if (run.status === 'succeeded') {
-        return 'Done — "' + scriptTitle + '"' + wordBit;
+        var scriptDone = 'Done — "' + scriptTitle + '"' + wordBit;
+        if (run.result && run.result.audio_queue_error) {
+          return scriptDone + ' — audio was not queued: ' + run.result.audio_queue_error;
+        }
+        return scriptDone;
       }
       if (run.status === 'failed') {
         return 'Failed' + (run.error ? ' — ' + run.error : '');
@@ -475,6 +498,9 @@
       if (run.status === 'cancelled') {
         return 'Cancelled. The script was not changed.';
       }
+    }
+    if (run.kind === 'podcast_audio') {
+      if (run.status === 'cancelled') return 'Cancelled while waiting for IndexTTS';
     }
     if (run.kind === 'playground_explain') {
       // Two facts, like an upload: whether a guide was saved, and whether it
@@ -545,6 +571,10 @@
     var partial = typeof run === 'object' && run && run.papers_failed > 0;
     if (status === 'succeeded' && typeof run === 'object' && run
         && run.result && run.result.saved === false) {
+      return TONE_WARN;
+    }
+    if (status === 'succeeded' && typeof run === 'object' && run
+        && run.result && run.result.audio_queue_error) {
       return TONE_WARN;
     }
     if (status === 'succeeded') return partial ? TONE_WARN : TONE_OK;

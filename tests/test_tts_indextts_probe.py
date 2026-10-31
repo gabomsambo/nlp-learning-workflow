@@ -1,6 +1,11 @@
 """Tests for IndexTTS Gradio contract probing."""
 
-from nlp_pillars.tts.indextts_client import GEN_SINGLE_PARAMS, IndexTtsClient
+from nlp_pillars.tts.indextts_client import (
+    GEN_SINGLE_PARAMS,
+    IndexTtsClient,
+    contract_revision,
+    synthesis_parameters,
+)
 
 
 def test_gen_single_params_match_contract():
@@ -8,6 +13,13 @@ def test_gen_single_params_match_contract():
     assert GEN_SINGLE_PARAMS[0] == "emo_control_method"
     assert GEN_SINGLE_PARAMS[2] == "text"
     assert GEN_SINGLE_PARAMS[-1] == "param_23"
+
+
+def test_contract_revision_tracks_the_endpoint_shape_and_synthesis_parameters():
+    params = synthesis_parameters()
+    assert set(params) == set(GEN_SINGLE_PARAMS) - {"prompt", "text", "emo_ref_path"}
+    assert contract_revision() == contract_revision()
+    assert contract_revision(512) != contract_revision(1024)
 
 
 def test_not_running_when_connection_fails(tmp_path):

@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from webui.services.postgrest_client import PostgrestClient
-from webui.services.run_service import request_cancel
+from webui.services.run_service import cancel_run as cancel_pipeline_run
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +112,11 @@ async def cancel_run(run_id: str, request: Request) -> Dict[str, Any]:
     finished already, or it may belong to the scheduler container, which has its own
     registry.
     """
-    accepted = request_cancel(request.app.state.cancel_events, run_id)
+    accepted, message = cancel_pipeline_run(
+        request.app.state.cancel_events, run_id,
+    )
     return {
         "run_id": run_id,
         "accepted": accepted,
-        "message": (
-            "Cancellation requested; the run will stop after its current stage."
-            if accepted
-            else "No cancellable run with that id in this process."
-        ),
+        "message": message,
     }

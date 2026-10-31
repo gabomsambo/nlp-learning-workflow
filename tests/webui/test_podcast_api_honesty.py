@@ -74,6 +74,31 @@ def test_generate_answers_202_with_a_run_id(api_client, monkeypatch):
     assert r.json()["run_id"] == "run-abc"
 
 
+def test_audio_route_serves_current_and_legacy_files(api_client, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from webui.routers.api import podcast as podcast_api
+
+    current = tmp_path / "podcasts"
+    legacy = tmp_path / "legacy-podcast-audio"
+    current.mkdir()
+    legacy.mkdir()
+    (current / "new.mp3").write_bytes(b"new recording")
+    (legacy / "old.mp3").write_bytes(b"retained recording")
+    monkeypatch.setattr(
+        podcast_api,
+        "get_settings",
+        lambda: SimpleNamespace(
+            podcast_audio_dir=str(current),
+            podcast_audio_legacy_dir=str(legacy),
+        ),
+    )
+
+    assert api_client.get("/api/podcast/audio/new.mp3").content == b"new recording"
+    assert api_client.get("/api/podcast/audio/old.mp3").content == b"retained recording"
+    assert api_client.get("/api/podcast/audio/missing.mp3").status_code == 404
+
+
 def test_options_are_resolved_before_dispatch(api_client, monkeypatch):
     seen = {}
 
@@ -118,6 +143,166 @@ def test_omitting_options_still_dispatches_defaults(api_client, monkeypatch):
 
     assert res.status_code == 202
     assert seen["options"] == DEFAULT_OPTIONS
+
+
+def test_generate_passes_voice_and_explicit_audio_choice_to_the_script_run(api_client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        lambda path: seen.setdefault("validated_voice", path),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.set_last_podcast_voice_path",
+        lambda path: seen.setdefault("remembered_voice", path),
+    )
+
+    def dispatch(*args, **kwargs):
+        seen["dispatch"] = kwargs
+        return "run-voice"
+
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.dispatch_run", dispatch
+    )
+    response = api_client.post(
+        "/api/podcast/generate",
+        json={
+            "paper_id": "p1",
+            "pillar_id": "ignored",
+            "voice_path": "Podcasts/voices/host.wav",
+            "auto_audio": True,
+        },
+    )
+
+    assert response.status_code == 202
+    assert seen["validated_voice"] == "Podcasts/voices/host.wav"
+    assert seen["remembered_voice"] == "Podcasts/voices/host.wav"
+    assert seen["dispatch"]["voice_path"] == "Podcasts/voices/host.wav"
+    assert seen["dispatch"]["auto_audio"] is True
+    assert seen["dispatch"]["initial_result"] == {
+        "voice_path": "Podcasts/voices/host.wav",
+        "auto_audio": True,
+    }
+
+
+def test_auto_audio_requires_a_selected_usable_voice(api_client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.dispatch_run",
+        lambda *a, **k: calls.append(1) or "run-1",
+    )
+
+    response = api_client.post(
+        "/api/podcast/generate",
+        json={"paper_id": "p1", "pillar_id": "ignored", "auto_audio": True},
+    )
+
+    assert response.status_code == 400
+    assert "Choose a usable voice" in response.json()["detail"]
+    assert calls == []
+
+
+def test_unusable_voice_is_rejected_before_script_dispatch(api_client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        MagicMock(side_effect=ValueError("voice is too long")),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.dispatch_run",
+        lambda *a, **k: calls.append(1) or "run-1",
+    )
+
+    response = api_client.post(
+        "/api/podcast/generate",
+        json={"paper_id": "p1", "pillar_id": "ignored", "voice_path": "long.wav"},
+    )
+
+    assert response.status_code == 400
+    assert "too long" in response.json()["detail"]
+    assert calls == []
+
+
+def test_voice_list_includes_the_server_remembered_default(api_client, monkeypatch):
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.list_voices_payload",
+        lambda: {"voices": [{"relative_path": "host.wav", "usability": "usable"}]},
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_last_podcast_voice_path",
+        lambda: "host.wav",
+    )
+
+    response = api_client.get("/api/podcast/tts/voices")
+
+    assert response.status_code == 200
+    assert response.json()["last_voice_path"] == "host.wav"
+
+
+def test_manual_audio_is_queued_while_indextts_is_offline(api_client, monkeypatch):
+    from types import SimpleNamespace
+    import hashlib
+
+    script_text = "[HOST] Saved episode text."
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_podcast_script_by_id",
+        lambda _script_id: SimpleNamespace(
+            id="script-1", pillar_id="models-architectures", script=script_text,
+        ),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.tts_status_payload",
+        lambda: (_ for _ in ()).throw(AssertionError("route must not gate on TTS")),
+    )
+    seen = {}
+
+    def queue(**kwargs):
+        seen.update(kwargs)
+        return "audio-run", True
+
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.queue_podcast_audio_run", queue
+    )
+    response = api_client.post(
+        "/api/podcast/tts/generate",
+        json={"script_id": "script-1", "voice_path": "nested/voice.wav"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["run_id"] == "audio-run"
+    assert seen["script_sha256"] == hashlib.sha256(script_text.encode()).hexdigest()
+    assert seen["consent"] is True
+
+
+def test_manual_audio_queue_names_migration_037_on_database_failure(api_client, monkeypatch):
+    from types import SimpleNamespace
+    from webui.services.run_service import PodcastAudioQueueError
+
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_podcast_script_by_id",
+        lambda _script_id: SimpleNamespace(
+            id="script-1", pillar_id="models-architectures", script="text",
+        ),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.queue_podcast_audio_run",
+        MagicMock(side_effect=PodcastAudioQueueError(
+            "Apply docs/migrations/037_podcast_audio_queue.sql"
+        )),
+    )
+    response = api_client.post(
+        "/api/podcast/tts/generate",
+        json={"script_id": "script-1", "voice_path": "nested/voice.wav"},
+    )
+    assert response.status_code == 503
+    assert "037_podcast_audio_queue.sql" in response.json()["detail"]
 
 
 def test_an_unknown_option_is_refused_before_dispatch(api_client, monkeypatch):
@@ -339,4 +524,5 @@ def test_a_paper_deep_link_opens_the_studio_with_that_paper_selected(page_client
     assert library_tag and "hidden" in library_tag.group(0)
     assert 'value="arxiv:1706.03762" data-pillar="neural-architectures-language" selected' in studio
     assert "Generate Podcast Script" in studio
-    assert "about $0.26" in studio
+    assert "paid model calls" in studio
+    assert "local GPU" in studio

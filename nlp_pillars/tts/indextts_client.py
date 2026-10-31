@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import time
@@ -53,6 +55,48 @@ GEN_SINGLE_PARAMS: List[str] = [
     "param_22",
     "param_23",
 ]
+
+DEFAULT_SYNTHESIS_PARAMETERS = {
+    "emo_control_method": "Same as the voice reference",
+    "emo_weight": 0.65,
+    **{f"vec{i}": 0.0 for i in range(1, 9)},
+    "emo_text": "",
+    "emo_random": False,
+    "param_16": True,
+    "param_17": 0.8,
+    "param_18": 30,
+    "param_19": 0.8,
+    "param_20": 0.0,
+    "param_21": 3,
+    "param_22": 10.0,
+    "param_23": 1500,
+}
+
+
+def synthesis_parameters(
+    max_text_tokens_per_segment: int = DEFAULT_MAX_TOKENS_PER_SEGMENT,
+) -> dict:
+    """Return the parameters that affect a /gen_single synthesis request."""
+    return {
+        **DEFAULT_SYNTHESIS_PARAMETERS,
+        "max_text_tokens_per_segment": max_text_tokens_per_segment,
+    }
+
+
+def contract_revision(
+    max_text_tokens_per_segment: int = DEFAULT_MAX_TOKENS_PER_SEGMENT,
+) -> str:
+    """Stable revision for the exact Gradio endpoint shape and call defaults."""
+    payload = {
+        "engine": "indextts",
+        "api_name": "/gen_single",
+        "parameters": GEN_SINGLE_PARAMS,
+        "synthesis_parameters": synthesis_parameters(max_text_tokens_per_segment),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"indextts-gen-single-{digest}"
 
 DEFAULT_START_COMMAND = (
     "cd /home/gabo/index-tts && uv run webui.py --host 0.0.0.0 --port 3026"
@@ -205,31 +249,32 @@ class IndexTtsClient:
             raise TtsSegmentError("text is empty after IndexTTS preparation")
 
         client = Client(self.base_url, download_files=str(self.download_dir))
+        params = synthesis_parameters(max_text_tokens_per_segment)
         job = client.submit(
-            "Same as the voice reference",
+            params["emo_control_method"],
             handle_file(voice_path),
             prepared,
             None,
-            0.65,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            "",
-            False,
-            max_text_tokens_per_segment,
-            True,
-            0.8,
-            30,
-            0.8,
-            0.0,
-            3,
-            10.0,
-            1500,
+            params["emo_weight"],
+            params["vec1"],
+            params["vec2"],
+            params["vec3"],
+            params["vec4"],
+            params["vec5"],
+            params["vec6"],
+            params["vec7"],
+            params["vec8"],
+            params["emo_text"],
+            params["emo_random"],
+            params["max_text_tokens_per_segment"],
+            params["param_16"],
+            params["param_17"],
+            params["param_18"],
+            params["param_19"],
+            params["param_20"],
+            params["param_21"],
+            params["param_22"],
+            params["param_23"],
             api_name="/gen_single",
         )
 

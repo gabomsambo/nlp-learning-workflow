@@ -100,6 +100,46 @@ test('a running run reports its position, not a slug', () => {
   assert.equal(summarise(run), 'Step 7 of 11 — Summarizing');
 });
 
+test('a durable audio waiter shows IndexTTS state and only its start command', () => {
+  const waiting = summarise({
+    kind: 'podcast_audio', status: 'pending', current_stage: null, stages: [],
+    result: {
+      queue_state: 'waiting_for_indextts',
+      queue_message: 'IndexTTS is not running on port 3026.',
+      start_command: './start-indextts.sh',
+    },
+  });
+  assert.match(waiting, /^Waiting for IndexTTS/);
+  assert.match(waiting, /Start command: \.\/start-indextts\.sh/);
+
+  const wrong = summarise({
+    kind: 'podcast_audio', status: 'pending', current_stage: null, stages: [],
+    result: { queue_state: 'wrong_service', queue_message: 'Dots TTS answered.' },
+  });
+  assert.match(wrong, /Wrong service/);
+  assert.doesNotMatch(wrong, /Start command/);
+
+  const mismatch = summarise({
+    kind: 'podcast_audio', status: 'pending', current_stage: null, stages: [],
+    result: { queue_state: 'contract_mismatch', queue_message: 'Missing \/gen_single.' },
+  });
+  assert.match(mismatch, /contract mismatch/i);
+  assert.doesNotMatch(mismatch, /Start command/);
+});
+
+test('a saved script reports when requested audio could not be queued', () => {
+  const run = {
+    kind: 'podcast_script', status: 'succeeded', stages: stages(7),
+    result: {
+      saved: true, title: 'Episode', word_count: 120,
+      audio_queue_error: 'Apply docs/migrations/037_podcast_audio_queue.sql.',
+    },
+  };
+  assert.match(summarise(run), /audio was not queued/i);
+  assert.match(summarise(run), /037_podcast_audio_queue\.sql/);
+  assert.equal(statusColor(run), 'run-warn');
+});
+
 test('a failure carries its error text', () => {
   const run = { status: 'failed', error: 'RateLimitError 429', stages: stages(6) };
   assert.equal(summarise(run), 'Failed — RateLimitError 429');

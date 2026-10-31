@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import logging
 from contextlib import asynccontextmanager
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +81,22 @@ def create_app() -> FastAPI:
         swept = run_service.sweep_interrupted_runs_on_startup()
         if swept:
             logger.warning(f"Marked {swept} abandoned pipeline run(s) as interrupted")
+
+        # Durable podcast audio waiters survive restarts. The single-instance pump
+        # resumes the oldest pending request as soon as IndexTTS passes its full
+        # contract probe, and keeps checking while the local service is offline.
+        scheduler.add_job(
+            run_service.pump_podcast_audio_queue,
+            args=[scheduler, app.state.cancel_events],
+            id="podcast-audio-queue-pump",
+            name="Podcast audio queue pump",
+            trigger="interval",
+            seconds=3,
+            next_run_time=datetime.now(timezone.utc),
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=None,
+        )
 
         # Keeps the cloud reader current. Off unless CLOUD_PUBLISH_ENABLED; a
         # problem starting it is logged and the app starts anyway.

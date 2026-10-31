@@ -191,6 +191,32 @@ def test_a_run_that_found_nothing_is_recorded_as_succeeded():
     assert mock_db.finish_pipeline_run.call_args.kwargs["error"] is None
 
 
+def test_saved_script_result_retains_the_confirmed_audio_request():
+    kwargs = {
+        "paper_id": "paper-1",
+        "options": object(),
+        "voice_path": "Podcasts/voices/host.wav",
+        "auto_audio": True,
+        "scheduler": MagicMock(),
+    }
+    with (
+        patch("webui.services.run_service.db") as mock_db,
+        patch(
+            "webui.services.run_service.podcast_script_service.run_podcast_script_job",
+            return_value={"saved": True, "script_id": "script-1"},
+        ),
+        patch("webui.services.run_service._maybe_factcheck_after_script"),
+    ):
+        run_service._finish_podcast_script(
+            "run-1", PILLAR, threading.Event(), {}, kwargs, lambda *args: None
+        )
+
+    result = mock_db.finish_pipeline_run.call_args.kwargs["result"]
+    assert result["script_id"] == "script-1"
+    assert result["voice_path"] == "Podcasts/voices/host.wav"
+    assert result["auto_audio"] is True
+
+
 def test_the_cancel_event_is_always_cleaned_up():
     """Even on the failure path — a leaked event keeps the run id cancellable
     forever and slowly grows app.state.cancel_events."""

@@ -268,6 +268,18 @@ class TestSweep:
 
         assert table.params["trigger_source"] == "in.(ui_pipeline,ui_select)"
 
+    def test_sweep_preserves_pending_audio_but_still_matches_running_audio(self, mock_client):
+        table = mock_client.table.return_value
+        table.update.return_value = {"data": [], "error": None}
+
+        db.sweep_interrupted_runs(
+            trigger_sources=["ui_podcast_audio"],
+            preserve_pending_kinds=["podcast_audio"],
+        )
+
+        assert table.params["or"] == "(kind.not.in.(podcast_audio),status.eq.running)"
+        assert table.params["status"] == "in.(pending,running)"
+
     def test_sweep_returns_zero_on_failure(self, mock_client):
         mock_client.table.return_value.update.side_effect = RuntimeError("down")
         assert db.sweep_interrupted_runs() == 0
@@ -296,3 +308,53 @@ class TestActiveLookup:
         table.execute.return_value = {"data": [], "error": None}
 
         assert db.get_active_pipeline_run(PILLAR) is None
+
+
+class TestPodcastAudioQueue:
+
+    def test_active_audio_lookup_filters_by_script_kind_and_open_status(self, mock_client):
+        table = mock_client.table.return_value
+        table.select.return_value = table
+        table.execute.return_value = {
+            "data": [_run_row(
+                kind="podcast_audio", result={"script_id": "script-1"}
+            )],
+            "error": None,
+        }
+
+        run = db.get_active_podcast_audio_run("script-1")
+
+        assert run is not None and run.result["script_id"] == "script-1"
+        assert table.params["kind"] == "eq.podcast_audio"
+        assert table.params["status"] == "in.(pending,running)"
+        assert table.params["result->>script_id"] == "eq.script-1"
+
+    def test_queue_claim_is_a_conditional_pending_to_running_update(self, mock_client):
+        table = mock_client.table.return_value
+        table.eq.return_value = table
+        table.update.return_value = {"data": [{"id": RUN_ID}], "error": None}
+
+        result = {"script_id": "script-1", "consent": True}
+        assert db.claim_pending_podcast_audio_run(RUN_ID, result) is True
+
+        assert table.eq.call_args_list[0].args == ("id", RUN_ID)
+        assert table.eq.call_args_list[1].args == ("kind", "podcast_audio")
+        assert table.eq.call_args_list[2].args == ("status", RunStatus.PENDING.value)
+        patch_arg = table.update.call_args.args[0]
+        assert patch_arg["status"] == RunStatus.RUNNING.value
+        assert patch_arg["result"] == result
+        assert "started_at" in patch_arg and "heartbeat_at" in patch_arg
+
+    def test_pending_audio_cancel_is_conditional_and_terminal(self, mock_client):
+        table = mock_client.table.return_value
+        table.eq.return_value = table
+        table.update.return_value = {"data": [{"id": RUN_ID}], "error": None}
+
+        assert db.cancel_pending_podcast_audio_run(RUN_ID) is True
+
+        assert table.eq.call_args_list[0].args == ("id", RUN_ID)
+        assert table.eq.call_args_list[1].args == ("kind", "podcast_audio")
+        assert table.eq.call_args_list[2].args == ("status", RunStatus.PENDING.value)
+        patch_arg = table.update.call_args.args[0]
+        assert patch_arg["status"] == RunStatus.CANCELLED.value
+        assert "waiting for IndexTTS" in patch_arg["error"]

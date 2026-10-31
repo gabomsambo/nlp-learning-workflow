@@ -1958,6 +1958,53 @@ class PodcastScriptLookupError(Exception):
     """
 
 
+class PodcastPreferenceError(Exception):
+    """A podcast preference could not be read or persisted."""
+
+
+def get_last_podcast_voice_path() -> Optional[str]:
+    """Return the server-side default voice selected in the podcast Studio."""
+    try:
+        response = (
+            get_client().table('podcast_settings')
+            .select('last_voice_path')
+            .eq('id', 'true')
+            .limit(1)
+            .execute()
+        )
+        if response['error']:
+            raise PodcastPreferenceError(str(response['error']))
+        rows = response.get('data') or []
+        if not rows or not rows[0].get('last_voice_path'):
+            return None
+        return str(rows[0]['last_voice_path'])
+    except PodcastPreferenceError:
+        raise
+    except Exception as exc:
+        raise PodcastPreferenceError(str(exc)) from exc
+
+
+def set_last_podcast_voice_path(voice_path: str) -> None:
+    """Persist the last voice confirmed by a podcast generation request."""
+    try:
+        response = (
+            get_client().table('podcast_settings')
+            .eq('id', 'true')
+            .update({
+                'last_voice_path': voice_path,
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+            })
+        )
+        if response['error']:
+            raise PodcastPreferenceError(str(response['error']))
+        if not response.get('data'):
+            raise PodcastPreferenceError('podcast_settings singleton row is missing')
+    except PodcastPreferenceError:
+        raise
+    except Exception as exc:
+        raise PodcastPreferenceError(str(exc)) from exc
+
+
 def add_podcast_script(script: PodcastScript) -> str:
     """
     Add a podcast script for a paper.
@@ -4285,7 +4332,121 @@ def get_active_pipeline_run(pillar_id: str) -> Optional[PipelineRun]:
         return None
 
 
-def sweep_interrupted_runs(trigger_sources: Optional[List[str]] = None) -> int:
+class PodcastAudioQueueLookupError(Exception):
+    """Active podcast audio queue rows could not be read reliably."""
+
+
+def get_active_podcast_audio_run(script_id: str) -> Optional[PipelineRun]:
+    """Return the active audio request for one saved script, if present."""
+    try:
+        query = get_client().table('pipeline_runs').select(
+            '*,pipeline_run_stages(*)'
+        )
+        query.params['kind'] = 'eq.podcast_audio'
+        query.params['status'] = 'in.(pending,running)'
+        query.params['result->>script_id'] = f'eq.{script_id}'
+        query.params['order'] = 'created_at.asc'
+        query.params['limit'] = '1'
+        response = query.execute()
+        if response['error']:
+            raise PodcastAudioQueueLookupError(str(response['error']))
+        rows = response.get('data') or []
+        return _dict_to_pipeline_run(rows[0]) if rows else None
+    except PodcastAudioQueueLookupError:
+        raise
+    except Exception as exc:
+        raise PodcastAudioQueueLookupError(
+            f"Could not check the active podcast audio request: {exc}"
+        ) from exc
+
+
+def list_active_podcast_audio_runs() -> List[PipelineRun]:
+    """Read the oldest active audio requests, including their durable payloads."""
+    try:
+        query = get_client().table('pipeline_runs').select(
+            '*,pipeline_run_stages(*)'
+        )
+        query.params['kind'] = 'eq.podcast_audio'
+        query.params['status'] = 'in.(pending,running)'
+        query.params['order'] = 'created_at.asc'
+        query.params['limit'] = '1000'
+        response = query.execute()
+        if response['error']:
+            raise PodcastAudioQueueLookupError(str(response['error']))
+        return [
+            _dict_to_pipeline_run(row) for row in (response.get('data') or [])
+        ]
+    except PodcastAudioQueueLookupError:
+        raise
+    except Exception as exc:
+        raise PodcastAudioQueueLookupError(
+            f"Could not read the podcast audio queue: {exc}"
+        ) from exc
+
+
+def update_pending_podcast_audio_result(run_id: str, result: Dict[str, Any]) -> bool:
+    """Replace queue metadata only while this audio request is still pending."""
+    try:
+        response = (
+            get_client().table('pipeline_runs')
+            .eq('id', run_id)
+            .eq('kind', 'podcast_audio')
+            .eq('status', RunStatus.PENDING.value)
+            .update({'result': result})
+        )
+        return not response['error'] and bool(response.get('data'))
+    except Exception as exc:
+        logger.error("Could not update pending audio run %s: %s", run_id, exc)
+        return False
+
+
+def claim_pending_podcast_audio_run(run_id: str, result: Dict[str, Any]) -> bool:
+    """Atomically claim one pending audio request before scheduling its worker."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        response = (
+            get_client().table('pipeline_runs')
+            .eq('id', run_id)
+            .eq('kind', 'podcast_audio')
+            .eq('status', RunStatus.PENDING.value)
+            .update({
+                'status': RunStatus.RUNNING.value,
+                'started_at': now,
+                'heartbeat_at': now,
+                'result': result,
+            })
+        )
+        return not response['error'] and bool(response.get('data'))
+    except Exception as exc:
+        logger.error("Could not claim pending audio run %s: %s", run_id, exc)
+        return False
+
+
+def cancel_pending_podcast_audio_run(run_id: str) -> bool:
+    """Cancel a waiter atomically; a pump that already claimed it will miss."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        response = (
+            get_client().table('pipeline_runs')
+            .eq('id', run_id)
+            .eq('kind', 'podcast_audio')
+            .eq('status', RunStatus.PENDING.value)
+            .update({
+                'status': RunStatus.CANCELLED.value,
+                'finished_at': now,
+                'error': 'Cancelled while waiting for IndexTTS',
+            })
+        )
+        return not response['error'] and bool(response.get('data'))
+    except Exception as exc:
+        logger.error("Could not cancel pending audio run %s: %s", run_id, exc)
+        return False
+
+
+def sweep_interrupted_runs(
+    trigger_sources: Optional[List[str]] = None,
+    preserve_pending_kinds: Optional[List[str]] = None,
+) -> int:
     """Mark still-open runs as interrupted. Call once at application startup.
 
     A process that is killed cannot record its own death, so without this a crashed
@@ -4312,6 +4473,12 @@ def sweep_interrupted_runs(trigger_sources: Optional[List[str]] = None) -> int:
         if trigger_sources:
             joined = ','.join(trigger_sources)
             query.params['trigger_source'] = f'in.({joined})'
+        if preserve_pending_kinds:
+            # Preserve durable pending requests for their queue pump, but still
+            # sweep a running request abandoned by the process that owned it.
+            kinds = ','.join(preserve_pending_kinds)
+            clause = f'kind.not.in.({kinds}),status.eq.running'
+            query.params['or'] = f'({clause})'
         response = query.update({
             'status': RunStatus.INTERRUPTED.value,
             'finished_at': datetime.now(timezone.utc).isoformat(),

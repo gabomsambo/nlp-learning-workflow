@@ -2,6 +2,7 @@
 API Router for podcast script generation and management.
 """
 
+import hashlib
 import logging
 import uuid
 from pathlib import Path
@@ -17,7 +18,9 @@ from nlp_pillars.db import (
     get_podcast_scripts, get_podcast_script_by_id,
     get_active_factcheck_run, get_latest_podcast_fact_check,
     FactcheckLookupError, PipelineRunCreateError, PodcastScriptLookupError,
-    ClaimDismissalError, get_claim_script_id, set_claim_dismissal,
+    PodcastPreferenceError, ClaimDismissalError, get_claim_script_id,
+    get_last_podcast_voice_path, set_claim_dismissal,
+    set_last_podcast_voice_path,
 )
 from webui.services import (
     podcast_audio_service,
@@ -57,6 +60,12 @@ class PodcastGenerateRequest(BaseModel):
     paper_id: str
     pillar_id: str
     options: Optional[Dict[str, str]] = None
+    voice_path: Optional[str] = Field(
+        None, description="Library-relative voice path to use for the episode"
+    )
+    # Consent must be present in the request; the Studio supplies true from its
+    # checked-by-default control. Legacy callers that omit it do not authorize GPU work.
+    auto_audio: bool = False
 
 
 class PodcastGenerateResponse(BaseModel):
@@ -101,7 +110,18 @@ async def tts_status():
 @router.get("/tts/voices")
 async def tts_voices():
     """List voice references from the mounted library with usability preflight."""
-    return JSONResponse(content=podcast_audio_service.list_voices_payload())
+    payload = podcast_audio_service.list_voices_payload()
+    try:
+        payload["last_voice_path"] = get_last_podcast_voice_path()
+    except PodcastPreferenceError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Could not load the remembered podcast voice: {exc}. "
+                "Apply docs/migrations/037_podcast_audio_queue.sql."
+            ),
+        )
+    return JSONResponse(content=payload)
 
 
 @router.get("/tts/voices/preview")
@@ -136,41 +156,45 @@ async def generate_podcast_audio(request: PodcastAudioRequest, http_request: Req
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    status = podcast_audio_service.tts_status_payload()
-    if not status.get("ready"):
-        raise HTTPException(status_code=503, detail=status.get("message"))
-
     try:
-        run_id = run_service.dispatch_run(
-            http_request.app.state.scheduler,
-            http_request.app.state.cancel_events,
+        run_id, created = run_service.queue_podcast_audio_run(
             pillar_id=script.pillar_id,
-            trigger_source=podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
-            kind=podcast_audio_service.KIND_PODCAST_AUDIO,
             script_id=request.script_id,
             voice_path=request.voice_path,
+            script_sha256=hashlib.sha256(
+                script.script.encode("utf-8")
+            ).hexdigest(),
+            consent=True,
         )
-    except RunAlreadyActiveError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    except run_service.PodcastAudioQueueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     return PodcastAudioResponse(
         run_id=run_id,
-        message="Audio generation started",
+        message=(
+            "Audio queued and waiting for IndexTTS"
+            if created else "An audio request for this script is already active"
+        ),
     )
 
 
 @router.get("/audio/{filename}")
 async def serve_podcast_audio(filename: str):
-    """Stream a generated MP3 from the podcast audio directory."""
+    """Stream a generated MP3 from current or retained legacy storage."""
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    audio_dir = Path(get_settings().podcast_audio_dir)
-    target = (audio_dir / filename).resolve()
-    if not str(target).startswith(str(audio_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(target, media_type="audio/mpeg", filename=filename)
+    settings = get_settings()
+    for root in (
+        Path(settings.podcast_audio_dir),
+        Path(getattr(settings, "podcast_audio_legacy_dir", "/legacy-data/podcast_audio")),
+    ):
+        resolved_root = root.resolve()
+        target = (resolved_root / filename).resolve()
+        if not target.is_relative_to(resolved_root):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        if target.is_file():
+            return FileResponse(target, media_type="audio/mpeg", filename=filename)
+    raise HTTPException(status_code=404, detail="Audio file not found")
 
 
 @router.post("/generate", status_code=202, dependencies=[Depends(require_spend_room)])
@@ -188,6 +212,20 @@ async def generate_podcast(request: PodcastGenerateRequest, http_request: Reques
         # never four minutes of the wrong podcast.
         options = resolve(request.options)
 
+        if request.auto_audio and not request.voice_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a usable voice or turn off 'Also make audio after saving'.",
+            )
+
+        if request.voice_path:
+            try:
+                podcast_audio_service.validate_voice_for_generation(request.voice_path)
+            except FileNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
         from nlp_pillars.db import get_client
         client = get_client()
         paper_response = (client.table('papers')
@@ -204,6 +242,21 @@ async def generate_podcast(request: PodcastGenerateRequest, http_request: Reques
         actual_pillar_id = paper_response['data'][0]['pillar_id']
         logger.info(f"Using pillar_id from paper: {actual_pillar_id}")
 
+        # This POST has passed the spend confirmation dependency. Remember only a
+        # library voice that was checked above, and do so before a paid worker can
+        # start; a missing migration therefore cannot leave a hidden script run.
+        if request.voice_path:
+            try:
+                set_last_podcast_voice_path(request.voice_path)
+            except PodcastPreferenceError as e:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Could not remember the selected voice: {e}. "
+                        "Apply docs/migrations/037_podcast_audio_queue.sql."
+                    ),
+                )
+
         try:
             run_id = run_service.dispatch_run(
                 http_request.app.state.scheduler,
@@ -211,8 +264,14 @@ async def generate_podcast(request: PodcastGenerateRequest, http_request: Reques
                 pillar_id=actual_pillar_id,
                 trigger_source=podcast_script_service.TRIGGER_UI_PODCAST_SCRIPT,
                 kind=podcast_script_service.KIND_PODCAST_SCRIPT,
+                initial_result={
+                    "voice_path": request.voice_path,
+                    "auto_audio": request.auto_audio,
+                },
                 paper_id=request.paper_id,
                 options=options,
+                voice_path=request.voice_path,
+                auto_audio=request.auto_audio,
             )
         except RunAlreadyActiveError as e:
             # Should be unreachable once 016 is applied (script runs are exempt).
