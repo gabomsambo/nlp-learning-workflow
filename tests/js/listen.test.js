@@ -11,6 +11,8 @@ const {
   episodeInitial,
   paperPageHref,
   audioHref,
+  ttsStatusLabel,
+  shouldShowTtsStartCommand,
   formatDuration,
   formatCreated,
   formatValueText,
@@ -39,6 +41,16 @@ test('paper links encode a colon and audio names cannot escape the directory', (
   assert.equal(audioHref('episode.mp3'), '/api/podcast/audio/episode.mp3');
   assert.equal(audioHref('../secret.mp3'), null);
   assert.equal(audioHref('nested/ep.mp3'), null);
+});
+
+test('IndexTTS status labels stay distinct and only not-running shows the start command', () => {
+  assert.equal(ttsStatusLabel('ready'), 'Ready');
+  assert.equal(ttsStatusLabel('not_running'), 'Not running');
+  assert.equal(ttsStatusLabel('wrong_service'), 'Wrong service');
+  assert.equal(ttsStatusLabel('contract_mismatch'), 'Contract mismatch');
+  assert.equal(shouldShowTtsStartCommand('not_running', 'start IndexTTS'), true);
+  assert.equal(shouldShowTtsStartCommand('wrong_service', 'start IndexTTS'), false);
+  assert.equal(shouldShowTtsStartCommand('contract_mismatch', 'start IndexTTS'), false);
 });
 
 test('duration, dates, and the scrubber label', () => {

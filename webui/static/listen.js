@@ -40,6 +40,19 @@
     return '/api/podcast/audio/' + encodeURIComponent(fileName);
   }
 
+  function ttsStatusLabel(status) {
+    return {
+      ready: 'Ready',
+      not_running: 'Not running',
+      wrong_service: 'Wrong service',
+      contract_mismatch: 'Contract mismatch'
+    }[status] || 'Contract mismatch';
+  }
+
+  function shouldShowTtsStartCommand(status, command) {
+    return status === 'not_running' && !!command;
+  }
+
   function formatDuration(seconds) {
     if (seconds == null || typeof seconds === 'boolean') return '';
     var n = Number(seconds);
@@ -1846,9 +1859,11 @@
         return res.json();
       }).then(function (data) {
         ttsReady = !!data.ready;
+        var status = data.status || (ttsReady ? 'ready' : 'not_running');
+        var chipLabel = ttsStatusLabel(status);
         if (ttsStatusMessage) ttsStatusMessage.textContent = data.message || '';
         if (ttsStartCommand) {
-          if (data.start_command && !ttsReady) {
+          if (shouldShowTtsStartCommand(status, data.start_command)) {
             ttsStartCommand.textContent = data.start_command;
             ttsStartCommand.hidden = false;
           } else {
@@ -1860,7 +1875,7 @@
           ttsStatusPanel.classList.toggle('is-down', !ttsReady);
         }
         if (ttsStatusChip) {
-          ttsStatusChip.textContent = ttsReady ? 'Ready' : 'Not running';
+          ttsStatusChip.textContent = chipLabel;
           ttsStatusChip.className = 'chip ' + (ttsReady ? 'chip-ok' : 'chip-danger');
         }
         syncAudioControls();
@@ -2583,6 +2598,8 @@
       episodeInitial: episodeInitial,
       paperPageHref: paperPageHref,
       audioHref: audioHref,
+      ttsStatusLabel: ttsStatusLabel,
+      shouldShowTtsStartCommand: shouldShowTtsStartCommand,
       formatDuration: formatDuration,
       formatCreated: formatCreated,
       formatClock: formatClock,

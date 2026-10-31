@@ -74,6 +74,31 @@ def test_generate_answers_202_with_a_run_id(api_client, monkeypatch):
     assert r.json()["run_id"] == "run-abc"
 
 
+def test_audio_route_serves_current_and_legacy_files(api_client, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from webui.routers.api import podcast as podcast_api
+
+    current = tmp_path / "podcasts"
+    legacy = tmp_path / "legacy-podcast-audio"
+    current.mkdir()
+    legacy.mkdir()
+    (current / "new.mp3").write_bytes(b"new recording")
+    (legacy / "old.mp3").write_bytes(b"retained recording")
+    monkeypatch.setattr(
+        podcast_api,
+        "get_settings",
+        lambda: SimpleNamespace(
+            podcast_audio_dir=str(current),
+            podcast_audio_legacy_dir=str(legacy),
+        ),
+    )
+
+    assert api_client.get("/api/podcast/audio/new.mp3").content == b"new recording"
+    assert api_client.get("/api/podcast/audio/old.mp3").content == b"retained recording"
+    assert api_client.get("/api/podcast/audio/missing.mp3").status_code == 404
+
+
 def test_options_are_resolved_before_dispatch(api_client, monkeypatch):
     seen = {}
 

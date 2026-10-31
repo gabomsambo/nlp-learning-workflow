@@ -54,6 +54,22 @@ def _slugify(value: str, *, max_len: int = 40) -> str:
     return (slug[:max_len] or "voice")
 
 
+def _output_filename(
+    script: Any,
+    script_id: str,
+    voice_relative_path: str,
+    when: datetime,
+) -> str:
+    """Build a readable, filesystem-safe filename tied to this saved episode."""
+    title = str(getattr(script, "title", "") or "paper")
+    title = re.sub(r"^deep dive:\s*", "", title, flags=re.IGNORECASE).strip()
+    paper_slug = _slugify(title, max_len=70)
+    short_id = re.sub(r"[^a-zA-Z0-9]", "", str(script_id)).lower()[:8] or "episode"
+    voice_slug = _slugify(Path(voice_relative_path).stem, max_len=40)
+    timestamp = when.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{paper_slug}-{short_id}_{voice_slug}_{timestamp}.mp3"
+
+
 def _settings_paths() -> tuple[str, Path, Path, Path, Path, str]:
     settings = get_settings()
     return (
@@ -359,10 +375,12 @@ def run_podcast_audio_job(
         )
 
         on_stage("tts_encode", StageStatus.RUNNING.value, "Encoding MP3")
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        voice_slug = _slugify(Path(voice_relative_path).stem)
-        paper_slug = _slugify(script.paper_id)
-        filename = f"{paper_slug}_{voice_slug}_{timestamp}.mp3"
+        filename = _output_filename(
+            script,
+            script_id,
+            voice_relative_path,
+            datetime.now(timezone.utc),
+        )
         mp3_path = Path(audio_dir) / filename
         encode_mp3(assembled_wav, mp3_path)
         on_stage("tts_encode", StageStatus.COMPLETED.value, filename)

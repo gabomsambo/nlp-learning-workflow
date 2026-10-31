@@ -207,6 +207,23 @@ def test_synthesis_fingerprint_changes_with_request_inputs():
         assert podcast_audio_service._chunk_fingerprint(**variant) != fingerprint
 
 
+def test_output_filename_uses_paper_title_short_id_voice_and_utc_timestamp():
+    from datetime import datetime, timezone
+
+    script = SimpleNamespace(title="Deep Dive: Attention / Is All You Need")
+    filename = podcast_audio_service._output_filename(
+        script,
+        "a1234567-89ab-cdef-0123-456789abcdef",
+        "Group/Voice Host.wav",
+        datetime(2026, 10, 31, 12, 13, 14, 1500, tzinfo=timezone.utc),
+    )
+
+    assert filename == (
+        "attention-is-all-you-need-a1234567_voice-host_20261031T121314001500Z.mp3"
+    )
+    assert "/" not in filename and "\\" not in filename and ".." not in filename
+
+
 def test_zero_speakable_content_fails_before_tts_and_marks_prepare_failed(
     tmp_path, monkeypatch,
 ):

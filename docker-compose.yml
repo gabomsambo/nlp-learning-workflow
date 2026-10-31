@@ -242,7 +242,8 @@ services:
       CLOUD_PUBLISH_MAX_BYTES: "${CLOUD_PUBLISH_MAX_BYTES:-5000000000}"
       CLOUD_BUNDLE_DIR: "/app/data/cloud-bundle"
       VOICES_DIR: "/voices"
-      PODCAST_AUDIO_DIR: "/app/data/podcast_audio"
+      PODCAST_AUDIO_DIR: "/podcasts"
+      PODCAST_AUDIO_LEGACY_DIR: "/legacy-data/podcast_audio"
       TTS_DOWNLOAD_DIR: "/app/data/tts-downloads"
       TTS_PREVIEW_DIR: "/app/data/tts-previews"
       # Paper Playground: where notebook datasets are cached (the
@@ -276,6 +277,15 @@ services:
       # not a bind mount into the repo) so uploads survive `docker compose
       # down` and image rebuilds, and never end up staged in git.
       - uploads_data:/app/data
+      # New recordings are visible on the host in ~/NLP-Podcasts. The old
+      # uploads volume is mounted read-only separately for playback of files
+      # written before this directory existed.
+      - uploads_data:/legacy-data:ro
+      - type: bind
+        source: "${NLP_PODCASTS_HOST_DIR:-${HOME}/NLP-Podcasts}"
+        target: /podcasts
+        bind:
+          create_host_path: true
       # Paper Playground datasets, downloaded at notebook import
       # (docs/PLAYGROUND.md). Read-write here; the sandbox mounts the same
       # volume read-only at /data. Its own volume, not a folder of uploads_data,
@@ -298,7 +308,29 @@ services:
         condition: service_healthy
       postgrest:
         condition: service_started
+      podcast-audio-dir-init:
+        condition: service_completed_successfully
     restart: unless-stopped
+
+  # Compose creates the host directory, then this one-shot fixes its directory
+  # owner for the non-root appuser. It only changes the directory itself; any
+  # existing episode files keep their original ownership and contents.
+  podcast-audio-dir-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command: ["mkdir -p /podcasts && chown 1000:1000 /podcasts"]
+    volumes:
+      - type: bind
+        source: "${NLP_PODCASTS_HOST_DIR:-${HOME}/NLP-Podcasts}"
+        target: /podcasts
+        bind:
+          create_host_path: true
+    healthcheck:
+      disable: true
+    restart: "no"
 
   # ============================================
   # Daily-run scheduler

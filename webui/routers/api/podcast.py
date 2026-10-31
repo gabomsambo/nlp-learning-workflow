@@ -180,16 +180,21 @@ async def generate_podcast_audio(request: PodcastAudioRequest, http_request: Req
 
 @router.get("/audio/{filename}")
 async def serve_podcast_audio(filename: str):
-    """Stream a generated MP3 from the podcast audio directory."""
+    """Stream a generated MP3 from current or retained legacy storage."""
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    audio_dir = Path(get_settings().podcast_audio_dir)
-    target = (audio_dir / filename).resolve()
-    if not str(target).startswith(str(audio_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(target, media_type="audio/mpeg", filename=filename)
+    settings = get_settings()
+    for root in (
+        Path(settings.podcast_audio_dir),
+        Path(getattr(settings, "podcast_audio_legacy_dir", "/legacy-data/podcast_audio")),
+    ):
+        resolved_root = root.resolve()
+        target = (resolved_root / filename).resolve()
+        if not target.is_relative_to(resolved_root):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        if target.is_file():
+            return FileResponse(target, media_type="audio/mpeg", filename=filename)
+    raise HTTPException(status_code=404, detail="Audio file not found")
 
 
 @router.post("/generate", status_code=202, dependencies=[Depends(require_spend_room)])
