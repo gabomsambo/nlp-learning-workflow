@@ -28,6 +28,7 @@ marks abandoned rows ``interrupted``, because a killed process cannot record its
 death.
 """
 
+import hashlib
 import logging
 import threading
 from typing import Any, Dict, List, Optional
@@ -100,6 +101,10 @@ _STAGES_FOR_KIND = {
 
 class RunAlreadyActiveError(Exception):
     """A run is already pending or running for this pillar."""
+
+
+class PodcastAudioQueueError(Exception):
+    """A podcast audio request could not be durably queued."""
 
 
 def dispatch_run(
@@ -200,6 +205,169 @@ def dispatch_run(
 
     logger.info(f"Dispatched pipeline run {run.id} for pillar {pillar_id} ({kind})")
     return run.id
+
+
+def queue_podcast_audio_run(
+    pillar_id: str,
+    script_id: str,
+    voice_path: str,
+    script_sha256: str,
+    consent: bool,
+    trigger_source: str = podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
+) -> tuple[str, bool]:
+    """Persist a podcast audio request without requiring IndexTTS to be online.
+
+    The second return value is true only for a newly-created run. A request for a
+    script that already has an active run attaches to that durable run instead.
+    """
+    if consent is not True:
+        raise ValueError("Podcast audio requires explicit local-GPU consent")
+    request_result = {
+        "script_id": script_id,
+        "voice_path": voice_path,
+        "script_sha256": script_sha256,
+        "consent": True,
+        "queue_state": "waiting_for_indextts",
+        "queue_message": "Waiting for IndexTTS readiness check.",
+    }
+    try:
+        run = db.create_pipeline_run(
+            pillar_id,
+            trigger_source,
+            KIND_PODCAST_AUDIO,
+            [stage.value for stage in PODCAST_AUDIO_STAGES],
+            result=request_result,
+        )
+    except db.PipelineRunCreateError as exc:
+        raise PodcastAudioQueueError(
+            f"{exc}. Apply docs/migrations/037_podcast_audio_queue.sql."
+        ) from exc
+
+    if run is not None:
+        logger.info(
+            "Queued podcast audio run %s for script %s", run.id, script_id,
+        )
+        return run.id, True
+
+    try:
+        active = db.get_active_podcast_audio_run(script_id)
+    except db.PodcastAudioQueueLookupError as exc:
+        raise PodcastAudioQueueError(str(exc)) from exc
+    if active is not None:
+        return active.id, False
+    raise PodcastAudioQueueError(
+        "Could not create the podcast audio queue row. Apply "
+        "docs/migrations/037_podcast_audio_queue.sql."
+    )
+
+
+def pump_podcast_audio_queue(
+    scheduler,
+    cancel_events: Dict[str, threading.Event],
+) -> None:
+    """Start at most the oldest pending audio run when IndexTTS is contract-ready.
+
+    The periodic job is single-instance in the webui scheduler. The pending-to-running
+    update is also conditional in PostgREST, so a cancellation or second pump cannot
+    submit the same request twice.
+    """
+    try:
+        runs = db.list_active_podcast_audio_runs()
+    except db.PodcastAudioQueueLookupError as exc:
+        logger.error("Podcast audio queue could not be read: %s", exc)
+        return
+
+    if any(run.status == RunStatus.RUNNING.value for run in runs):
+        return
+    pending = [run for run in runs if run.status == RunStatus.PENDING.value]
+    if not pending:
+        return
+
+    run = pending[0]
+    request = dict(run.result or {})
+    if (
+        not request.get("script_id")
+        or not request.get("voice_path")
+        or not request.get("script_sha256")
+        or request.get("consent") is not True
+    ):
+        request.update({
+            "queue_state": "invalid_request",
+            "queue_message": "The stored audio request is incomplete or lacks consent.",
+            "start_command": None,
+        })
+        db.update_pending_podcast_audio_result(run.id, request)
+        return
+
+    try:
+        status = podcast_audio_service.tts_status_payload()
+    except Exception as exc:
+        status = {
+            "status": "contract_mismatch",
+            "ready": False,
+            "message": f"Could not verify the IndexTTS contract: {exc}",
+            "start_command": None,
+        }
+
+    state = str(status.get("status") or "contract_mismatch")
+    message = str(status.get("message") or "IndexTTS readiness is unknown.")
+    if not status.get("ready"):
+        request.update({
+            "queue_state": (
+                "waiting_for_indextts" if state == "not_running" else state
+            ),
+            "tts_status": state,
+            "queue_message": message,
+            # The app must never suggest a start command for a wrong service or an
+            # incompatible IndexTTS API.
+            "start_command": (
+                status.get("start_command") if state == "not_running" else None
+            ),
+        })
+        db.update_pending_podcast_audio_result(run.id, request)
+        return
+
+    request.update({
+        "queue_state": "starting",
+        "tts_status": "ready",
+        "queue_message": "IndexTTS is ready; starting this audio request.",
+        "start_command": None,
+    })
+    cancel_event = threading.Event()
+    # Register before the conditional claim so a concurrent cancel can either close
+    # the pending row or signal the newly claimed worker.
+    cancel_events[run.id] = cancel_event
+    if not db.claim_pending_podcast_audio_run(run.id, request):
+        cancel_events.pop(run.id, None)
+        return
+
+    try:
+        scheduler.add_job(
+            execute_run,
+            args=[
+                run.id, KIND_PODCAST_AUDIO, run.pillar_id,
+                cancel_event, cancel_events,
+            ],
+            kwargs={
+                "scheduler": scheduler,
+                "script_id": request["script_id"],
+                "voice_path": request["voice_path"],
+                "audio_request": request,
+            },
+            id=f"run:{run.id}",
+            name=f"Podcast audio run {run.id} ({run.pillar_id})",
+            trigger="date",
+            misfire_grace_time=None,
+            max_instances=1,
+            coalesce=True,
+        )
+    except Exception as exc:
+        cancel_events.pop(run.id, None)
+        logger.exception("Could not schedule claimed podcast audio run %s", run.id)
+        db.finish_pipeline_run(
+            run.id, RunStatus.FAILED.value,
+            error=f"Could not schedule podcast audio: {exc}",
+        )
 
 
 def execute_run(
@@ -425,22 +593,22 @@ def _finish_podcast_audio(
     )
     script = db.get_podcast_script_by_id(script_id)
     meta = script.audio_metadata if script else None
-    result_payload: Optional[Dict[str, Any]] = None
+    result_payload: Dict[str, Any] = dict(kwargs.get("audio_request") or {})
     if meta and meta.file_name:
-        result_payload = {
+        result_payload.update({
             "script_id": script_id,
             "audio_url": f"/api/podcast/audio/{meta.file_name}",
             "file_name": meta.file_name,
             "duration_seconds": meta.duration_seconds,
             "voice_path": meta.voice_path,
             "engine": meta.engine,
-        }
+        })
     db.finish_pipeline_run(
         run_id,
         RunStatus.SUCCEEDED.value,
         papers_processed=0,
         papers_failed=0,
-        result=result_payload,
+        result=result_payload or None,
     )
     logger.info("Run %s finished podcast audio for script %s", run_id, script_id)
 
@@ -652,6 +820,39 @@ def _finish_podcast_script(
         result_payload.get("saved"),
     )
     if result_payload.get("saved") and result_payload.get("script_id"):
+        if kwargs.get("auto_audio") is True:
+            try:
+                script = db.get_podcast_script_by_id(result_payload["script_id"])
+                if script is None:
+                    raise PodcastAudioQueueError(
+                        "The saved script could not be read for audio queueing."
+                    )
+                audio_run_id, _created = queue_podcast_audio_run(
+                    pillar_id=pillar_id,
+                    script_id=result_payload["script_id"],
+                    voice_path=kwargs.get("voice_path"),
+                    script_sha256=hashlib.sha256(
+                        script.script.encode("utf-8")
+                    ).hexdigest(),
+                    consent=True,
+                )
+                result_payload["audio_run_id"] = audio_run_id
+                db.finish_pipeline_run(
+                    run_id,
+                    RunStatus.SUCCEEDED.value,
+                    result=result_payload,
+                )
+            except Exception as exc:
+                result_payload["audio_queue_error"] = str(exc)
+                db.finish_pipeline_run(
+                    run_id,
+                    RunStatus.SUCCEEDED.value,
+                    result=result_payload,
+                )
+                logger.exception(
+                    "Saved script %s but could not queue requested audio",
+                    result_payload["script_id"],
+                )
         _maybe_factcheck_after_script(
             kwargs.get("scheduler"),
             cancel_events,
@@ -786,6 +987,26 @@ def request_cancel(cancel_events: Dict[str, threading.Event], run_id: str) -> bo
     return True
 
 
+def cancel_run(
+    cancel_events: Dict[str, threading.Event],
+    run_id: str,
+) -> tuple[bool, str]:
+    """Cancel a durable audio waiter or request cooperative cancellation if running."""
+    if db.cancel_pending_podcast_audio_run(run_id):
+        for stage in PODCAST_AUDIO_STAGES:
+            db.update_pipeline_run_stage(
+                run_id,
+                stage.value,
+                StageStatus.SKIPPED.value,
+                "Cancelled while waiting for IndexTTS",
+            )
+        cancel_events.pop(run_id, None)
+        return True, "Podcast audio cancelled while waiting for IndexTTS."
+    if request_cancel(cancel_events, run_id):
+        return True, "Cancellation requested; the run will stop after its current stage."
+    return False, "No cancellable run with that id in this process."
+
+
 def on_job_error(event) -> None:
     """APScheduler listener: last-resort marking of a run as failed.
 
@@ -832,7 +1053,10 @@ def sweep_interrupted_runs_on_startup() -> int:
     trigger sources so a webui restart cannot declare a live scheduler run dead.
     """
     try:
-        return db.sweep_interrupted_runs(trigger_sources=WEBUI_TRIGGER_SOURCES)
+        return db.sweep_interrupted_runs(
+            trigger_sources=WEBUI_TRIGGER_SOURCES,
+            preserve_pending_kinds=[KIND_PODCAST_AUDIO],
+        )
     except Exception as e:
         # Never let bookkeeping stop the application from booting.
         logger.error(f"Startup sweep of interrupted runs failed: {e}")

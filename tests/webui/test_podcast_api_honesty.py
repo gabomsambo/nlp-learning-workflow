@@ -213,6 +213,73 @@ def test_voice_list_includes_the_server_remembered_default(api_client, monkeypat
     assert response.json()["last_voice_path"] == "host.wav"
 
 
+def test_manual_audio_is_queued_while_indextts_is_offline(api_client, monkeypatch):
+    from types import SimpleNamespace
+    import hashlib
+
+    script_text = "[HOST] Saved episode text."
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_podcast_script_by_id",
+        lambda _script_id: SimpleNamespace(
+            id="script-1", pillar_id="models-architectures", script=script_text,
+        ),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.tts_status_payload",
+        lambda: (_ for _ in ()).throw(AssertionError("route must not gate on TTS")),
+    )
+    seen = {}
+
+    def queue(**kwargs):
+        seen.update(kwargs)
+        return "audio-run", True
+
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.queue_podcast_audio_run", queue
+    )
+    response = api_client.post(
+        "/api/podcast/tts/generate",
+        json={"script_id": "script-1", "voice_path": "nested/voice.wav"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["run_id"] == "audio-run"
+    assert seen["script_sha256"] == hashlib.sha256(script_text.encode()).hexdigest()
+    assert seen["consent"] is True
+
+
+def test_manual_audio_queue_names_migration_037_on_database_failure(api_client, monkeypatch):
+    from types import SimpleNamespace
+    from webui.services.run_service import PodcastAudioQueueError
+
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.get_podcast_script_by_id",
+        lambda _script_id: SimpleNamespace(
+            id="script-1", pillar_id="models-architectures", script="text",
+        ),
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.podcast_audio_service.validate_voice_for_generation",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        "webui.routers.api.podcast.run_service.queue_podcast_audio_run",
+        MagicMock(side_effect=PodcastAudioQueueError(
+            "Apply docs/migrations/037_podcast_audio_queue.sql"
+        )),
+    )
+    response = api_client.post(
+        "/api/podcast/tts/generate",
+        json={"script_id": "script-1", "voice_path": "nested/voice.wav"},
+    )
+    assert response.status_code == 503
+    assert "037_podcast_audio_queue.sql" in response.json()["detail"]
+
+
 def test_an_unknown_option_is_refused_before_dispatch(api_client, monkeypatch):
     calls = []
 

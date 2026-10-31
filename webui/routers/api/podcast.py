@@ -2,6 +2,7 @@
 API Router for podcast script generation and management.
 """
 
+import hashlib
 import logging
 import uuid
 from pathlib import Path
@@ -155,26 +156,25 @@ async def generate_podcast_audio(request: PodcastAudioRequest, http_request: Req
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    status = podcast_audio_service.tts_status_payload()
-    if not status.get("ready"):
-        raise HTTPException(status_code=503, detail=status.get("message"))
-
     try:
-        run_id = run_service.dispatch_run(
-            http_request.app.state.scheduler,
-            http_request.app.state.cancel_events,
+        run_id, created = run_service.queue_podcast_audio_run(
             pillar_id=script.pillar_id,
-            trigger_source=podcast_audio_service.TRIGGER_UI_PODCAST_AUDIO,
-            kind=podcast_audio_service.KIND_PODCAST_AUDIO,
             script_id=request.script_id,
             voice_path=request.voice_path,
+            script_sha256=hashlib.sha256(
+                script.script.encode("utf-8")
+            ).hexdigest(),
+            consent=True,
         )
-    except RunAlreadyActiveError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    except run_service.PodcastAudioQueueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     return PodcastAudioResponse(
         run_id=run_id,
-        message="Audio generation started",
+        message=(
+            "Audio queued and waiting for IndexTTS"
+            if created else "An audio request for this script is already active"
+        ),
     )
 
 

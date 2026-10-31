@@ -236,6 +236,16 @@ CREATE TABLE podcast_scripts (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
+-- The last usable voice explicitly confirmed in the podcast Studio. This is a
+-- singleton preference, shared by the form across browser sessions.
+CREATE TABLE podcast_settings (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id = TRUE),
+    last_voice_path TEXT,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+INSERT INTO podcast_settings (id) VALUES (TRUE);
+GRANT SELECT, INSERT, UPDATE, DELETE ON podcast_settings TO web_anon;
+
 -- ==========================================
 -- 8. REVIEW_LOGS TABLE  (RECONSTRUCTED FROM CODE)
 -- One row per quiz card review. Feeds FSRS parameter optimisation.
@@ -1427,8 +1437,8 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 -- races, this does not. A duplicate surfaces through PostgREST as 409 / 23505.
 --
 -- Uploads, podcast_script, podcast_factcheck, playground_explain,
--- playground_align and map_build runs are exempt (migrations 015 / 016 / 023 /
--- 028 / 029 / 034). The guard is about two writers
+-- playground_align, map_build, and podcast_audio are exempt (migrations 015 /
+-- 016 / 023 / 028 / 029 / 034 / 037). The guard is about two writers
 -- driving one pillar's queue at once. Those kinds are scoped to one paper or
 -- one script, so refusing them because a discovery run is in flight would
 -- refuse work for a conflict that does not exist. One script still has at most
@@ -1437,8 +1447,12 @@ CREATE INDEX idx_paper_citations_cited_paper_id ON paper_citations(cited_paper_i
 CREATE UNIQUE INDEX pipeline_runs_one_active_per_pillar
     ON pipeline_runs (pillar_id)
     WHERE status IN ('pending', 'running')
-      AND kind NOT IN ('upload', 'podcast_script', 'podcast_factcheck',
+      AND kind NOT IN ('upload', 'podcast_script', 'podcast_audio', 'podcast_factcheck',
                        'playground_explain', 'playground_align', 'map_build');
+CREATE UNIQUE INDEX pipeline_runs_one_active_podcast_audio_per_script
+    ON pipeline_runs ((result->>'script_id'))
+    WHERE kind = 'podcast_audio'
+      AND status IN ('pending', 'running');
 CREATE UNIQUE INDEX pipeline_runs_one_active_map_build
     ON pipeline_runs (pillar_id)
     WHERE kind = 'map_build'

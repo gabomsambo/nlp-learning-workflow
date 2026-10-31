@@ -1837,7 +1837,7 @@
       if (previewVoiceBtn) previewVoiceBtn.disabled = !voiceOk;
       if (requestPreviewVoiceBtn) requestPreviewVoiceBtn.disabled = !requestVoiceOk;
       if (generateAudioBtn) {
-        generateAudioBtn.disabled = !(ttsReady && currentScriptId && voiceOk && !audioRunId);
+        generateAudioBtn.disabled = !(currentScriptId && voiceOk && !audioRunId);
       }
     }
 
@@ -2019,6 +2019,18 @@
         showSettings(result.options);
         loadScript(result.script_id).then(function () {
           if (partial && global.RunProgress) global.RunProgress.applyStatusClass(statusEl, 'run-warn');
+          if (result.audio_run_id) {
+            audioRunId = result.audio_run_id;
+            if (audioSection) audioSection.hidden = false;
+            if (generateAudioBtn) generateAudioBtn.disabled = true;
+            if (audioProgressBar) audioProgressBar.hidden = false;
+            if (audioRunStatus) audioRunStatus.textContent = 'Waiting for IndexTTS';
+            if (global.RunProgress) {
+              global.RunProgress.attach(
+                result.audio_run_id, audioEls, onAudioFinished, onAudioUpdate,
+              );
+            }
+          }
         });
       }
     }

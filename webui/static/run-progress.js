@@ -409,6 +409,25 @@
     var done = countCompleted(run);
 
     if (run.status === 'running' || run.status === 'pending') {
+      if (run.kind === 'podcast_audio' && run.status === 'pending') {
+        var queue = run.result || {};
+        if (queue.queue_state === 'wrong_service') {
+          return 'Wrong service — ' + (queue.queue_message || 'IndexTTS is not available');
+        }
+        if (queue.queue_state === 'contract_mismatch') {
+          return 'IndexTTS contract mismatch — ' +
+                 (queue.queue_message || 'the audio API is incompatible');
+        }
+        if (queue.queue_state === 'invalid_request') {
+          return 'Audio request needs attention — ' +
+                 (queue.queue_message || 'stored request is incomplete');
+        }
+        if (queue.queue_state === 'waiting_for_indextts') {
+          return 'Waiting for IndexTTS' +
+                 (queue.queue_message ? ' — ' + queue.queue_message : '') +
+                 (queue.start_command ? ' Start command: ' + queue.start_command : '');
+        }
+      }
       if (!run.current_stage) return 'Starting…';
       return 'Step ' + Math.min(done + 1, total) + ' of ' + total + ' — ' +
              stageLabel(run.current_stage);
@@ -475,6 +494,9 @@
       if (run.status === 'cancelled') {
         return 'Cancelled. The script was not changed.';
       }
+    }
+    if (run.kind === 'podcast_audio') {
+      if (run.status === 'cancelled') return 'Cancelled while waiting for IndexTTS';
     }
     if (run.kind === 'playground_explain') {
       // Two facts, like an upload: whether a guide was saved, and whether it
