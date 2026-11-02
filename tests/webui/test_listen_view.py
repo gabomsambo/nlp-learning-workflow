@@ -99,3 +99,20 @@ def _script(script_id, title, pillar_id, created, file_name=None, duration=None)
         created_at=created,
         audio_metadata=AudioMetadata(file_name=file_name, duration_seconds=duration),
     )
+
+
+def test_a_drill_episode_is_labelled_and_has_no_paper_link():
+    drill = PodcastScript(
+        id="44444444-4444-4444-8444-444444444444",
+        paper_id=None,
+        pillar_id="ml-systems-production",
+        title="Day 1 drill",
+        script="[HOST]: Hello",
+        word_count=10,
+        created_at=datetime(2026, 11, 2, tzinfo=timezone.utc),
+    )
+    drill.source_material.kind = "drill"
+    row = build_episode(drill, {}, {"ml-systems-production": "ML systems"})
+    assert row["source_kind"] == "drill"
+    assert row["paper_title"] == ""
+    assert row["paper_href"] is None

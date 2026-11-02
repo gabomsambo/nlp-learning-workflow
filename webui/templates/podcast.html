@@ -336,7 +336,8 @@
               <div class="episode-main">
                 <button type="button" class="episode-open" data-script-id="{{ ep.id }}">{{ ep.title }}</button>
                 <p class="episode-meta">
-                  {% if ep.paper_href %}<a href="{{ ep.paper_href }}">{{ ep.paper_title }}</a>{% else %}{{ ep.paper_title }}{% endif %}
+                  {% if ep.paper_href %}<a href="{{ ep.paper_href }}">{{ ep.paper_title }}</a>{% elif ep.paper_title %}{{ ep.paper_title }}{% endif %}
+                  {% if ep.source_kind == 'drill' %}<span> · Practice drill</span>{% endif %}
                   <span> · {{ ep.word_count }} words</span>
                   {% if ep.duration_label %}<span> · {{ ep.duration_label }}</span>{% endif %}
                   {% if ep.created_label %}<span> · {{ ep.created_label }}</span>{% endif %}

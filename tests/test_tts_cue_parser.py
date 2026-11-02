@@ -54,3 +54,37 @@ def test_all_cue_types_stripped():
         assert token not in blob
     assert "Welcome." in " ".join(plan.text for plan in plans)
     assert "transformers." in " ".join(plan.text for plan in plans)
+
+
+def test_timed_pause_becomes_the_requested_silence():
+    script = "[HOST]: Try the answer.\n[PAUSE 5s]\n[HOST]: Now repeat it.\n"
+    parsed = parse_podcast_script(script)
+    silences = [item.duration_ms for item in parsed.timeline if hasattr(item, "duration_ms")]
+    assert 5000 in silences
+    plans = plan_synthesis_chunks(parsed)
+    assert any(plan.pause_after_ms == 5000 for plan in plans)
+
+
+def test_bare_pause_keeps_its_four_hundred_milliseconds():
+    parsed = parse_podcast_script("[HOST]: One.\n[PAUSE]\n[HOST]: Two.\n")
+    silences = [item.duration_ms for item in parsed.timeline if hasattr(item, "duration_ms")]
+    assert 400 in silences
+    assert 5000 not in silences
+
+
+def test_timed_pause_is_clamped_to_the_supported_range():
+    parsed = parse_podcast_script(
+        "[HOST]: One.\n[PAUSE 0.1s]\n[HOST]: Two.\n[PAUSE 99s]\n[HOST]: Three.\n"
+    )
+    silences = [item.duration_ms for item in parsed.timeline if hasattr(item, "duration_ms")]
+    assert 500 in silences
+    assert 15000 in silences
+
+
+def test_timed_pause_is_never_spoken_or_timed_as_words():
+    from nlp_pillars.tts.cue_parser import spoken_line_text
+
+    assert spoken_line_text("[PAUSE 5s]") is None
+    parsed = parse_podcast_script("[HOST]: Wait.\n[PAUSE 8s]\n[HOST]: Again.\n")
+    plans = plan_synthesis_chunks(parsed)
+    assert all("PAUSE" not in plan.text.upper() for plan in plans)

@@ -17,9 +17,14 @@ _HOST_PREFIX = re.compile(r"^\[HOST\]:\s*", re.IGNORECASE)
 _STANDALONE_CUE = re.compile(
     r"^\[(PAUSE|MUSIC|SFX|TRANSITION)\]\s*$", re.IGNORECASE
 )
+# `[PAUSE 5s]` is the timed form; the bare `[PAUSE]` keeps its 400 ms meaning.
+_TIMED_PAUSE = re.compile(r"^\[PAUSE\s+(\d+(?:\.\d+)?)\s*s?\]\s*$", re.IGNORECASE)
 
 # Editorial silence durations (ms). IndexTTS defines none for cues.
 PAUSE_SILENCE_MS = 400
+# A drill wants a long think-and-repeat gap; anything outside this is a typo.
+PAUSE_MIN_SECONDS = 0.5
+PAUSE_MAX_SECONDS = 15.0
 BOUNDARY_SILENCE_MS = 0  # segment boundary only for MUSIC/SFX/TRANSITION
 
 # Split synthesis calls at paragraph boundaries for retry granularity.
@@ -68,11 +73,17 @@ def spoken_line_text(raw_line: str) -> Optional[str]:
     # The stored script is already stripped of evidence-mode citation tags; this
     # keeps an unstripped one (an older row, a hand edit) from being read aloud.
     line = strip_citation_tags(raw_line).strip()
-    if not line or _STANDALONE_CUE.match(line):
+    if not line or _STANDALONE_CUE.match(line) or _TIMED_PAUSE.match(line):
         return None
     host_match = _HOST_PREFIX.match(line)
     spoken = line[host_match.end():].strip() if host_match else line
     return spoken or None
+
+
+def timed_pause_ms(seconds: float) -> int:
+    """Milliseconds for `[PAUSE Ns]`, clamped to the supported range."""
+    bounded = min(max(seconds, PAUSE_MIN_SECONDS), PAUSE_MAX_SECONDS)
+    return int(round(bounded * 1000))
 
 
 def _flush_speech(buffer: List[str], line_start: int, out: ParsedScript) -> None:
@@ -106,6 +117,15 @@ def parse_podcast_script(script: str) -> ParsedScript:
                 if not buffer:
                     buffer_start = line_no
                 buffer.append(spoken)
+            continue
+
+        timed_pause = _TIMED_PAUSE.match(line)
+        if timed_pause:
+            if buffer:
+                _flush_speech(buffer, buffer_start, result)
+            result.timeline.append(
+                SilenceGap(timed_pause_ms(float(timed_pause.group(1))), "pause")
+            )
             continue
 
         cue_match = _STANDALONE_CUE.match(line)

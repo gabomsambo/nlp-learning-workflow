@@ -144,7 +144,11 @@ def build_episode(
     file_name = getattr(meta, "file_name", None) if meta is not None else None
     duration = getattr(meta, "duration_seconds", None) if meta is not None else None
     title = getattr(script, "title", None) or "Untitled episode"
-    paper_title = paper_titles.get(paper_id) or paper_id or "Unknown paper"
+    source = getattr(script, "source_material", None)
+    source_kind = getattr(source, "kind", None) or "paper"
+    paper_title = paper_titles.get(paper_id) or paper_id
+    if not paper_title and source_kind != "drill":
+        paper_title = "Unknown paper"
     created = getattr(script, "created_at", None)
     return {
         "id": str(script_id),
@@ -153,6 +157,7 @@ def build_episode(
         "paper_id": paper_id,
         "paper_title": paper_title,
         "paper_href": paper_page_href(paper_id),
+        "source_kind": source_kind,
         "pillar_id": pillar_id,
         "pillar_name": pillar_names.get(pillar_id) or pillar_id or "No pillar",
         "word_count": int(getattr(script, "word_count", 0) or 0),

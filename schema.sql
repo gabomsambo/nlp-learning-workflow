@@ -198,7 +198,8 @@ CREATE TABLE podcast_scripts (
     -- INFERRED UUID: add_podcast_script() reads response['data'][0].get('id')
     -- back after insert without ever supplying one, so the database generates it.
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    paper_id TEXT NOT NULL,
+    -- Nullable since migration 038: an imported practice drill has no paper.
+    paper_id TEXT,
     pillar_id TEXT NOT NULL,  -- Pillar isolation
     title TEXT NOT NULL,      -- Episode title; read unguarded as row['title']
     -- Full script in [HOST]: format. Read as row.get('script', ''), so the

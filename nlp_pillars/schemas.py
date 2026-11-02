@@ -479,6 +479,13 @@ class SourceMaterial(BaseModel):
     with neither body, abstract nor notes never reaches this type — it raises
     (see ``podcast_agent.InsufficientSourceMaterialError``).
     """
+    kind: str = Field(
+        default="paper",
+        description=(
+            "'paper' for a script written from a paper, 'drill' for imported "
+            "practice text with no paper to check against"
+        ),
+    )
     level: str = Field(default="full", description="'full' or 'partial'")
     full_text_chars: int = Field(default=0, description="Chars of paper body used (0 when none)")
     has_abstract: bool = Field(default=False)
@@ -578,7 +585,10 @@ class AudioMetadata(BaseModel):
 class PodcastScript(BaseIOSchema):
     """Generated podcast script from a paper - single host format."""
     id: Optional[str] = Field(None, description="Unique script ID")
-    paper_id: str = Field(..., description="Source paper ID")
+    paper_id: Optional[str] = Field(
+        None,
+        description="Source paper ID; None for an imported practice drill",
+    )
     pillar_id: str = Field(..., description="Associated pillar ID (slug)")
     title: str = Field(..., description="Episode title")
     script: str = Field(..., description="Full script in [HOST]: format")
