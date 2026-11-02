@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 
 from nlp_pillars import db, spend
 from nlp_pillars.config import get_settings
+from nlp_pillars.drills import DRILL_SOURCE_KIND
 from nlp_pillars.factcheck.constants import (
     KIND,
     RUNS_MIGRATION,
@@ -285,6 +286,19 @@ def maybe_dispatch_after_script(
     if not get_settings().factcheck_auto_dispatch:
         logger.info(
             "FACTCHECK_AUTO_DISPATCH is off; script %s was not checked",
+            script_id,
+        )
+        return None
+    try:
+        stored = db.get_podcast_script_by_id(script_id)
+    except db.PodcastScriptLookupError as exc:
+        # Do not turn an unreadable script into a silent skip; the existing
+        # active-run lookup below will surface the same database as before.
+        logger.warning("Could not read script %s before fact-check: %s", script_id, exc)
+        stored = None
+    if stored is not None and stored.source_material.kind == DRILL_SOURCE_KIND:
+        logger.info(
+            "Script %s is a practice drill; automatic fact-check skipped",
             script_id,
         )
         return None

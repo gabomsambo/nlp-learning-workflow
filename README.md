@@ -247,6 +247,7 @@ Set up a cron job or GitHub Action:
 | `pillars set-goal llm-theory-practice "..."` | Update pillar learning goal |
 | `export --pillar llm-theory-practice --format md` | Export notes as markdown |
 | `playground import <paper_id> <file.ipynb>` | Attach a notebook to a paper for the Playground tab ([docs/PLAYGROUND.md](docs/PLAYGROUND.md); needs migration 028) |
+| `podcast import <sheet.md> --pillar <id> [--title "..."]` | Store a practice drill sheet as a paper-less episode ([docs/PRACTICE_DRILLS.md](docs/PRACTICE_DRILLS.md); needs migration 038) |
 
 ## 🏗️ Project Structure
 

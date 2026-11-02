@@ -208,6 +208,11 @@ def test_a_saved_script_starts_a_factcheck_and_a_failure_does_not_fail_the_scrip
             return_value=None,
         ),
         patch.object(
+            podcast_factcheck_service.db,
+            "get_podcast_script_by_id",
+            return_value=None,
+        ),
+        patch.object(
             podcast_factcheck_service.spend,
             "current_budget",
             return_value=_budget(spent=0.0),
@@ -382,6 +387,9 @@ def test_auto_dispatch_is_skipped_once_the_daily_cap_is_spent():
             podcast_factcheck_service.db, "get_active_factcheck_run", return_value=None,
         ),
         patch.object(
+            podcast_factcheck_service.db, "get_podcast_script_by_id", return_value=None,
+        ),
+        patch.object(
             podcast_factcheck_service.spend,
             "current_budget",
             return_value=_budget(spent=2.0),
@@ -401,6 +409,9 @@ def test_auto_dispatch_is_skipped_when_spend_cannot_be_read():
     with (
         patch.object(
             podcast_factcheck_service.db, "get_active_factcheck_run", return_value=None,
+        ),
+        patch.object(
+            podcast_factcheck_service.db, "get_podcast_script_by_id", return_value=None,
         ),
         patch.object(
             podcast_factcheck_service.spend,

@@ -2309,6 +2309,77 @@ def dates_repair():
     raise typer.Exit(0)
 
 
+podcast_app = typer.Typer(
+    help="Import practice drill scripts as paper-less episodes",
+    add_completion=False,
+)
+app.add_typer(podcast_app, name="podcast")
+
+
+@podcast_app.command("import")
+def podcast_import(
+    sheet: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Drill sheet in the # title / Intro: / ## Qn. / **Answer.** format",
+    ),
+    pillar: str = typer.Option(..., "--pillar", "-p", help="Pillar id to file the drill under"),
+    title: Optional[str] = typer.Option(
+        None, "--title", help="Episode title; defaults to the sheet's # heading"
+    ),
+):
+    """Store one practice drill sheet as a podcast_scripts row.
+
+    No model is called and no audio is generated. The script uses
+    ``[PAUSE 5s]`` after each question and ``[PAUSE 8s]`` after each answer,
+    so ``POST /api/podcast/tts/generate`` and read-along both work unchanged.
+
+    Apply docs/migrations/038_podcast_drill_scripts.sql first: a drill has no
+    paper, and ``podcast_scripts.paper_id`` used to be NOT NULL.
+    """
+    from .drills import (
+        DrillSheetError,
+        drill_row_from_sheet,
+        parse_drill_sheet,
+    )
+
+    _log_env_path()
+    _setup_logging()
+    pillar_id = _validate_pillar(pillar)
+    try:
+        text = sheet.read_text(encoding="utf-8")
+    except OSError as exc:
+        console.print(f"[bold red]Could not read {sheet}: {exc}[/bold red]")
+        raise typer.Exit(1)
+    try:
+        parsed = parse_drill_sheet(text, slug=sheet.stem)
+    except DrillSheetError as exc:
+        console.print(f"[bold red]{sheet}: {exc}[/bold red]")
+        raise typer.Exit(1)
+
+    row = drill_row_from_sheet(parsed, pillar_id=pillar_id, title=title)
+    try:
+        script_id = db.add_podcast_script(row)
+    except db.PodcastScriptSaveError as exc:
+        detail = str(exc)
+        if "paper_id" in detail and "not-null" in detail.lower():
+            detail += (
+                ". Apply docs/migrations/038_podcast_drill_scripts.sql "
+                "to allow a script with no paper."
+            )
+        console.print(f"[bold red]{detail}[/bold red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold green]Imported practice drill[/bold green] {row.title}")
+    console.print(f"  script id: {script_id}")
+    console.print(f"  questions: {len(parsed.questions)}")
+    console.print(f"  spoken words: {row.word_count}")
+    console.print("  cues: [PAUSE 5s] after each question, [PAUSE 8s] after each answer")
+    raise typer.Exit(0)
+
+
 factcheck_app = typer.Typer(
     help="Check a podcast script against the stored paper text",
     add_completion=False,

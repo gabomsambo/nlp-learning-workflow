@@ -2,6 +2,7 @@
 API Router for podcast script generation and management.
 """
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -15,13 +16,15 @@ from pydantic import BaseModel, Field
 from nlp_pillars.config import get_settings
 from nlp_pillars.podcast_options import PodcastOptionError, resolve
 from nlp_pillars.db import (
+    add_podcast_script,
     get_podcast_scripts, get_podcast_script_by_id,
     get_active_factcheck_run, get_latest_podcast_fact_check,
     FactcheckLookupError, PipelineRunCreateError, PodcastScriptLookupError,
-    PodcastPreferenceError, ClaimDismissalError, get_claim_script_id,
-    get_last_podcast_voice_path, set_claim_dismissal,
-    set_last_podcast_voice_path,
+    PodcastScriptSaveError, PodcastPreferenceError, ClaimDismissalError,
+    get_claim_script_id, get_last_podcast_voice_path, pillar_exists,
+    set_claim_dismissal, set_last_podcast_voice_path,
 )
+from nlp_pillars.drills import DRILL_SOURCE_KIND, build_drill_row
 from webui.services import (
     podcast_audio_service,
     podcast_factcheck_service,
@@ -91,6 +94,26 @@ class PodcastAudioResponse(BaseModel):
     message: str
 
 
+class PodcastImportRequest(BaseModel):
+    """Text to store as a practice drill, with no model call.
+
+    ``paper_id`` is optional: a drill is written from the sheet, not a paper.
+    ``source_material.kind`` is always set to ``drill`` by the server; the
+    automatic fact-check skips those rows because there is no paper text to
+    check them against.
+    """
+    title: str = Field(..., min_length=1, max_length=300)
+    pillar_id: str = Field(..., min_length=1, max_length=100)
+    script: str = Field(..., min_length=1, max_length=1_000_000)
+    paper_id: Optional[str] = Field(None, max_length=500)
+
+
+class PodcastImportResponse(BaseModel):
+    script_id: str
+    title: str
+    message: str
+
+
 #: Named when create_pipeline_run fails the kind/trigger CHECK — migration 016
 #: is hand-applied, and a bare Postgres error is not actionable.
 _MIGRATION_HINT = (
@@ -100,6 +123,62 @@ _MIGRATION_HINT = (
     "docker exec -i nlp_postgres psql -U nlp -d nlp -v ON_ERROR_STOP=1 -f - "
     "< docs/migrations/016_podcast_script_runs.sql"
 )
+
+@router.post("/scripts/import", status_code=201)
+async def import_podcast_script(request: PodcastImportRequest):
+    """Store supplied practice text as a ``podcast_scripts`` row.
+
+    No model is called and no pipeline run is created: the row is what the
+    Listen page, ``/tts/generate``, read-along alignment and ``cloud publish``
+    already read. ``source_material.kind = "drill"`` marks it paper-less and
+    keeps the automatic fact-check away. 404 for an unknown pillar; 503 names
+    migration 038 when the row cannot be stored because ``paper_id`` is still
+    NOT NULL.
+    """
+    title = request.title.strip()
+    pillar_id = request.pillar_id.strip()
+    script_text = request.script.strip()
+    paper_id = (request.paper_id or "").strip() or None
+    if not title or not pillar_id or not script_text:
+        raise HTTPException(
+            status_code=422,
+            detail="title, pillar_id and script must not be blank",
+        )
+    try:
+        pillar_known = await asyncio.to_thread(pillar_exists, pillar_id)
+    except Exception as exc:
+        logger.error("Could not check pillar %s: %s", pillar_id, exc)
+        raise HTTPException(status_code=503, detail=f"Could not check the pillar: {exc}")
+    if not pillar_known:
+        raise HTTPException(status_code=404, detail=f"Pillar '{pillar_id}' not found")
+
+    try:
+        row = build_drill_row(
+            title=title,
+            pillar_id=pillar_id,
+            paper_id=paper_id,
+            script=script_text,
+        )
+        script_id = await asyncio.to_thread(add_podcast_script, row)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except PodcastScriptSaveError as exc:
+        detail = str(exc)
+        if "paper_id" in detail and "not-null" in detail.lower():
+            detail = (
+                f"{detail}. Apply docs/migrations/038_podcast_drill_scripts.sql "
+                "to allow a script with no paper."
+            )
+        logger.error("Could not import practice drill %r: %s", title, exc)
+        raise HTTPException(status_code=503, detail=detail)
+
+    logger.info("Imported practice drill %s (%s)", script_id, title)
+    return PodcastImportResponse(
+        script_id=str(script_id),
+        title=title,
+        message="Practice drill saved",
+    )
+
 
 @router.get("/tts/status")
 async def tts_status():
@@ -391,6 +470,15 @@ async def start_factcheck(script_id: str, http_request: Request):
         raise HTTPException(status_code=503, detail=str(exc))
     if script is None:
         raise HTTPException(status_code=404, detail="Script not found")
+    source = getattr(script, "source_material", None)
+    if getattr(source, "kind", None) == DRILL_SOURCE_KIND:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This is a practice drill, so there is no paper text to "
+                "fact-check against."
+            ),
+        )
     try:
         run_id = podcast_factcheck_service.dispatch_factcheck(
             http_request.app.state.scheduler,
