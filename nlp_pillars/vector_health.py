@@ -37,6 +37,21 @@ class ProjectionOutcome(int):
         return value
 
 
+def collection_version(name: str, base: str) -> Optional[int]:
+    """Version of ``name`` as a generation of the ``base`` collection, or None.
+
+    The first generation is the bare ``base`` name (version 1). A later one is
+    ``<base>__v<N>``, created when the projector replaces a collection it cannot
+    alter in place. Anything else is not this model's collection.
+    """
+    if name == base:
+        return 1
+    prefix = base + "__v"
+    if name.startswith(prefix) and name[len(prefix):].isdigit():
+        return int(name[len(prefix):])
+    return None
+
+
 def failure_detail(kind: str, target: str, detail: str = "") -> str:
     """Stable, plain-language detail for health rows and run stages."""
     suffix = f": {detail.strip()}" if detail and detail.strip() else ""
@@ -148,7 +163,7 @@ def _inspect_target(
             detail=failure_detail(kind, target, str(exc)),
         )
 
-    if expected_collection not in names:
+    if not any(collection_version(n, expected_collection) for n in names):
         kind = COLLECTION_OR_ALIAS_MISSING
         return _target_row(
             target,
@@ -167,7 +182,9 @@ def _inspect_target(
         ),
         None,
     )
-    if alias_target != expected_collection:
+    if alias_target is None or not collection_version(
+        str(alias_target), expected_collection
+    ):
         kind = COLLECTION_OR_ALIAS_MISSING
         reason = (
             "alias nlp_chunks is absent"

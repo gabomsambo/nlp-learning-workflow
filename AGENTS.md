@@ -310,8 +310,12 @@ uses Qdrant's `Modifier.IDF`. Keyword payload indexes on `pillar_id` and
 (`docs/migrations/019_vector_index_state.sql`, hand-applied, no foreign key
 to `paper_chunks`) records which chunks each target has. A second sync with
 nothing new writes nothing. Chunks deleted by re-ingest leave a state row;
-the next sync deletes those points. `--rebuild` upserts every stored chunk and
-is how an index created before hybrid search gets its BM25 vectors.
+the next sync deletes those points. `--rebuild` upserts every stored chunk.
+Qdrant 1.19.2 cannot add the `bm25` sparse vector to an existing collection
+(`update_collection` answers `400 Not existing vector name error: bm25`), so
+`ensure_index` replaces a pre-hybrid collection with `<name>__v2` (then `__v3`):
+it copies the points, encodes BM25 from their payload text, and swaps the
+`nlp_chunks` alias atomically. The old collection stays until deleted by hand.
 `--dry-run` prints counts and writes nothing.
 
 A dead or suspended cloud does not fail the run. The projector probes, and a

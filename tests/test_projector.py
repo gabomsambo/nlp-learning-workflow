@@ -214,14 +214,22 @@ def test_upsert_writes_text_and_both_payload_indexes():
     assert sparse_config.modifier == models.Modifier.IDF
 
 
-def test_existing_dense_collection_gets_bm25_config():
+def test_existing_dense_collection_is_replaced_not_updated_in_place():
+    """Qdrant 1.19.2 answers update_collection(bm25) with 400, so it is never called.
+
+    The full swap is exercised against an in-memory fake in
+    tests/test_projector_sparse_migration.py; here we only pin the contract.
+    """
     client = make_client(existing=True)
     client.get_collection.return_value.config.params.sparse_vectors = {}
+    client.count.return_value.count = 0
 
-    _apply(client, [make_chunk()], indexed_ids={CHUNK})
+    result = _apply(client, [make_chunk()], indexed_ids={CHUNK})
 
-    config = client.update_collection.call_args.kwargs["sparse_vectors_config"]
-    assert config[BM25_VECTOR].modifier == models.Modifier.IDF
+    client.update_collection.assert_not_called()
+    new_name = collection_name(MODEL, DIMS) + "__v2"
+    assert client.create_collection.call_args.kwargs["collection_name"] == new_name
+    assert result.collection == new_name
 
 
 def test_second_sync_is_a_no_op():

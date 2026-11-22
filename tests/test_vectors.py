@@ -82,6 +82,11 @@ def mock_qdrant_client():
     # ensure_index() does not create them unless a test says otherwise.
     collection_info = Mock()
     collection_info.payload_schema = {PILLAR_ID_FIELD: Mock(), PAPER_ID_FIELD: Mock()}
+    # A hybrid collection. Without this the collection looks pre-hybrid and
+    # ensure_index() replaces it with a __v2 generation.
+    collection_info.config.params.sparse_vectors = {
+        "bm25": models.SparseVectorParams(modifier=models.Modifier.IDF)
+    }
     mock_client.get_collection.return_value = collection_info
     mock_client.create_payload_index.return_value = None
 
