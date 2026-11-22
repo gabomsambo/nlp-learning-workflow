@@ -92,6 +92,38 @@ def test_healthy_embedder_and_both_targets():
     assert by_target(payload, "cloud")["fatal"] is False
 
 
+def test_alias_on_a_replacement_generation_is_healthy():
+    """After a sparse migration the alias targets <collection>__v2."""
+    migrated = COLLECTION + "__v2"
+    client = Mock(spec=QdrantClient)
+    client.get_collections.return_value.collections = [
+        SimpleNamespace(name=COLLECTION),
+        SimpleNamespace(name=migrated),
+    ]
+    client.get_aliases.return_value.aliases = [
+        SimpleNamespace(alias_name="nlp_chunks", collection_name=migrated)
+    ]
+
+    payload = collect(client_factory=lambda url, key: client)
+
+    assert by_target(payload, "local")["state"] == "ok"
+
+
+def test_alias_on_another_models_collection_is_still_unhealthy():
+    client = qdrant_client()
+    client.get_aliases.return_value.aliases = [
+        SimpleNamespace(
+            alias_name="nlp_chunks", collection_name="chunks__other__768"
+        )
+    ]
+
+    payload = collect(client_factory=lambda url, key: client)
+
+    row = by_target(payload, "local")
+    assert row["failure"] == COLLECTION_OR_ALIAS_MISSING
+    assert "points at chunks__other__768" in row["detail"]
+
+
 def test_embedder_load_or_encode_failure_has_its_own_shape():
     class BrokenProvider:
         model_id = MODEL

@@ -20,6 +20,8 @@ from nlp_pillars.projector import (
     apply_projection,
     collection_name,
     point_id,
+    BM25_VECTOR,
+    bm25_query,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -147,3 +149,64 @@ def test_projects_searches_and_deletes_stale_points(qdrant_url):
     left = _hits(client)
     assert [str(hit.id) for hit in left] == [point_id(CHUNK)]
     assert left[0].payload["text"] == "kept chunk text"
+
+
+def test_pre_hybrid_collection_is_replaced_with_sparse_and_points_kept(qdrant_url):
+    """The live failure: dense-only collection, Qdrant 400s on adding bm25 in place."""
+    client = QdrantClient(url=qdrant_url, timeout=10)
+    for alias in client.get_aliases().aliases:
+        client.update_collection_aliases([
+            models.DeleteAliasOperation(
+                delete_alias=models.DeleteAlias(alias_name=alias.alias_name)
+            )
+        ])
+    for col in client.get_collections().collections:
+        client.delete_collection(col.name)
+
+    base = collection_name(MODEL, DIMS)
+    client.create_collection(
+        base, vectors_config=models.VectorParams(size=DIMS, distance=models.Distance.COSINE)
+    )
+    client.update_collection_aliases([
+        models.CreateAliasOperation(
+            create_alias=models.CreateAlias(collection_name=base, alias_name=READ_ALIAS)
+        )
+    ])
+    client.upsert(base, [
+        models.PointStruct(
+            id=point_id(CHUNK),
+            vector=[0.4, 0.3, 0.2, 0.1],
+            payload={
+                "pillar_id": "pillar-integ",
+                "paper_id": "paper-integ",
+                "chunk_id": CHUNK,
+                "chunk_index": 0,
+                "text": "state space models mamba",
+            },
+        )
+    ])
+    with pytest.raises(Exception, match="Not existing vector name"):
+        client.update_collection(
+            base,
+            sparse_vectors_config={
+                BM25_VECTOR: models.SparseVectorParams(modifier=models.Modifier.IDF)
+            },
+        )
+
+    result = _project(client, [_chunk(CHUNK, "state space models mamba")], {CHUNK})
+
+    assert result.error is None
+    assert result.collection == base + "__v2"
+    aliases = {a.alias_name: a.collection_name for a in client.get_aliases().aliases}
+    assert aliases[READ_ALIAS] == base + "__v2"
+    assert BM25_VECTOR in client.get_collection(result.collection).config.params.sparse_vectors
+    assert client.count(READ_ALIAS, exact=True).count == 1
+    hit = client.query_points(
+        READ_ALIAS,
+        query=bm25_query("mamba"),
+        using=BM25_VECTOR,
+        limit=1,
+        with_payload=True,
+    ).points[0]
+    assert hit.payload["chunk_id"] == CHUNK
+    assert base in {c.name for c in client.get_collections().collections}

@@ -8,7 +8,9 @@ Point id is ``uuid5(POINT_NAMESPACE, chunk_id)``, stable across targets and
 independent of pillar. The payload carries the chunk text plus
 ``pillar_id``, ``paper_id``, ``chunk_id`` and ``chunk_index``. Each model
 has its own collection (``chunks__<model>__<dims>``) behind the alias
-``nlp_chunks``, which is what search reads.
+``nlp_chunks``, which is what search reads. A collection that lacks the BM25
+sparse config cannot be altered in place (Qdrant 1.19 refuses), so it is
+replaced by ``<name>__v2`` (then ``__v3``...) and the alias is swapped.
 
 A dead or suspended cloud is not a failure of the local index. That target
 gets no ``vector_index_state`` rows, so the next sync retries the same
@@ -35,6 +37,7 @@ from .vector_health import (
     INDEX_UNREACHABLE,
     PROJECTION_STATE_UNAVAILABLE,
     ProjectionOutcome,
+    collection_version,
     failure_detail,
 )
 
@@ -218,27 +221,18 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
     rejects a filter on a key that has no index, and deleting a paper's old
     points filters on ``paper_id``.
 
-    Returns the collection name (not the alias).
+    A collection built before hybrid search has no ``bm25`` sparse config and
+    Qdrant 1.19 will not add one to an existing collection, so it is replaced
+    by a new generation and the alias is swapped (``_migrate_to_sparse``).
+
+    Returns the name of the collection that serves the alias (not the alias).
     """
-    name = collection_name(model_id, dims)
-    names = _collection_names(client)
-    existed = name in names
-    if existed:
-        logger.info("Collection '%s' already exists", name)
-    else:
+    base = collection_name(model_id, dims)
+    current = _current_collection(client, base)
+    if current is None:
+        name = base
         try:
-            client.create_collection(
-                collection_name=name,
-                vectors_config=models.VectorParams(
-                    size=int(dims),
-                    distance=models.Distance.COSINE,
-                ),
-                sparse_vectors_config={
-                    BM25_VECTOR: models.SparseVectorParams(
-                        modifier=models.Modifier.IDF,
-                    )
-                },
-            )
+            _create_hybrid_collection(client, name, dims)
         except Exception as exc:
             if "already exists" not in str(exc).lower():
                 raise ProjectionError(
@@ -251,8 +245,11 @@ def ensure_index(client: QdrantClient, model_id: str, dims: int) -> str:
                 name,
                 dims,
             )
-    if existed:
-        _ensure_sparse_vector(client, name)
+    else:
+        logger.info("Collection '%s' already exists", current)
+        name = current
+        if not _has_sparse_vector(client, name):
+            name = _migrate_to_sparse(client, base, name, dims)
     _ensure_payload_indexes(client, name)
     _ensure_alias(client, name)
     return name
@@ -697,13 +694,48 @@ def _collection_names(client: QdrantClient) -> List[str]:
     return [col.name for col in collections]
 
 
-def _ensure_sparse_vector(client: QdrantClient, name: str) -> None:
-    """Add the BM25 sparse vector config to a pre-hybrid collection.
+def _create_hybrid_collection(client: QdrantClient, name: str, dims: int) -> None:
+    client.create_collection(
+        collection_name=name,
+        vectors_config=models.VectorParams(
+            size=int(dims),
+            distance=models.Distance.COSINE,
+        ),
+        sparse_vectors_config={
+            BM25_VECTOR: models.SparseVectorParams(
+                modifier=models.Modifier.IDF,
+            )
+        },
+    )
 
-    Qdrant 1.19 can update sparse vector configuration in place. This is what
-    lets ``vectors sync --rebuild`` backfill the collection created by the
-    previous projector release instead of requiring a destructive rebuild.
+
+def _current_collection(client: QdrantClient, base: str) -> Optional[str]:
+    """The generation of ``base`` that is live, or None when there is none.
+
+    The alias target wins when it is a generation of this model's collection.
+    Otherwise the highest existing generation is used, which also covers a
+    server whose alias was never created.
     """
+    names = _collection_names(client)
+    try:
+        aliases = getattr(client.get_aliases(), "aliases", None) or []
+    except Exception as exc:
+        raise ProjectionError(f"could not read collection aliases: {exc}") from exc
+    for item in aliases:
+        if getattr(item, "alias_name", None) != READ_ALIAS:
+            continue
+        target = getattr(item, "collection_name", None)
+        if target in names and collection_version(str(target), base):
+            return str(target)
+    versions = {
+        collection_version(name, base): name
+        for name in names
+        if collection_version(name, base)
+    }
+    return versions[max(versions)] if versions else None
+
+
+def _has_sparse_vector(client: QdrantClient, name: str) -> bool:
     try:
         info = client.get_collection(name)
         config = getattr(info, "config", None)
@@ -715,22 +747,130 @@ def _ensure_sparse_vector(client: QdrantClient, name: str) -> None:
         raise ProjectionError(
             f"could not read sparse vector config for {name}: {exc}"
         ) from exc
-    if BM25_VECTOR in sparse:
-        return
+    return BM25_VECTOR in sparse
+
+
+def _migrate_to_sparse(
+    client: QdrantClient, base: str, old: str, dims: int
+) -> str:
+    """Replace a collection that has no ``bm25`` sparse config; return the new name.
+
+    Qdrant 1.19.2 answers ``update_collection(sparse_vectors_config=...)`` on an
+    existing collection with ``400 Not existing vector name error: bm25``, so
+    the config cannot be added in place. Instead:
+
+    1. create ``<base>__v<N+1>`` with the dense + ``bm25`` config and indexes;
+    2. copy every point across with its stored dense vector and payload, and
+       encode ``bm25`` from the payload text (the chunk text Postgres holds);
+    3. check the point counts agree;
+    4. swap the alias in one atomic ``update_collection_aliases`` call.
+
+    The old collection keeps serving ``nlp_chunks`` until step 4 succeeds, and
+    is left in place afterwards. Copying inside Qdrant (rather than from
+    Postgres) keeps ``vector_index_state`` truthful: every chunk it says is
+    projected is in the new collection, whatever the caller's scope. Any
+    failure removes the half-built collection and leaves the alias alone.
+    """
+    version = collection_version(old, base) or 1
+    new = f"{base}__v{version + 1}"
     try:
-        client.update_collection(
-            collection_name=name,
-            sparse_vectors_config={
-                BM25_VECTOR: models.SparseVectorParams(
-                    modifier=models.Modifier.IDF,
-                )
-            },
-        )
+        if new in _collection_names(client):
+            # Never served: the alias targets a lower generation. Left behind
+            # by an interrupted migration, so start it over.
+            client.delete_collection(new)
+        _create_hybrid_collection(client, new, dims)
+        _ensure_payload_indexes(client, new)
+        copied = _copy_points(client, old, new)
+        expected = client.count(collection_name=old, exact=True).count
+        actual = client.count(collection_name=new, exact=True).count
+        if copied != expected or actual != expected:
+            raise ProjectionError(
+                f"copied {copied} point(s), '{old}' holds {expected} and "
+                f"'{new}' holds {actual}"
+            )
+        _swap_alias(client, new)
     except Exception as exc:
+        try:
+            client.delete_collection(new)
+        except Exception:
+            logger.warning("could not remove half-built collection '%s'", new)
         raise ProjectionError(
-            f"could not add {BM25_VECTOR} sparse vectors to {name}: {exc}"
+            f"could not add {BM25_VECTOR} sparse vectors to {old}: {exc}; "
+            f"'{old}' still serves {READ_ALIAS}"
         ) from exc
-    logger.info("Added '%s' sparse vector config to '%s'", BM25_VECTOR, name)
+    logger.warning(
+        "Replaced '%s' (no %s sparse vectors) with '%s'; '%s' is no longer "
+        "served and can be deleted",
+        old,
+        BM25_VECTOR,
+        new,
+        old,
+    )
+    return new
+
+
+def _copy_points(client: QdrantClient, source: str, target: str) -> int:
+    copied = 0
+    offset = None
+    seen: set[str] = set()
+    while True:
+        records, offset = client.scroll(
+            collection_name=source,
+            limit=UPSERT_BATCH,
+            offset=offset,
+            with_payload=True,
+            with_vectors=True,
+        )
+        points = [_copied_point(record) for record in records or []]
+        if points:
+            client.upsert(collection_name=target, points=points)
+            copied += len(points)
+        if not records or offset is None:
+            return copied
+        key = str(offset)
+        if key in seen:
+            return copied
+        seen.add(key)
+
+
+def _copied_point(record) -> models.PointStruct:
+    payload = dict(getattr(record, "payload", None) or {})
+    text = payload.get("text")
+    if text is None:
+        raise ProjectionError(f"point {record.id} has no chunk text to encode")
+    dense = getattr(record, "vector", None)
+    if isinstance(dense, dict):
+        dense = dense.get("")
+    if not dense:
+        raise ProjectionError(f"point {record.id} has no dense vector")
+    return models.PointStruct(
+        id=record.id,
+        vector={"": list(dense), BM25_VECTOR: bm25_passage(str(text))},
+        payload=payload,
+    )
+
+
+def _swap_alias(client: QdrantClient, name: str) -> None:
+    """Point ``READ_ALIAS`` at ``name`` atomically; there is no moment without it."""
+    operations: list = []
+    try:
+        aliases = getattr(client.get_aliases(), "aliases", None) or []
+    except Exception as exc:
+        raise ProjectionError(f"could not read collection aliases: {exc}") from exc
+    if any(getattr(item, "alias_name", None) == READ_ALIAS for item in aliases):
+        operations.append(
+            models.DeleteAliasOperation(
+                delete_alias=models.DeleteAlias(alias_name=READ_ALIAS)
+            )
+        )
+    operations.append(
+        models.CreateAliasOperation(
+            create_alias=models.CreateAlias(
+                collection_name=name, alias_name=READ_ALIAS
+            )
+        )
+    )
+    client.update_collection_aliases(change_aliases_operations=operations)
 
 
 def _ensure_payload_indexes(client: QdrantClient, name: str) -> None:
@@ -769,16 +909,7 @@ def _ensure_alias(client: QdrantClient, name: str) -> None:
         if getattr(item, "alias_name", None) == READ_ALIAS and getattr(item, "collection_name", None) == name:
             return
     try:
-        client.update_collection_aliases(
-            change_aliases_operations=[
-                models.CreateAliasOperation(
-                    create_alias=models.CreateAlias(
-                        collection_name=name,
-                        alias_name=READ_ALIAS,
-                    )
-                )
-            ]
-        )
+        _swap_alias(client, name)
     except Exception as exc:
         raise ProjectionError(
             f"could not point {READ_ALIAS} at {name}: {exc}"
