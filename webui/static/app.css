@@ -5108,3 +5108,50 @@ canvas.map-canvas:focus-visible { outline: 2px solid var(--accent); outline-offs
 @media (max-width: 560px) {
   .map-stage { height: clamp(380px, 62vh, 520px); }
 }
+
+/* Daily run page (daily_run.html) */
+.daily-run-glance,
+.daily-run-last,
+.daily-run-form { margin-bottom: var(--space-5); }
+
+.daily-run-glance .section-title,
+.daily-run-last .section-title,
+.daily-run-form .section-title { margin-bottom: var(--space-3); }
+
+.daily-run-facts {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+.daily-run-facts dt { color: var(--muted); font-weight: 600; }
+.daily-run-facts dd { margin: 0; overflow-wrap: anywhere; }
+.daily-run-facts .field-error { display: block; margin-top: var(--space-1); }
+
+.daily-run-note { color: var(--muted); font-size: var(--fs-caption); }
+
+.daily-run-runs {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+.daily-run-runs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+.daily-run-pillar { font-weight: 600; }
+.daily-run-run-status { color: var(--muted); }
+
+.daily-run-toggle { margin-bottom: var(--space-4); }
+.daily-run-toggle .field-help { margin: var(--space-1) 0 0; }
+.daily-run-pillars input[type="number"] { width: 5rem; }
+.daily-run-actions { margin-top: var(--space-4); }
+
+@media (max-width: 560px) {
+  .daily-run-facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .daily-run-facts dd { margin-bottom: var(--space-2); }
+}

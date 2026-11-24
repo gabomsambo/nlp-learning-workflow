@@ -18,6 +18,7 @@ START = datetime(2026, 10, 25, tzinfo=timezone.utc)
 #: handler may answer anything but 428/429/503-from-spend.
 EXPENSIVE = [
     ("post", "/pipeline/run?pillar=neural-architectures-language"),
+    ("post", "/api/daily-run/run-now"),
     ("post", "/api/pillars/neural-architectures-language/select"),
     ("post", "/api/pillars/neural-architectures-language/upload/url"),
     ("post", "/api/pillars/neural-architectures-language/upload/pdf"),

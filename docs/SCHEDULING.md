@@ -13,39 +13,51 @@ is commented out and it cannot work against the current self-hosted database.
 same image as `webui`, started with `python -m nlp_pillars.scheduler`. It is its own
 service on purpose: a `webui` crash or restart must not silently stop the daily run.
 
-It runs two things on one APScheduler instance:
+**Turn it on and off on the Daily run page** (`/daily-run/`, under Workspace in the
+sidebar). That page sets everything about the run: on/off, time, timezone, which pillars
+take part and how many papers each gets (the pillar's own `papers_per_day`). It also shows
+the next run, the last run with links to each pillar's pipeline run, an estimated daily
+cost, the daily spend cap, and a **Run now** button. Nothing runs on its own until it is
+turned on there.
 
-1. **The daily learning run**, at `SCHEDULE_TIME` in `SCHEDULE_TIMEZONE`, for **every
-   pillar in the database** (`create_pillars.py` seeds eight). Pillars run sequentially and
-   independently — one failing does not stop the rest, matching the Action's
-   `fail-fast: false`.
+The settings live in the `daily_run_settings` row (`docs/migrations/039_daily_run_settings.sql`,
+applied by hand). The scheduler re-reads it every minute and again when the job fires, so a
+change takes effect within a minute with no rebuild or restart.
+
+While the run is **on**, one APScheduler instance runs:
+
+1. **The daily learning run**, at the page's time in its timezone, for the ticked pillars.
+   Pillars run one after another and independently — one failing does not stop the rest.
+   Each pillar is a `pipeline_runs` row (trigger `scheduler`), visible on Activity. Today's
+   spend is checked against `DAILY_SPEND_CAP_USD` before every pillar; once the cap is
+   reached the remaining pillars are skipped and say so.
 2. **The FSRS optimization and maintenance jobs** in `nlp_pillars/services/background_jobs.py`.
-   These were written long ago but `start_background_jobs()` had no callers, so they had
-   never actually run anywhere. They do now.
+3. **The weekly map refresh**, when `WEEKLY_MAP_REFRESH_ENABLED` is true.
 
-### Settings
+While it is **off**, the process stays up and idles: no daily job, the FSRS jobs paused,
+no weekly refresh. `docker compose logs scheduler` says `Daily run is OFF`.
 
-All read from `.env` (see `Settings` in `nlp_pillars/config.py`):
+### Settings and precedence
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `SCHEDULE_ENABLED` | `false` | Master off switch. When false the service logs why and exits 0. |
-| `SCHEDULE_TIME` | `08:00` | 24-hour `HH:MM`. |
-| `SCHEDULE_TIMEZONE` | `UTC` | IANA name, e.g. `America/New_York`. DST is handled by the zone. |
-| `PAPERS_PER_DAY` | `1` | Papers per pillar per run — the whole run's API-spend knob. The per-pillar `papers_per_day` column in the database is not consulted. |
+The precedence is documented once, in `nlp_pillars/daily_run.py`:
 
-An unparseable `SCHEDULE_TIME` or unknown `SCHEDULE_TIMEZONE` makes the service exit 1
-rather than fall back to a default — a silently wrong run time is worse than a container
-that refuses to start.
+1. The `daily_run_settings` row, once it exists, wins.
+2. With no row yet, `SCHEDULE_ENABLED` (default `false`), `SCHEDULE_TIME` (`08:00`) and
+   `SCHEDULE_TIMEZONE` (`UTC`) from `.env` apply, with every pillar taking part. The
+   scheduler copies them into the row when it starts (and so does the first save from the
+   page); after that, editing them in `.env` does nothing and the scheduler logs a warning
+   if they disagree with the row.
+3. If migration 039 is not applied, the `.env` values apply as before and the page says so.
 
-The service uses `restart: on-failure`, not `unless-stopped`, so the deliberate exit-0 when
-disabled is not restarted into a loop. Disabled looks like `Exited (0)` in
-`docker compose ps`; that is the expected off state, not a failure.
+`PAPERS_PER_DAY` is no longer read by the daily run. An unparseable time or unknown
+timezone is never guessed at: the run is not scheduled and the page shows why.
+
+The service uses `restart: unless-stopped`. It no longer exits when the run is off, so a
+stopped scheduler container means a crash or a manual stop.
 
 ```bash
 docker compose up -d scheduler         # start it
-docker compose logs -f scheduler       # watch it; it logs each job's next run time at startup
-docker compose restart scheduler       # re-read .env after changing SCHEDULE_*
+docker compose logs -f scheduler       # watch it; it logs each change it applies
 ```
 
 ### Missed runs are skipped, not caught up
@@ -57,13 +69,8 @@ is 08:00 the following day.
 
 This is the accepted cost of scheduling locally instead of on a hosted runner: the
 scheduler only runs while the machine is on and the stack is up. There is deliberately no
-wake-on-schedule, system service, or catch-up mechanism. To run a missed day by hand:
-
-```bash
-docker compose exec scheduler python -c \
-  "import logging; logging.basicConfig(level=logging.INFO); \
-   from nlp_pillars.scheduler import run_all_pillars; run_all_pillars()"
-```
+wake-on-schedule, system service, or catch-up mechanism. To run a missed day by hand, use
+**Run now** on the Daily run page.
 
 ## GitHub Actions Workflow
 

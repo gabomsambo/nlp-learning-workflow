@@ -38,17 +38,17 @@ you must not stack your own review or PR steps on top of it.
 and the image is large — `requirements.txt` pulls torch and layoutparser. Search
 reads the local Qdrant. See "Which Qdrant the app talks to".
 
-Two of them look wrong in `docker compose ps` and are not:
+**`scheduler` stays up whether the daily run is on or off.** On/off, time, timezone,
+pillars and papers per pillar are set on the **Daily run** page (`/daily-run/`), stored in
+`daily_run_settings` (`docs/migrations/039_daily_run_settings.sql`, hand-applied) and
+re-read every minute, so a change needs no rebuild or restart. `SCHEDULE_ENABLED` /
+`SCHEDULE_TIME` / `SCHEDULE_TIMEZONE` are first-boot defaults only; the precedence is in
+`nlp_pillars/daily_run.py`. While off it idles and logs `Daily run is OFF`; the service is
+`restart: unless-stopped`, so an exited scheduler container is a crash or a manual stop,
+not the off state. Turning the run on is a separate decision: it spends money every day.
 
-- **`scheduler` shows `Exited (0)`** whenever `SCHEDULE_ENABLED=false`, which is the
-  committed default. `scheduler.py::main()` returns 0 immediately in that case, and the
-  service is `restart: on-failure` (not `unless-stopped`) precisely so the disabled state
-  stays visible instead of being restarted forever. "The scheduler container is not
-  running" is therefore the expected state, not drift. To check the scheduler itself
-  still works without enabling anything, run it as a throwaway:
-  `docker compose run --rm --no-deps -e SCHEDULE_ENABLED=true scheduler` — it registers
-  four APScheduler jobs and blocks; Ctrl-C it. Turning `SCHEDULE_ENABLED` on for real is
-  a separate decision.
+Two of them look stale in `docker compose ps` after a rebuild and are not:
+
 - **`postgrest` and `searxng` are often not recreated** by `up -d` after a rebuild. Only
   services whose config hash or image changed are replaced, and those two pin an image and
   take no code from this repo. PostgREST reconnects on its own when `db` is recreated.
@@ -563,7 +563,7 @@ read-modify-write eleven times per run from a worker thread while the browser po
 same row. One row per stage makes each transition an independent single-row PATCH.
 
 `Orchestrator(on_stage=..., cancel=...)` — both optional, both defaulting to inert, so
-the CLI, the scheduler and every existing test are unaffected. `on_stage(name, status,
+the CLI and every existing test are unaffected. `on_stage(name, status,
 detail)` fires at the eleven `Step N` boundaries that already existed. Two things worth
 knowing before changing it:
 

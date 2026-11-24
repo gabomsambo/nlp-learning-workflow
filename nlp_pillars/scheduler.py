@@ -9,17 +9,26 @@ Run as a process, not as part of the web app:
 
     python -m nlp_pillars.scheduler
 
-It runs two things on one APScheduler instance:
+The process always stays up. What it does is decided by the Daily run page
+(``/daily-run/``), stored in Postgres and re-read every minute — see
+``nlp_pillars/daily_run.py`` for which value wins when the page has never been
+saved. While the run is off the process idles: no daily job, and the FSRS
+optimization jobs from ``services/background_jobs.py`` and the weekly map refresh
+are paused or absent. Turning it on in the page takes effect within a minute,
+with no rebuild or restart.
 
-1. The daily learning run, at SCHEDULE_TIME in SCHEDULE_TIMEZONE, iterating every
-   pillar in the database — the work the GitHub Action's matrix used to do.
-2. The FSRS optimization and maintenance jobs already defined in
-   `services/background_jobs.py`. Those were written long ago but
-   `start_background_jobs()` had no callers, so they had never actually run.
+While it is on:
 
-After that daily run, and only when VAULT_EXPORT_ENABLED is true, it refreshes
-the Obsidian vault at VAULT_DIR. The flag defaults off. A vault failure is
-logged and does not fail the run.
+1. The daily learning run fires at the page's time in its timezone, for the
+   pillars ticked there, with each pillar's ``papers_per_day``. Each pillar is a
+   ``pipeline_runs`` row (trigger ``scheduler``), so it shows on Activity. The
+   settings are read again when the job fires, and today's spend is checked
+   against ``DAILY_SPEND_CAP_USD`` before every pillar.
+2. The FSRS optimization and maintenance jobs run.
+3. The weekly map refresh runs when WEEKLY_MAP_REFRESH_ENABLED is true.
+
+After a daily run, and only when VAULT_EXPORT_ENABLED is true, it refreshes the
+Obsidian vault at VAULT_DIR. A vault failure is logged and does not fail the run.
 
 KNOWN AND ACCEPTED LIMITATION: this only runs while the machine is on and the
 stack is up. The jobstore is APScheduler's default in-memory one, so a run
@@ -29,138 +38,339 @@ trigger computes its next fire time from now. Stack down at 08:00 and up at
 deliberately no wake-on-schedule, system service, or catch-up mechanism here.
 """
 
+import functools
 import logging
 import signal
 import sys
 import threading
+from datetime import datetime, timezone
 from types import FrameType
-from typing import Optional
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
-from . import db
+from apscheduler.triggers.interval import IntervalTrigger
+
+from . import daily_run, db, spend
 from .config import get_settings
-from .orchestrator import Orchestrator
-from .services.background_jobs import get_background_jobs_service
 from .map_refresh import build_maps_inline, run_weekly_refresh
+from .orchestrator import Orchestrator
+from .run_outcome import count_failed_papers, summarise_errors, terminal_status
+from .schemas import RUN_DAILY_STAGES, RunStatus, StageStatus
+from .services.background_jobs import get_background_jobs_service
 from .vault import resolve_vault_dir
 
 logger = logging.getLogger(__name__)
+
+#: How often the settings row is re-read. A change on the page takes effect
+#: within this long.
+CONFIG_POLL_SECONDS = 60
+
+DAILY_JOB_ID = "daily_pillar_run"
+WEEKLY_JOB_ID = "weekly_map_refresh"
+SYNC_JOB_ID = "daily_run_settings_sync"
+
+#: pipeline_runs.trigger_source for runs this process starts. Already admitted
+#: by the CHECK since migration 009, and outside webui's startup sweep.
+TRIGGER_SCHEDULER = "scheduler"
+KIND_RUN_DAILY = "run_daily"
 
 # Set when a signal arrives, so the main thread can stop the scheduler cleanly.
 _shutdown = threading.Event()
 
 
 def parse_schedule_time(value: str) -> tuple[int, int]:
-    """Parse SCHEDULE_TIME ("HH:MM", 24-hour) into (hour, minute).
-
-    Raises
-    ------
-        ValueError: If the value is not a valid 24-hour HH:MM time.
-
-    """
-    bad = f"SCHEDULE_TIME must be HH:MM (24-hour), got {value!r}"
-    parts = value.strip().split(":")
-    if len(parts) != 2:
-        raise ValueError(bad)
-
-    try:
-        hour, minute = int(parts[0]), int(parts[1])
-    except ValueError:
-        raise ValueError(bad) from None
-
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise ValueError(f"SCHEDULE_TIME out of range: {value!r}")
-
-    return hour, minute
+    """Parse an "HH:MM" (24-hour) time into (hour, minute). Raises ValueError."""
+    return daily_run.parse_run_time(value)
 
 
 def resolve_timezone(name: str) -> ZoneInfo:
-    """Resolve SCHEDULE_TIMEZONE (an IANA name) to a ZoneInfo.
+    """Resolve an IANA timezone name to a ZoneInfo. Raises ValueError."""
+    return daily_run.resolve_timezone(name)
 
-    Raises
-    ------
-        ValueError: If the name is not a known IANA timezone.
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _stage_writer(run_id: str) -> Callable[[str, str, Optional[str]], None]:
+    """The Orchestrator's on_stage sink for one recorded run (as in webui's runs)."""
+
+    def on_stage(name: str, status: str, detail: Optional[str] = None) -> None:
+        # DROPPED is not a status a row can hold: it means "this step will not
+        # happen", and the honest rendering of that is no row at all.
+        if status == StageStatus.DROPPED.value:
+            db.delete_pipeline_run_stage(run_id, name)
+        else:
+            db.update_pipeline_run_stage(run_id, name, status, detail)
+
+    return on_stage
+
+
+def _run_pillar(pillar: Any) -> tuple[dict, bool]:
+    """Run one pillar as a recorded pipeline run.
+
+    Returns the ``last_run`` entry for it and whether it added any papers.
+    Never raises for a pipeline failure: that is written on the run row.
     """
+    papers_limit = int(getattr(pillar, "papers_per_day", None) or 1)
+    entry: dict = {"pillar_id": pillar.id, "papers_limit": papers_limit, "run_id": None}
     try:
-        return ZoneInfo(name.strip())
-    except (ZoneInfoNotFoundError, ValueError) as e:
-        raise ValueError(
-            f"SCHEDULE_TIMEZONE is not a known IANA timezone: {name!r}"
-        ) from e
+        run = db.create_pipeline_run(
+            pillar.id, TRIGGER_SCHEDULER, KIND_RUN_DAILY,
+            [s.value for s in RUN_DAILY_STAGES],
+        )
+    except db.PipelineRunCreateError as e:
+        logger.error(f"Daily run: pillar {pillar.id} not started: {e}")
+        entry["skipped"] = f"Could not record a run: {e}"
+        return entry, False
+    if run is None:
+        entry["skipped"] = "A run was already in progress for this pillar."
+        return entry, False
+
+    entry["run_id"] = run.id
+    db.start_pipeline_run(run.id)
+    try:
+        # One Orchestrator per run, as webui does: it holds per-run state.
+        orchestrator = Orchestrator(enable_quiz=True, on_stage=_stage_writer(run.id))
+        result = orchestrator.run_daily(pillar.id, papers_limit=papers_limit)
+    except Exception as e:
+        # run_daily catches its own failures, so reaching here means something
+        # outside the pipeline broke. Record it and keep going.
+        logger.error(f"Daily run: pillar {pillar.id} raised: {e}", exc_info=True)
+        db.finish_pipeline_run(run.id, RunStatus.FAILED.value, error=str(e))
+        return entry, False
+    except BaseException as e:
+        # A killed worker must not leave the row 'running' (which also blocks the
+        # pillar's next run through the one-active index).
+        db.finish_pipeline_run(run.id, RunStatus.INTERRUPTED.value, error=str(e) or type(e).__name__)
+        raise
+
+    db.finish_pipeline_run(
+        run.id,
+        terminal_status(result),
+        papers_processed=len(result.papers_processed),
+        papers_failed=count_failed_papers(result),
+        error=summarise_errors(result),
+    )
+    logger.info(
+        f"Daily run: pillar {pillar.id} "
+        f"processed={len(result.papers_processed)} "
+        f"lessons={len(result.lessons_created)} "
+        f"quizzes={len(result.quizzes_generated)} "
+        f"errors={len(result.errors)} success={result.success} "
+        f"time={result.total_time_seconds:.1f}s"
+    )
+    return entry, bool(result.papers_processed)
 
 
-def run_all_pillars() -> None:
-    """Run the daily pipeline once for every pillar in the database.
+def _spend_refusal() -> Optional[str]:
+    """Why no more paid work may start today, or None when there is room."""
+    try:
+        budget = spend.current_budget()
+    except spend.SpendUnavailableError as e:
+        # A spend cap that fails open is not one.
+        return f"Today's spend could not be read ({e}), so nothing more was started."
+    if budget.exhausted:
+        return (
+            f"Daily spend cap reached (${budget.spent_usd:.2f} of "
+            f"${budget.cap_usd:.2f}); the rest waits for tomorrow."
+        )
+    return None
 
-    This is the scheduled job. It mirrors what the GitHub Action's matrix did,
-    with one correction: the Action hardcoded P1-P5, which no longer exist —
-    `create_pillars.py` seeds eight pillars with slug ids and `cli.py` validates
-    against the database. So the pillar list is read from the database.
 
-    Pillars run sequentially and independently: a pillar that raises is logged
-    and the rest still run, matching the Action's `fail-fast: false`.
+def run_all_pillars(
+    config: Optional[daily_run.DailyRunConfig] = None,
+    trigger: str = daily_run.TRIGGER_SCHEDULED,
+) -> Optional[dict]:
+    """Run the daily pipeline once for every pillar that takes part.
+
+    Pillars run sequentially and independently: a pillar that fails is recorded
+    and the rest still run, matching the old Action's `fail-fast: false`. The
+    spend cap is checked before each pillar, because one pillar can spend enough
+    to reach it. Returns the ``last_run`` payload it stored.
     """
-    settings = get_settings()
-    papers_limit = settings.papers_per_day
+    if config is None:
+        try:
+            config = daily_run.load_config()
+        except daily_run.DailyRunSettingsError as e:
+            logger.error(f"Daily run aborted: {e}")
+            return None
+
+    payload: dict = {
+        "trigger": trigger,
+        "started_at": _now_iso(),
+        "finished_at": None,
+        "runs": [],
+        "message": None,
+    }
+
+    def finish(message: Optional[str] = None) -> dict:
+        payload["finished_at"] = _now_iso()
+        if message:
+            payload["message"] = message
+        daily_run.record_last_run(payload)
+        return payload
 
     try:
         pillars = db.get_pillars(limit=50)
     except db.PillarLookupError as e:
-        # Reachable at last. get_pillars() used to swallow connection errors and
-        # return [], so this clause never ran and the nightly run instead fell into
-        # the "no pillars, seed them with create_pillars.py" branch below — telling
-        # the operator to seed a database that was merely unreachable, and doing so
-        # only at WARNING.
         logger.error(f"Daily run aborted: could not load pillars from database: {e}")
-        return
+        return finish(f"Could not load pillars: {e}")
     except Exception as e:
         # Kept deliberately broad below the specific clause: this is a long-lived
         # process and nothing about loading a pillar list may be allowed to kill it.
-        # Covered by test_database_failure_does_not_propagate.
         logger.error(
             f"Daily run aborted: unexpected error loading pillars: {e}", exc_info=True
         )
-        return
+        return finish(f"Could not load pillars: {e}")
 
-    if not pillars:
-        logger.warning("Daily run: no pillars in the database, nothing to do. "
-                       "Seed them with create_pillars.py.")
-        return
+    chosen = daily_run.participating(config, pillars)
+    if not chosen:
+        logger.warning("Daily run: no pillars take part, nothing to do.")
+        return finish("No pillars take part in the daily run.")
 
-    logger.info(
-        f"Daily run starting for {len(pillars)} pillars, {papers_limit} paper(s) each"
-    )
+    logger.info(f"Daily run starting for {len(chosen)} pillar(s)")
+    daily_run.record_last_run(payload)
 
-    # One Orchestrator for the whole run: building it creates the Qdrant
-    # collection and the tool instances, and there is no per-pillar state on it.
-    orchestrator = Orchestrator()
-
-    succeeded = 0
     pillars_with_new_papers: list[str] = []
-    for pillar in pillars:
-        try:
-            result = orchestrator.run_daily(pillar.id, papers_limit=papers_limit)
-            if result.success:
-                succeeded += 1
-            if result.papers_processed:
-                pillars_with_new_papers.append(pillar.id)
-            logger.info(
-                f"Daily run: pillar {pillar.id} "
-                f"processed={len(result.papers_processed)} "
-                f"lessons={len(result.lessons_created)} "
-                f"quizzes={len(result.quizzes_generated)} "
-                f"errors={len(result.errors)} success={result.success} "
-                f"time={result.total_time_seconds:.1f}s"
+    for index, pillar in enumerate(chosen):
+        refusal = _spend_refusal()
+        if refusal:
+            logger.warning(f"Daily run stopped before pillar {pillar.id}: {refusal}")
+            payload["runs"].extend(
+                {"pillar_id": p.id, "run_id": None, "skipped": refusal}
+                for p in chosen[index:]
             )
-        except Exception as e:
-            # run_daily catches its own failures, so reaching here means
-            # something outside the pipeline broke. Keep going regardless.
-            logger.error(f"Daily run: pillar {pillar.id} raised: {e}")
+            payload["message"] = refusal
+            break
+        entry, added = _run_pillar(pillar)
+        payload["runs"].append(entry)
+        if added:
+            pillars_with_new_papers.append(pillar.id)
+        daily_run.record_last_run(payload)
 
-    logger.info(f"Daily run finished: {succeeded}/{len(pillars)} pillars succeeded")
+    started = sum(1 for e in payload["runs"] if e.get("run_id"))
+    logger.info(f"Daily run finished: {started}/{len(chosen)} pillars started")
+    finish()
     _rebuild_maps(pillars_with_new_papers)
     _refresh_vault()
+    return payload
+
+
+def run_scheduled_daily(expected: Optional[tuple[int, int, str]] = None) -> None:
+    """The cron job. Re-reads the settings first: they may have changed since
+    the last sync, and turning the run off must stop a run that has not begun.
+    """
+    try:
+        config = daily_run.load_config()
+    except daily_run.DailyRunSettingsError as e:
+        logger.error(f"Daily run skipped: {e}")
+        return
+    if not config.enabled:
+        logger.info("Daily run skipped: it was turned off.")
+        return
+    if expected is not None:
+        try:
+            hour, minute, tz = config.schedule()
+        except ValueError as e:
+            logger.error(f"Daily run skipped: {e}")
+            return
+        if (hour, minute, str(tz)) != expected:
+            logger.info("Daily run skipped: its time changed; it will run at the new time.")
+            return
+    run_all_pillars(config, trigger=daily_run.TRIGGER_SCHEDULED)
+
+
+class DailyRunController:
+    """Keeps the APScheduler jobs in step with the settings row.
+
+    ``sync()`` runs at startup and then every CONFIG_POLL_SECONDS. It only
+    touches the scheduler when something changed, and logs each transition.
+    """
+
+    def __init__(self, service: Any, weekly: Optional[tuple[str, int, int]] = None):
+        self.service = service
+        self.weekly = weekly
+        self._applied: Optional[tuple[int, int, str]] = None
+        self._state: Optional[str] = None
+        self._aux_paused: Optional[bool] = None
+
+    @property
+    def scheduler(self):
+        return self.service.scheduler
+
+    def sync(self) -> Optional[daily_run.DailyRunConfig]:
+        try:
+            config = daily_run.load_config()
+            if config.source == daily_run.SOURCE_ENV:
+                # Table exists but no row yet (039 applied after this process
+                # started): copy the env defaults in, as at startup.
+                config = daily_run.seed_from_env()
+        except daily_run.DailyRunSettingsError as e:
+            # Keep whatever is scheduled. The job re-reads the settings when it
+            # fires and refuses to run if they are still unreadable.
+            logger.error(f"Could not read the daily-run settings: {e}")
+            return None
+
+        if config.source == daily_run.SOURCE_DATABASE:
+            daily_run.touch_scheduler_seen()
+
+        if not config.enabled:
+            self._turn_off("off")
+            return config
+        try:
+            hour, minute, tz = config.schedule()
+        except ValueError as e:
+            # A wrong time is worse than no run: do not guess one.
+            if self._state != "invalid":
+                logger.error(f"Daily run not scheduled: {e}")
+            self._turn_off("invalid")
+            return config
+
+        key = (hour, minute, str(tz))
+        if key != self._applied:
+            self.service.add_daily_pillar_run_job(
+                func=functools.partial(run_scheduled_daily, key),
+                hour=hour, minute=minute, tzinfo=tz, job_id=DAILY_JOB_ID,
+            )
+            if self.weekly is not None:
+                day, week_hour, week_minute = self.weekly
+                self.service.add_weekly_job(
+                    func=run_weekly_refresh, day_of_week=day, hour=week_hour,
+                    minute=week_minute, tzinfo=tz, job_id=WEEKLY_JOB_ID,
+                )
+            self._applied = key
+            job = self.scheduler.get_job(DAILY_JOB_ID)
+            logger.info(
+                f"Daily run is ON at {hour:02d}:{minute:02d} {tz}; "
+                f"next run at {getattr(job, 'next_run_time', None)}"
+            )
+        self._state = "on"
+        self._set_aux_paused(False)
+        return config
+
+    def _turn_off(self, state: str) -> None:
+        for job_id in (DAILY_JOB_ID, WEEKLY_JOB_ID):
+            if self.scheduler.get_job(job_id) is not None:
+                self.scheduler.remove_job(job_id)
+        self._applied = None
+        if state == "off" and self._state != "off":
+            logger.info("Daily run is OFF — idle. Turn it on from the Daily run page.")
+        self._state = state
+        self._set_aux_paused(True)
+
+    def _set_aux_paused(self, paused: bool) -> None:
+        """Pause or resume every other job (the FSRS ones) with the run."""
+        if self._aux_paused == paused:
+            return
+        for job in self.scheduler.get_jobs():
+            if job.id in (DAILY_JOB_ID, WEEKLY_JOB_ID, SYNC_JOB_ID):
+                continue
+            if paused:
+                self.scheduler.pause_job(job.id)
+            else:
+                self.scheduler.resume_job(job.id)
+        self._aux_paused = paused
 
 
 def _rebuild_maps(pillar_ids: list[str]) -> None:
@@ -208,6 +418,21 @@ def _refresh_vault() -> None:
     logger.info("%s", report.render())
 
 
+def _warn_if_env_is_ignored(config: daily_run.DailyRunConfig) -> None:
+    """Say so when .env still holds SCHEDULE_* values the settings row overrides."""
+    if config.source != daily_run.SOURCE_DATABASE:
+        return
+    env = daily_run.env_defaults()
+    if (env.enabled, env.run_time, env.timezone) != (
+        config.enabled, config.run_time, config.timezone,
+    ):
+        logger.warning(
+            "SCHEDULE_ENABLED/SCHEDULE_TIME/SCHEDULE_TIMEZONE in the environment "
+            f"({env.enabled}, {env.run_time}, {env.timezone}) are ignored: the Daily run "
+            f"page's settings ({config.enabled}, {config.run_time}, {config.timezone}) win."
+        )
+
+
 def _handle_signal(signum: int, _frame: Optional[FrameType]) -> None:
     """Ask the main thread to shut the scheduler down."""
     logger.info(f"Received signal {signal.Signals(signum).name}, shutting down")
@@ -225,53 +450,59 @@ def main() -> int:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    if not settings.schedule_enabled:
-        # Exit 0 and stay exited. The compose service uses `restart: on-failure`
-        # precisely so that this is not restarted into a loop — `docker compose
-        # ps` showing "Exited (0)" is the visible off state.
-        logger.info("SCHEDULE_ENABLED is false — scheduler is disabled, exiting. "
-                    "Set SCHEDULE_ENABLED=true in .env to enable the daily run.")
-        return 0
-
-    try:
-        hour, minute = parse_schedule_time(settings.schedule_time)
-        tzinfo = resolve_timezone(settings.schedule_timezone)
-    except ValueError as e:
-        # Fail loudly rather than falling back to a default time: a silently
-        # wrong run time is worse than a container that refuses to start.
-        logger.error(str(e))
-        return 1
-
-    service = get_background_jobs_service()
-    service.add_daily_pillar_run_job(
-        func=run_all_pillars, hour=hour, minute=minute, tzinfo=tzinfo
-    )
+    weekly: Optional[tuple[str, int, int]] = None
     if settings.weekly_map_refresh_enabled:
         try:
             week_hour, week_minute = parse_schedule_time(settings.weekly_map_refresh_time)
-            service.add_weekly_job(
-                func=run_weekly_refresh,
-                day_of_week=settings.weekly_map_refresh_day.strip().lower(),
-                hour=week_hour,
-                minute=week_minute,
-                tzinfo=tzinfo,
-            )
         except ValueError as e:
             logger.error(f"WEEKLY_MAP_REFRESH_* is invalid: {e}")
             return 1
+        weekly = (settings.weekly_map_refresh_day.strip().lower(), week_hour, week_minute)
     else:
         logger.info("WEEKLY_MAP_REFRESH_ENABLED is false — no weekly map refresh")
-    # Also starts the FSRS optimization and maintenance jobs, which had never
-    # run anywhere before this service existed.
+
+    # This process now records its runs, so a run it was killed in the middle of
+    # must be closed out here — webui's sweep leaves 'scheduler' rows alone.
+    db.sweep_interrupted_runs(trigger_sources=[TRIGGER_SCHEDULER])
+    daily_run.close_unfinished_last_run(
+        "The scheduler stopped before this run finished."
+    )
+
+    try:
+        _warn_if_env_is_ignored(daily_run.seed_from_env())
+    except daily_run.DailyRunMigrationMissing:
+        logger.warning(
+            f"{daily_run.MIGRATION_FILE} is not applied: using SCHEDULE_ENABLED / "
+            "SCHEDULE_TIME / SCHEDULE_TIMEZONE until it is."
+        )
+    except daily_run.DailyRunSettingsError as e:
+        logger.error(f"{e} Retrying every {CONFIG_POLL_SECONDS}s.")
+
+    service = get_background_jobs_service()
+    # Starts the FSRS optimization and maintenance jobs; the first sync below
+    # pauses them straight away while the run is off. None fires within minutes
+    # of start, so there is no window in which an "off" scheduler does work.
     service.start()
 
-    for job in service.scheduler.get_jobs():
-        logger.info(f"Scheduled job {job.id!r}: next run at {job.next_run_time}")
+    controller = DailyRunController(service, weekly=weekly)
+    controller.sync()
+    service.scheduler.add_job(
+        controller.sync,
+        trigger=IntervalTrigger(seconds=CONFIG_POLL_SECONDS),
+        id=SYNC_JOB_ID,
+        name="Re-read daily-run settings",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=None,
+    )
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    logger.info("Scheduler running. Waiting for scheduled jobs.")
+    logger.info(
+        f"Scheduler running; re-reading the daily-run settings every {CONFIG_POLL_SECONDS}s."
+    )
     _shutdown.wait()
 
     service.stop()

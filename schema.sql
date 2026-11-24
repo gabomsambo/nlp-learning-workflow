@@ -2242,3 +2242,27 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON learner_connections TO web_anon;
 GRANT EXECUTE ON FUNCTION apply_concept_anchoring(JSONB, JSONB, JSONB) TO web_anon;
 GRANT EXECUTE ON FUNCTION put_learner_connection(TEXT, TEXT, TEXT, TEXT, TEXT) TO web_anon;
 GRANT EXECUTE ON FUNCTION delete_learner_connection(TEXT, TEXT) TO web_anon;
+
+-- ============================================
+-- daily_run_settings (docs/migrations/039_daily_run_settings.sql)
+--
+-- Single-row daily-run configuration edited on the Daily run page and re-read
+-- by the scheduler every minute. No row is seeded: the scheduler (or the
+-- first save) copies SCHEDULE_ENABLED / SCHEDULE_TIME / SCHEDULE_TIMEZONE in.
+-- Papers per pillar is pillars.papers_per_day. See nlp_pillars/daily_run.py.
+-- ============================================
+CREATE TABLE IF NOT EXISTS daily_run_settings (
+    id                SMALLINT PRIMARY KEY DEFAULT 1
+        CONSTRAINT daily_run_settings_singleton CHECK (id = 1),
+    enabled           BOOLEAN NOT NULL DEFAULT false,
+    run_time          TEXT NOT NULL DEFAULT '08:00'
+        CONSTRAINT daily_run_settings_run_time_check
+        CHECK (run_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
+    timezone          TEXT NOT NULL DEFAULT 'UTC',
+    pillar_ids        TEXT[],
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    scheduler_seen_at TIMESTAMPTZ,
+    last_run          JSONB
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON daily_run_settings TO web_anon;

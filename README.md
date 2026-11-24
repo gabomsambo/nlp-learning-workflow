@@ -76,7 +76,7 @@ It brings up the services below, with the database schema applied automatically:
 | `searxng` | `nlp_searxng` | 127.0.0.1:3022 | Metasearch, used for paper discovery |
 | `qdrant` | `nlp_qdrant` | 3023/3024 | Local vector store — **offline option only**, see below |
 | `webui` | `nlp_webui` | 3020 | The FastAPI web UI |
-| `scheduler` | `nlp_scheduler` | — | Daily run; `Exited (0)` while `SCHEDULE_ENABLED=false` |
+| `scheduler` | `nlp_scheduler` | — | Daily run; always up, turned on and off on the Daily run page (`/daily-run/`) |
 | `playground-runner` | `nlp_playground_runner` | — (internal network only) | Locked-down Python for paper playgrounds |
 
 ```bash

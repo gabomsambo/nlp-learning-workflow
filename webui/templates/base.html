@@ -50,8 +50,9 @@
   {% set on_add = path.startswith('/discovery') %}
   {% set on_pillars = path.startswith('/pillars') %}
   {% set on_activity = path.startswith('/activity') %}
+  {% set on_daily_run = path.startswith('/daily-run') %}
   {% set on_analytics = path.startswith('/analytics') %}
-  {% set on_more = on_pillars or on_activity or on_lessons or on_analytics %}
+  {% set on_more = on_pillars or on_activity or on_daily_run or on_lessons or on_analytics %}
 
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="app-shell">
@@ -72,6 +73,7 @@
         <p class="nav-section">Workspace</p>
         {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
         {{ nav_link('/activity/', 'Activity', on_activity, 'activity') }}
+        {{ nav_link('/daily-run/', 'Daily run', on_daily_run, 'schedule') }}
       </nav>
       <div class="sidebar-foot">
         <a class="status-chip status-chip-shell" href="/activity/#status">
@@ -137,6 +139,7 @@
         {{ nav_link('/discovery/', 'Add papers', on_add, 'add') }}
         {{ nav_link('/pillars/', 'Pillars', on_pillars, 'pillars') }}
         {{ nav_link('/activity/', 'Activity', on_activity, 'activity') }}
+        {{ nav_link('/daily-run/', 'Daily run', on_daily_run, 'schedule') }}
         <button type="button" class="nav-button" data-open-palette>{{ icon('search') }}<span>Search</span></button>
         <button type="button" class="nav-button" data-open-shortcuts>{{ icon('help') }}<span>Shortcuts</span></button>
         <button type="button" class="nav-button" data-open-settings>{{ icon('settings') }}<span>Settings</span></button>

@@ -141,23 +141,23 @@ class Settings(BaseSettings):
     embedding_model: str = Field("BAAI/bge-base-en-v1.5", env="EMBEDDING_MODEL")
     log_level: str = Field("INFO", env="LOG_LEVEL")
 
-    # Daily-run scheduler. Consumed by nlp_pillars/scheduler.py, which runs as the
-    # `scheduler` service in docker-compose.yml. These three keys have been in .env
-    # since before the scheduler existed; until it did, `extra = "ignore"` below
-    # silently dropped them.
+    # Daily-run scheduler (nlp_pillars/scheduler.py, the `scheduler` service).
+    # These three are FIRST-BOOT DEFAULTS only: the scheduler copies them into
+    # the daily_run_settings row (migration 039) and from then on the Daily run
+    # page is the control. Precedence: nlp_pillars/daily_run.py.
     schedule_enabled: bool = Field(False, env="SCHEDULE_ENABLED")
     schedule_time: str = Field("08:00", env="SCHEDULE_TIME")  # "HH:MM", 24-hour
     schedule_timezone: str = Field("UTC", env="SCHEDULE_TIMEZONE")  # IANA name
-    # Papers per pillar per scheduled run. Default 1 matches what the (now
-    # schedule-disabled) GitHub Action passed as `--papers 1`. The per-pillar
-    # `papers_per_day` column in the database is deliberately not consulted, so
-    # one knob controls the whole run's API spend.
+    # No longer read by the daily run: each pillar's own `papers_per_day`
+    # (edited on the Daily run page) sets how many papers it gets. Kept so an
+    # existing .env line still validates.
     papers_per_day: int = Field(1, env="PAPERS_PER_DAY", ge=1)
 
     # Weekly paper-map refresh (nlp_pillars/map_refresh.py). It is registered by
-    # the same scheduler process, so it only ever runs when SCHEDULE_ENABLED is
-    # true; this flag lets a scheduler that is on skip it. Day is an APScheduler
-    # day_of_week ("sun", "mon", "mon-fri"); time is HH:MM in SCHEDULE_TIMEZONE.
+    # the same scheduler process, so it only ever runs while the daily run is on;
+    # this flag lets a scheduler that is on skip it. Day is an APScheduler
+    # day_of_week ("sun", "mon", "mon-fri"); time is HH:MM in the daily run's
+    # timezone.
     weekly_map_refresh_enabled: bool = Field(True, env="WEEKLY_MAP_REFRESH_ENABLED")
     weekly_map_refresh_day: str = Field("sun", env="WEEKLY_MAP_REFRESH_DAY")
     weekly_map_refresh_time: str = Field("03:00", env="WEEKLY_MAP_REFRESH_TIME")
