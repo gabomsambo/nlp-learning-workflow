@@ -100,9 +100,10 @@ class BackgroundJobsService:
         the pipeline: `nlp_pillars.scheduler` owns the work, this owns the timing.
         Call before or after `start()` — APScheduler accepts both.
 
-        The trigger carries its own `timezone`, so the daily run honours
-        SCHEDULE_TIMEZONE while the FSRS jobs above stay on the UTC times they
-        were always written for.
+        The trigger carries its own `timezone`, so the daily run honours the
+        timezone set on the Daily run page while the FSRS jobs above stay on the
+        UTC times they were always written for. Calling it again with the same
+        `job_id` replaces the job, which is how a changed run time takes effect.
 
         Args:
         ----
@@ -122,6 +123,10 @@ class BackgroundJobsService:
             replace_existing=True,
             # A run that overruns 24h must not stack a second one on top of it.
             max_instances=1,
+            coalesce=True,
+            # APScheduler's default grace is one second: a fire that reaches the
+            # executor later than that is dropped with only a WARNING.
+            misfire_grace_time=None,
         )
         logger.info(f"Daily pillar run scheduled at {hour:02d}:{minute:02d} {tzinfo}")
 

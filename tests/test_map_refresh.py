@@ -251,7 +251,6 @@ def test_weekly_job_honours_the_schedule_timezone():
 
 def _settings(**kw):
     base = dict(
-        schedule_enabled=True, schedule_time="08:00", schedule_timezone="UTC",
         weekly_map_refresh_enabled=True, weekly_map_refresh_day="sun",
         weekly_map_refresh_time="03:00", log_level="INFO",
     )
@@ -259,15 +258,26 @@ def _settings(**kw):
     return MagicMock(**base)
 
 
-def _main(settings):
-    from nlp_pillars import scheduler
+def _main(settings, enabled=True):
+    from nlp_pillars import daily_run, scheduler
 
+    config = daily_run.DailyRunConfig(
+        enabled=enabled, run_time="08:00", timezone="UTC", pillar_ids=None,
+        source=daily_run.SOURCE_DATABASE,
+    )
     service = MagicMock()
+    service.scheduler.get_job.return_value = None
+    service.scheduler.get_jobs.return_value = []
     scheduler._shutdown.set()  # return as soon as main() would block
     try:
         with patch.object(scheduler, "get_settings", return_value=settings), \
              patch.object(scheduler, "get_background_jobs_service", return_value=service), \
-             patch.object(scheduler.signal, "signal"):
+             patch.object(scheduler.signal, "signal"), \
+             patch.object(scheduler.db, "sweep_interrupted_runs"), \
+             patch.object(scheduler.daily_run, "close_unfinished_last_run"), \
+             patch.object(scheduler.daily_run, "seed_from_env", return_value=config), \
+             patch.object(scheduler.daily_run, "load_config", return_value=config), \
+             patch.object(scheduler.daily_run, "touch_scheduler_seen"):
             code = scheduler.main()
     finally:
         scheduler._shutdown.clear()
@@ -275,7 +285,7 @@ def _main(settings):
 
 
 def test_a_disabled_scheduler_registers_nothing_not_even_the_weekly_job():
-    code, service = _main(_settings(schedule_enabled=False))
+    code, service = _main(_settings(), enabled=False)
     assert code == 0
     service.add_weekly_job.assert_not_called()
     service.add_daily_pillar_run_job.assert_not_called()
@@ -297,18 +307,32 @@ def test_a_bad_weekly_time_refuses_to_start():
 
 
 def test_the_daily_run_rebuilds_only_pillars_that_gained_papers():
-    from nlp_pillars import scheduler
+    from nlp_pillars import daily_run, scheduler, spend
 
-    pillars = [MagicMock(id="a"), MagicMock(id="b")]
-    results = [MagicMock(success=True, papers_processed=["p"]),
-               MagicMock(success=False, papers_processed=[])]
-    with patch.object(scheduler, "get_settings", return_value=MagicMock(papers_per_day=1)), \
-         patch.object(scheduler.db, "get_pillars", return_value=pillars), \
+    config = daily_run.DailyRunConfig(
+        enabled=True, run_time="08:00", timezone="UTC", pillar_ids=None,
+        source=daily_run.SOURCE_DATABASE,
+    )
+    pillars = [SimpleNamespace(id="a", papers_per_day=1), SimpleNamespace(id="b", papers_per_day=1)]
+    def result(processed):
+        return SimpleNamespace(success=bool(processed), papers_processed=processed, errors=[],
+                               lessons_created=[], quizzes_generated=[], total_time_seconds=1.0)
+
+    results = [result(["p"]), result([])]
+    budget = spend.Budget(cap_usd=2.0, spent_usd=0.0,
+                          day_start=datetime(2026, 11, 24), resets_at=datetime(2026, 11, 25))
+    with patch.object(scheduler.db, "get_pillars", return_value=pillars), \
+         patch.object(scheduler.db, "create_pipeline_run",
+                      side_effect=lambda pid, *a, **k: SimpleNamespace(id=f"run-{pid}")), \
+         patch.object(scheduler.db, "start_pipeline_run"), \
+         patch.object(scheduler.db, "finish_pipeline_run"), \
+         patch.object(scheduler.spend, "current_budget", return_value=budget), \
+         patch.object(scheduler.daily_run, "record_last_run"), \
          patch.object(scheduler, "Orchestrator") as orch, \
          patch.object(scheduler, "build_maps_inline") as build, \
          patch.object(scheduler, "_refresh_vault"):
         orch.return_value.run_daily.side_effect = results
-        scheduler.run_all_pillars()
+        scheduler.run_all_pillars(config)
     build.assert_called_once_with(["a"])
 
 

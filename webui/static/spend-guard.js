@@ -18,6 +18,7 @@
   // Keep in step with webui/services/spend_guard.py's users.
   var ACTIONS = [
     { re: /^\/pipeline\/run$/, title: 'Run the pipeline', what: 'Finds, reads and summarises new papers with Claude.' },
+    { re: /^\/api\/daily-run\/run-now$/, title: 'Run the daily run now', what: 'Finds, reads and summarises new papers with Claude for every pillar that takes part.' },
     { re: /^\/api\/pillars\/[^/]+\/select$/, title: 'Process selected papers', what: 'Reads each paper and writes notes, a lesson and a quiz with Claude.' },
     { re: /^\/api\/pillars\/[^/]+\/upload\/(url|pdf)$/, title: 'Add this paper', what: 'Processes the paper with Claude (summary, lesson, quiz).' },
     { re: /^\/api\/podcast\/generate$/, title: 'Generate a podcast script', what: 'Writing the script makes paid model calls. If “Also make audio after saving” is checked, it will also use IndexTTS on the local GPU after the script saves.' },
@@ -29,7 +30,7 @@
   ];
 
   // Buttons that start those actions; each gets the remaining budget beside it.
-  var BUTTON_SELECTOR = '#generate-btn, #generate-audio-btn, #factcheck-btn, #process-btn, #run-btn, #submit-file-upload, #submit-url-upload, #playground-explain-btn, #follow-start';
+  var BUTTON_SELECTOR = '#daily-run-now, #generate-btn, #generate-audio-btn, #factcheck-btn, #process-btn, #run-btn, #submit-file-upload, #submit-url-upload, #playground-explain-btn, #follow-start';
 
   function pathOf(input) {
     var raw = typeof input === 'string' ? input : (input && input.url) || '';

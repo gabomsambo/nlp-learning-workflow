@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+{% from "_components.html" import page_header %}
+{% block title %}Daily run{% endblock %}
+{% block content %}
+{% set s = status %}
+{% set cfg = s.config %}
+{% call page_header('Daily run', 'Workspace') %}
+<button type="button" class="btn btn-secondary" id="daily-run-now" {% if not s.pillars %}disabled{% endif %}>Run now</button>
+{% endcall %}
+
+<p class="page-lede">Once a day the app finds, reads and summarises new papers for the pillars you pick. Every run makes paid Claude calls, so it stays off until you turn it on here.</p>
+
+{% if cfg.migration_missing %}
+<aside class="callout callout-warn" role="status">
+  <p class="callout-title">Settings cannot be saved yet</p>
+  <p>Apply <code>{{ s.migration_file }}</code> to the database. Until then <code>SCHEDULE_ENABLED</code>, <code>SCHEDULE_TIME</code> and <code>SCHEDULE_TIMEZONE</code> in <code>.env</code> decide, as before.</p>
+</aside>
+{% endif %}
+{% if s.settings_error %}
+<aside class="callout callout-error" role="alert">
+  <p class="callout-title">Could not read the settings</p>
+  <p>{{ s.settings_error }} The values below are the <code>.env</code> defaults, not what is saved.</p>
+</aside>
+{% endif %}
+{% if s.pillars_error %}
+<aside class="callout callout-error" role="alert">
+  <p class="callout-title">Could not load pillars</p>
+  <p>{{ s.pillars_error }}</p>
+</aside>
+{% endif %}
+
+<section class="card daily-run-glance" aria-labelledby="glance-heading">
+  <h2 class="section-title" id="glance-heading">At a glance</h2>
+  <dl class="daily-run-facts">
+    <dt>Status</dt>
+    <dd id="daily-run-state">
+      {% if cfg.enabled %}<span class="chip chip-ok">On</span>{% else %}<span class="chip chip-warn">Off</span>{% endif %}
+      {% if cfg.source == 'env' %}<span class="daily-run-note">From <code>.env</code>; not saved here yet.</span>{% endif %}
+    </dd>
+
+    <dt>Next run</dt>
+    <dd id="daily-run-next">
+      {% if s.schedule_error %}<span class="field-error">{{ s.schedule_error }} Nothing is scheduled.</span>
+      {% elif s.next_run_display %}{{ s.next_run_display }}
+      {% else %}None. The daily run is off.{% endif %}
+    </dd>
+
+    <dt>Scheduler</dt>
+    <dd id="daily-run-scheduler">
+      {% if not s.scheduler.stale %}Checked the settings {{ s.scheduler.seen_display }}.
+      {% elif s.scheduler.seen_display %}Last checked the settings {{ s.scheduler.seen_display }}. It checks every minute, so it has stopped: start the <code>scheduler</code> container.
+      {% else %}Has not checked the settings yet. Start the <code>scheduler</code> container; it checks every minute.{% endif %}
+    </dd>
+
+    <dt>Estimated cost</dt>
+    <dd id="daily-run-estimate">
+      About <strong>${{ '%.2f' | format(s.estimate.total_usd) }}</strong> per day:
+      {{ s.estimate.papers }} paper{{ '' if s.estimate.papers == 1 else 's' }} across {{ s.estimate.pillars }} pillar{{ '' if s.estimate.pillars == 1 else 's' }}
+      at ${{ '%.3f' | format(s.estimate.per_paper_usd) }} a paper,
+      {% if s.estimate.basis == 'measured' %}the median of the last {{ s.estimate.sample_size }} recorded one-paper run{{ '' if s.estimate.sample_size == 1 else 's' }}.
+      {% else %}a documented estimate (three Haiku calls at about $0.0095 each); no recorded runs to measure yet.{% endif %}
+    </dd>
+
+    <dt>Daily spend cap</dt>
+    <dd id="daily-run-cap">
+      ${{ '%.2f' | format(s.budget.cap_usd) }} a day (<code>DAILY_SPEND_CAP_USD</code>).
+      {% if s.budget.error %}<span class="field-error">Today's spend could not be read, so no paid run will start: {{ s.budget.error }}</span>
+      {% else %}${{ '%.2f' | format(s.budget.spent_usd) }} spent today.{% endif %}
+      {% if s.estimate_over_cap %}<span class="field-error">The estimate is above the cap: the run stops at the cap and the remaining pillars wait for tomorrow.</span>{% endif %}
+    </dd>
+  </dl>
+</section>
+
+<section class="card daily-run-last" aria-labelledby="last-heading">
+  <h2 class="section-title" id="last-heading">Last run</h2>
+  {% set last = s.last_run %}
+  {% if not last %}
+  <p class="activity-meta" id="daily-run-last-empty">No daily run recorded yet.</p>
+  {% else %}
+  {% set outcome_label = {'running': 'Running', 'succeeded': 'Succeeded', 'partial': 'Partly failed', 'failed': 'Failed', 'skipped': 'Skipped', 'unknown': 'Unknown'} %}
+  {% set outcome_chip = {'running': 'chip-accent', 'succeeded': 'chip-ok', 'partial': 'chip-warn', 'failed': 'chip-danger', 'skipped': 'chip-warn', 'unknown': ''} %}
+  <p id="daily-run-last-summary">
+    <span class="chip {{ outcome_chip[last.outcome] }}">{{ outcome_label[last.outcome] }}</span>
+    {{ 'Run now' if last.trigger == 'run_now' else 'Scheduled' }}{% if last.started_display %}, started {{ last.started_display }}{% endif %}.
+    {% if last.papers_processed %}{{ last.papers_processed }} paper{{ '' if last.papers_processed == 1 else 's' }} added.{% endif %}
+  </p>
+  {% if last.message %}<p class="daily-run-note">{{ last.message }}</p>{% endif %}
+  {% if last.lookup_error %}<p class="field-error">{{ last.lookup_error }}</p>{% endif %}
+  {% if last.runs %}
+  <ul class="daily-run-runs">
+    {% for run in last.runs %}
+    <li>
+      <span class="daily-run-pillar">{{ run.pillar_id }}</span>
+      <span class="daily-run-run-status">{{ run.status }}</span>
+      {% if run.url %}<a href="{{ run.url }}">Open run</a>{% endif %}
+      {% if run.error %}<span class="daily-run-note">{{ run.error }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% endif %}
+  <p class="daily-run-note">Every run is also on <a href="/activity/">Activity</a>.</p>
+</section>
+
+<form id="daily-run-form" class="card daily-run-form" novalidate>
+  <h2 class="section-title">Settings</h2>
+
+  <div class="daily-run-toggle">
+    <label class="check">
+      <input type="checkbox" id="dr-enabled" name="enabled" aria-describedby="dr-enabled-help" {% if cfg.enabled %}checked{% endif %}>
+      <span>Run every day</span>
+    </label>
+    <p class="field-help" id="dr-enabled-help">Off means nothing runs on its own and nothing is spent. The scheduler picks up a change within a minute.</p>
+  </div>
+
+  <div class="form-row">
+    <div class="field">
+      <label for="dr-time">Time</label>
+      <input type="time" id="dr-time" name="run_time" value="{{ cfg.run_time }}" required>
+    </div>
+    <div class="field">
+      <label for="dr-timezone">Timezone</label>
+      <input type="text" id="dr-timezone" name="timezone" value="{{ cfg.timezone }}" list="dr-timezones" autocomplete="off" spellcheck="false" required aria-describedby="dr-timezone-help">
+      <p class="field-help" id="dr-timezone-help">An IANA name, such as Europe/Berlin or America/New_York.</p>
+    </div>
+  </div>
+
+  <fieldset class="checkbox-group">
+    <legend>Pillars</legend>
+    <p class="field-help">Ticked pillars take part. Papers per day is the pillar's own setting, also used by discovery.</p>
+    {% if s.pillars %}
+    <div class="table-wrap">
+      <table class="data-table data-table-dense daily-run-pillars">
+        <thead>
+          <tr><th scope="col">Takes part</th><th scope="col">Pillar</th><th scope="col">Papers per day</th></tr>
+        </thead>
+        <tbody>
+          {% for pillar in s.pillars %}
+          <tr>
+            <td><input type="checkbox" class="dr-pillar" id="dr-pillar-{{ loop.index }}" name="pillar_ids" value="{{ pillar.id }}" {% if pillar.included %}checked{% endif %} aria-label="Include {{ pillar.name }}"></td>
+            <td><label for="dr-pillar-{{ loop.index }}">{{ pillar.name }}</label></td>
+            <td><input type="number" class="dr-papers" id="dr-papers-{{ loop.index }}" name="papers_per_day" data-pillar-id="{{ pillar.id }}" min="1" max="10" step="1" value="{{ pillar.papers_per_day }}" aria-label="Papers per day for {{ pillar.name }}"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="activity-meta">No pillars to choose from.</p>
+    {% endif %}
+  </fieldset>
+
+  <p id="dr-error" class="field-error" role="alert" hidden></p>
+  <p id="dr-status" class="daily-run-note" role="status" aria-live="polite"></p>
+  <div class="daily-run-actions">
+    <button type="submit" class="btn btn-primary" id="dr-save" {% if cfg.migration_missing %}disabled{% endif %}>Save</button>
+  </div>
+</form>
+
+<datalist id="dr-timezones">
+  {% for tz in timezones %}<option value="{{ tz }}"></option>{% endfor %}
+</datalist>
+
+<script type="application/json" id="daily-run-data">{{ {"enabled": cfg.enabled, "estimate_usd": s.estimate.total_usd, "cap_usd": s.budget.cap_usd} | tojson }}</script>
+<noscript><p>Saving settings and Run now need JavaScript.</p></noscript>
+{% endblock %}
+{% block scripts %}
+<script src="/static/daily-run.js?v={{ asset_v | default('1', true) }}"></script>
+{% endblock %}

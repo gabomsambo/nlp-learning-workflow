@@ -18,10 +18,11 @@ from fastapi.templating import Jinja2Templates
 # db.get_client() reads os.environ directly rather than going through Settings.
 load_dotenv()
 
-from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast, activity
+from .routers import dashboard, papers, lessons, quiz, pipeline, analytics, pillars, discovery, podcast, activity, daily_run
 from .routers.api import pillars as api_pillars, uploads as api_uploads, quiz as api_quiz, discovery as api_discovery, podcast as api_podcast, pipeline_runs as api_pipeline_runs, papers as api_papers, system_status as api_system_status, graph as api_graph, map as api_map, queue_external as api_queue_external, spend as api_spend, playground_runner as api_playground_runner, playgrounds as api_playgrounds
 from .routers.api import follow_along as api_follow_along
 from .routers.api import connections as api_connections
+from .routers.api import daily_run as api_daily_run
 from .access import AccessMiddleware
 from .services import cloud_publish_service, cloud_review_sync_service, run_service
 
@@ -148,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(api_playground_runner.router)
     app.include_router(api_playgrounds.router)
     app.include_router(api_follow_along.router)
+    app.include_router(api_daily_run.router)
 
     # Include page routers
     app.include_router(dashboard.router)
@@ -156,6 +158,7 @@ def create_app() -> FastAPI:
     app.include_router(quiz.router)
     app.include_router(pipeline.router)
     app.include_router(activity.router)
+    app.include_router(daily_run.router)
     app.include_router(analytics.router)
     app.include_router(pillars.router)
     app.include_router(discovery.router)
